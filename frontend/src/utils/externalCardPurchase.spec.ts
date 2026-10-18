@@ -22,6 +22,18 @@ describe('buildExternalCardPurchaseUrl', () => {
       .toBe('https://cards.example.com/shop/GloryCode?ref=campaign&product=balance')
   })
   it.each([
+    'source_url=%2Fpurchase',
+    'SOURCE_URL=%2Fpurchase',
+    'source%5Furl=%2Fpurchase',
+    'source_url=first&source_url=second',
+    'sourceUrl=%2Fpurchase',
+    'source-url=%2Fpurchase',
+  ])('removes external source URL parameter %s while preserving product query parameters', (sourceParameter) => {
+    expect(buildExternalCardPurchaseUrl(`https://cards.example.com/shop/GloryCode?${sourceParameter}&ref=campaign&product=balance`))
+      .toBe('https://cards.example.com/shop/GloryCode?ref=campaign&product=balance')
+  })
+
+  it.each([
     'javascript:alert(1)',
     'http://cards.example.com/shop/GloryCode',
     'https://user:password@cards.example.com/shop/GloryCode',
