@@ -11,8 +11,8 @@ import (
 func TestReviewNilSnapshotDoesNotPanic(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	before := c.Writer
-	MarkRequest(c, nil, "https://poison.example", true)
-	if Attach(c, nil, AccountInfo{BaseURL: "https://poison.example", HasProxy: true}) {
+	MarkRequest(c, nil, "防投毒test", "https://poison.example", true)
+	if Attach(c, nil, AccountInfo{Name: "防投毒test", BaseURL: "https://poison.example", HasProxy: true}) {
 		t.Fatal("nil snapshot enabled guard")
 	}
 	if c.Writer != before {
@@ -21,7 +21,7 @@ func TestReviewNilSnapshotDoesNotPanic(t *testing.T) {
 }
 
 func TestReviewErrorJSONValid(t *testing.T) {
-	for _, message := range []string{DefaultBlockMessage, "escaped \" \\ \n\r\t", "control\x00\x01\b\f\x1f"} {
+	for _, message := range []string{DefaultBlockMessage, "escaped \" \\ \n\r	", "control\x00\x01\b\f\x1f"} {
 		c, rec := newGuardContext(t, activeSnapshot(), "https://poison.example", true)
 		StatusGuard(c).WriteError(DefaultBlockStatus, message)
 		var payload struct {
