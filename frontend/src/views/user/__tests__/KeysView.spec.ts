@@ -1,15 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import type { ApiKey } from '@/types'
+import type { BatchApiKeysUsageResponse } from '@/api/usage'
 import { keysAPI } from '@/api'
 import KeysView from '../KeysView.vue'
+
+enableAutoUnmount(afterEach)
 
 const {
   listKeys,
   updateKey,
   getPublicSettings,
+  fetchPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
   getUserGroupRates,
@@ -22,6 +26,7 @@ const {
   listKeys: vi.fn(),
   updateKey: vi.fn(),
   getPublicSettings: vi.fn(),
+  fetchPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
   getUserGroupRates: vi.fn(),
@@ -56,6 +61,11 @@ const messages: Record<string, string> = {
   'keys.status.inactive': 'Inactive',
   'keys.status.quota_exhausted': 'Quota exhausted',
   'keys.usage': 'Usage',
+  'keys.today': 'Today',
+  'keys.total': 'Last 30d',
+  'keys.usageLoading': 'Loading usage…',
+  'keys.usageFailed': 'Usage unavailable',
+  'keys.retryUsage': 'Retry usage',
 }
 
 vi.mock('@/api', () => ({
@@ -82,6 +92,7 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
     showSuccess,
+    fetchPublicSettings,
   }),
 }))
 
@@ -156,7 +167,7 @@ const TablePageLayoutStub = {
 
 const DataTableStub = {
   name: 'DataTable',
-  props: { columns: Array, data: Array, selectedKeys: Array, selectable: Boolean },
+  props: { columns: Array, data: Array, selectedKeys: Array, selectable: Boolean, loading: Boolean },
   emits: ['sort', 'update:selectedKeys'],
   template: `
     <div>
@@ -165,7 +176,8 @@ const DataTableStub = {
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
         Sort Current Concurrency
       </button>
-      <div v-for="row in data" :key="row.id">
+      <div v-if="loading" data-test="table-loading">Loading keys</div>
+      <div v-for="row in (loading ? [] : data)" :key="row.id">
         <div
           v-if="columns.some((col) => col.key === 'id')"
           data-test="key-id"
@@ -173,6 +185,9 @@ const DataTableStub = {
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div v-if="columns.some((col) => col.key === 'usage')" :data-test="'usage-' + row.id">
+          <slot name="cell-usage" :row="row" />
+        </div>
         <slot name="cell-actions" :row="row" />
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
@@ -266,6 +281,13 @@ const getButtonByText = (wrapper: VueWrapper, text: string) => {
   return button
 }
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
 describe('user KeysView column settings', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -274,6 +296,7 @@ describe('user KeysView column settings', () => {
     updateKey.mockReset()
     vi.mocked(keysAPI.create).mockReset()
     getPublicSettings.mockReset()
+    fetchPublicSettings.mockReset()
     getDashboardApiKeysUsage.mockReset()
     getAvailableGroups.mockReset()
     getUserGroupRates.mockReset()
@@ -291,10 +314,296 @@ describe('user KeysView column settings', () => {
       pages: 1,
     })
     getPublicSettings.mockResolvedValue({})
-    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    fetchPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: { 1: { api_key_id: 1, today_actual_cost: 0, total_actual_cost: 0 } } })
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('renders keys immediately while usage is pending, then displays real zero amounts', async () => {
+    const usage = deferred<BatchApiKeysUsageResponse>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(usage.promise)
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('test-key')
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Loading usage…')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.0000')
+
+    usage.resolve({ stats: { 1: { api_key_id: 1, today_actual_cost: 0, total_actual_cost: 0 } } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Last 30d')
+    expect(wrapper.get('[data-test="usage-1"]').text().match(/\$0\.0000/g)).toHaveLength(2)
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Loading usage…')
+    wrapper.unmount()
+  })
+
+  it('clears old amounts on refresh and retries failed usage without reloading keys', async () => {
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats: { 1: { api_key_id: 1, today_actual_cost: 4.25, total_actual_cost: 12 } } })
+    const wrapper = await mountView()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$4.2500')
+
+    const usage = deferred<never>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(usage.promise)
+    await wrapper.get('button[title="Refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Loading usage…')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$4.2500')
+    usage.reject(new Error('usage unavailable'))
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Usage unavailable')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.0000')
+
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats: { 1: { api_key_id: 1, today_actual_cost: 0, total_actual_cost: 3.5 } } })
+    await getButtonByText(wrapper, 'Retry usage').trigger('click')
+    await flushPromises()
+    expect(listKeys).toHaveBeenCalledTimes(2)
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledTimes(3)
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$0.0000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$3.5000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Usage unavailable')
+    wrapper.unmount()
+  })
+
+  it.each([
+    {},
+    { 1: { api_key_id: 1, today_actual_cost: null, total_actual_cost: 0 } },
+    { 1: { api_key_id: 1, today_actual_cost: 0, total_actual_cost: Number.NaN } },
+  ])('treats incomplete or invalid amounts as unavailable instead of zero: %j', async (stats) => {
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats })
+    const wrapper = await mountView()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Usage unavailable')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.0000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Loading usage…')
+    wrapper.unmount()
+  })
+
+  it('skips hidden usage and loads the current page when shown again', async () => {
+    localStorage.setItem('api-key-hidden-columns', JSON.stringify(['usage']))
+    localStorage.setItem('api-key-column-settings-version', '3')
+    const wrapper = await mountView()
+    expect(getDashboardApiKeysUsage).not.toHaveBeenCalled()
+
+    listKeys.mockResolvedValueOnce({ items: [{ ...createApiKey(), id: 2, name: 'Second' }], total: 2, pages: 2 })
+    await wrapper.get('[data-test="page-2"]').trigger('click')
+    await flushPromises()
+    expect(getDashboardApiKeysUsage).not.toHaveBeenCalled()
+
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats: { 2: { api_key_id: 2, today_actual_cost: 1, total_actual_cost: 8 } } })
+    await wrapper.get('button[title="Column Settings"]').trigger('click')
+    await getButtonByText(wrapper, 'Usage').trigger('click')
+    await flushPromises()
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledOnce()
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledWith([2], expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.get('[data-test="usage-2"]').text()).toContain('$8.0000')
+    expect(listKeys).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('cancels usage when hidden and ignores its late result after showing again', async () => {
+    const oldUsage = deferred<BatchApiKeysUsageResponse>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(oldUsage.promise)
+    const wrapper = await mountView()
+    const oldSignal = getDashboardApiKeysUsage.mock.calls[0][1].signal as AbortSignal
+    await wrapper.get('button[title="Column Settings"]').trigger('click')
+    await getButtonByText(wrapper, 'Usage').trigger('click')
+    expect(oldSignal.aborted).toBe(true)
+    expect(wrapper.find('[data-test="usage-1"]').exists()).toBe(false)
+
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats: { 1: { api_key_id: 1, today_actual_cost: 2, total_actual_cost: 6 } } })
+    await getButtonByText(wrapper, 'Usage').trigger('click')
+    await flushPromises()
+    oldUsage.resolve({ stats: { 1: { api_key_id: 1, today_actual_cost: 99, total_actual_cost: 99 } } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$6.0000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$99.0000')
+    expect(listKeys).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it.each(['page', 'filter', 'sort'])('cancels old usage on %s changes and rejects late results', async (change) => {
+    const oldUsage = deferred<BatchApiKeysUsageResponse>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(oldUsage.promise)
+    const wrapper = await mountView()
+    const oldSignal = getDashboardApiKeysUsage.mock.calls[0][1].signal as AbortSignal
+    // Keep the same key ID to expose stale results even across overlapping filters.
+    getDashboardApiKeysUsage.mockResolvedValueOnce({ stats: { 1: { api_key_id: 1, today_actual_cost: 2, total_actual_cost: 6 } } })
+    if (change === 'page') await wrapper.get('[data-test="page-2"]').trigger('click')
+    else if (change === 'filter') wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('search')
+    else wrapper.findComponent({ name: 'DataTable' }).vm.$emit('sort', 'created_at', 'asc')
+    await flushPromises()
+    expect(oldSignal.aborted).toBe(true)
+    oldUsage.resolve({ stats: { 1: { api_key_id: 1, today_actual_cost: 99, total_actual_cost: 99 } } })
+    await flushPromises()
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$6.0000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$99.0000')
+    wrapper.unmount()
+  })
+
+  it('aborts list and usage on leaving the page', async () => {
+    const usage = deferred<never>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(usage.promise)
+    const wrapper = await mountView()
+    const listSignal = listKeys.mock.calls[0][3].signal as AbortSignal
+    const usageSignal = getDashboardApiKeysUsage.mock.calls[0][1].signal as AbortSignal
+    wrapper.unmount()
+    expect(listSignal.aborted).toBe(true)
+    expect(usageSignal.aborted).toBe(true)
+    usage.reject(new Error('late usage failure'))
+    await flushPromises()
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('aborts a pending list on leaving and never starts usage for its late response', async () => {
+    const list = deferred<{ items: ApiKey[]; total: number; pages: number }>()
+    listKeys.mockReturnValueOnce(list.promise)
+    const wrapper = await mountView()
+    const signal = listKeys.mock.calls[0][3].signal as AbortSignal
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
+    list.resolve({ items: [createApiKey()], total: 1, pages: 1 })
+    await flushPromises()
+    expect(getDashboardApiKeysUsage).not.toHaveBeenCalled()
+  })
+
+  it('loads a 1000-key page in serial batches of at most 100 without blocking the list', async () => {
+    const wrapper = await mountView()
+    getDashboardApiKeysUsage.mockClear()
+    const keys = Array.from({ length: 1000 }, (_, index) => ({ ...createApiKey(), id: index + 1 }))
+    listKeys.mockResolvedValueOnce({ items: keys, total: 1000, pages: 1 })
+    const requests: Array<{ ids: number[]; result: ReturnType<typeof deferred<BatchApiKeysUsageResponse>> }> = []
+    getDashboardApiKeysUsage.mockImplementation((ids: number[]) => {
+      const result = deferred<BatchApiKeysUsageResponse>()
+      requests.push({ ids, result })
+      return result.promise
+    })
+    wrapper.findComponent({ name: 'Pagination' }).vm.$emit('update:pageSize', 1000)
+    await flushPromises()
+    expect(listKeys.mock.calls[1][1]).toBe(1000)
+    expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-test^="usage-"]')).toHaveLength(1000)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].ids).toHaveLength(100)
+
+    for (let index = 0; index < 10; index++) {
+      expect(requests).toHaveLength(index + 1)
+      requests[index].result.resolve({ stats: Object.fromEntries(requests[index].ids.map((id) => [id, {
+        api_key_id: id, today_actual_cost: 0.25, total_actual_cost: 3.5,
+      }])) })
+      await flushPromises()
+      if (index < 9) {
+        expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Loading usage…')
+        expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.2500')
+      }
+    }
+    expect(requests.map((request) => request.ids.length)).toEqual([100, 100, 100, 100, 100, 100, 100, 100, 100, 100])
+    expect(requests.flatMap((request) => request.ids)).toEqual(Array.from({ length: 1000 }, (_, index) => index + 1))
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$0.2500')
+    expect(wrapper.get('[data-test="usage-1000"]').text()).toContain('$3.5000')
+    wrapper.unmount()
+  })
+
+  it('marks the whole page unavailable if a batch fails and retries every batch explicitly', async () => {
+    const keys = Array.from({ length: 201 }, (_, index) => ({ ...createApiKey(), id: index + 1 }))
+    listKeys.mockResolvedValueOnce({ items: keys, total: 201, pages: 1 })
+    const successfulBatch = (ids: number[]) => Promise.resolve({ stats: Object.fromEntries(ids.map((id) => [id, {
+      api_key_id: id, today_actual_cost: 1.25, total_actual_cost: 5,
+    }])) })
+    getDashboardApiKeysUsage.mockImplementationOnce(successfulBatch)
+    getDashboardApiKeysUsage.mockRejectedValueOnce(new Error('second batch failed'))
+    const wrapper = await mountView()
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Usage unavailable')
+    expect(wrapper.get('[data-test="usage-201"]').text()).toContain('Usage unavailable')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$1.2500')
+    expect(wrapper.get('[data-test="usage-201"]').text()).not.toContain('$0.0000')
+
+    getDashboardApiKeysUsage.mockImplementation(successfulBatch)
+    await getButtonByText(wrapper, 'Retry usage').trigger('click')
+    await flushPromises()
+    expect(listKeys).toHaveBeenCalledOnce()
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledTimes(5)
+    expect(getDashboardApiKeysUsage.mock.calls.map(([ids]) => ids.length)).toEqual([100, 100, 100, 100, 1])
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$1.2500')
+    expect(wrapper.get('[data-test="usage-201"]').text()).toContain('$5.0000')
+    wrapper.unmount()
+  })
+
+  it('keeps the newest list loading through rapid navigation and ignores old list failures', async () => {
+    const wrapper = await mountView()
+    const oldList = deferred<never>()
+    const newList = deferred<{ items: ApiKey[]; total: number; pages: number }>()
+    listKeys.mockReturnValueOnce(oldList.promise).mockReturnValueOnce(newList.promise)
+    await wrapper.get('[data-test="page-2"]').trigger('click')
+    const oldSignal = listKeys.mock.calls[1][3].signal as AbortSignal
+    wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('search')
+    await nextTick()
+    expect(oldSignal.aborted).toBe(true)
+    oldList.reject(new Error('late list failure'))
+    await flushPromises()
+    expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(true)
+    expect(showError).not.toHaveBeenCalled()
+    newList.resolve({ items: [{ ...createApiKey(), name: 'Latest key' }], total: 1, pages: 1 })
+    await flushPromises()
+    expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Latest key')
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores stale list success after the newest page has rendered', async () => {
+    const oldList = deferred<{ items: ApiKey[]; total: number; pages: number }>()
+    listKeys.mockReturnValueOnce(oldList.promise)
+    const wrapper = await mountView()
+    wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('search')
+    await flushPromises()
+    expect(wrapper.text()).toContain('test-key')
+    oldList.resolve({ items: [{ ...createApiKey(), name: 'Stale key' }], total: 1, pages: 1 })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Stale key')
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledOnce()
+  })
+
+  it.each(['resolve', 'reject'])('stops remaining batches and ignores an obsolete batch %s after navigation', async (completion) => {
+    const keys = Array.from({ length: 201 }, (_, index) => ({ ...createApiKey(), id: index + 1 }))
+    listKeys.mockResolvedValueOnce({ items: keys, total: 201, pages: 1 })
+    const oldUsage = deferred<BatchApiKeysUsageResponse>()
+    getDashboardApiKeysUsage.mockReturnValueOnce(oldUsage.promise)
+    const wrapper = await mountView()
+    const oldSignal = getDashboardApiKeysUsage.mock.calls[0][1].signal as AbortSignal
+    await wrapper.get('[data-test="page-2"]').trigger('click')
+    await flushPromises()
+    expect(oldSignal.aborted).toBe(true)
+    if (completion === 'resolve') {
+      oldUsage.resolve({ stats: Object.fromEntries(keys.slice(0, 100).map((key) => [key.id, {
+        api_key_id: key.id, today_actual_cost: 99, total_actual_cost: 99,
+      }])) })
+    } else oldUsage.reject(new Error('obsolete usage failure'))
+    await flushPromises()
+    expect(getDashboardApiKeysUsage).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('$0.0000')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Usage unavailable')
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('does not leave old rows showing pending usage if refreshing the list fails', async () => {
+    const wrapper = await mountView()
+    listKeys.mockRejectedValueOnce(new Error('list unavailable'))
+    await wrapper.get('button[title="Refresh"]').trigger('click')
+    await flushPromises()
+    expect(showError).toHaveBeenCalledWith('keys.failedToLoad')
+    expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Usage unavailable')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Loading usage…')
+    expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.0000')
+  })
+
+  it('uses cached public settings from the app store for endpoints', async () => {
+    fetchPublicSettings.mockResolvedValue({ api_base_url: 'https://cached.example.test', custom_endpoints: [] })
+    const wrapper = await mountView()
+    expect(fetchPublicSettings).toHaveBeenCalledOnce()
+    expect(getPublicSettings).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'EndpointPopover' }).props('apiBaseUrl')).toBe('https://cached.example.test')
+    wrapper.unmount()
   })
 
   it.each([
