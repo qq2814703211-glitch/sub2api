@@ -67,6 +67,9 @@ type Account struct {
 	GroupIDs      []int64
 	Groups        []*Group
 
+	// Scheduler-only resolved identity; never persisted or mapped to public DTOs.
+	SchedulerGrokSubscription *GrokSchedulerSubscription `json:"scheduler_grok_subscription,omitempty"`
+
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
 	modelMappingCacheReady          bool

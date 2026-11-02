@@ -321,8 +321,8 @@ func isKnownGrokFreeAccount(account *Account) bool {
 	if account == nil || !account.IsGrokOAuth() {
 		return false
 	}
-	if live := liveGrokSubscription(account); live != nil {
-		return isGrokFreeSubscriptionTier(live.Tier)
+	if tier, ok := resolvedGrokSubscriptionTier(account); ok {
+		return isGrokFreeSubscriptionTier(tier)
 	}
 	// Live access-token JWT wins over stale billing/credential snapshots
 	// so a downgrade to free is visible as soon as the AT is refreshed.

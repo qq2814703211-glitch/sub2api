@@ -89,8 +89,8 @@ func isExplicitGrokFreeOAuthAccount(account *Account) bool {
 	if account == nil || !account.IsGrokOAuth() {
 		return false
 	}
-	if live := liveGrokSubscription(account); live != nil {
-		return live.Tier == "free"
+	if tier, ok := resolvedGrokSubscriptionTier(account); ok {
+		return tier == "free"
 	}
 	for _, tier := range []string{
 		account.GetCredential("subscription_tier"),
