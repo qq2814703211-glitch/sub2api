@@ -592,6 +592,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		adminSettings.POST("/admin-api-key/regenerate", gin.HandlerFunc(stepUpAuth), h.Admin.Setting.RegenerateAdminAPIKey)
 		adminSettings.DELETE("/admin-api-key", gin.HandlerFunc(stepUpAuth), h.Admin.Setting.DeleteAdminAPIKey)
 		// 529过载冷却配置
+		adminSettings.GET("/key-usage-rollup", h.Admin.Setting.GetKeyUsageRollup)
+		adminSettings.PUT("/key-usage-rollup", h.Admin.Setting.UpdateKeyUsageRollup)
+		adminSettings.DELETE("/key-usage-rollup", h.Admin.Setting.PurgeKeyUsageRollup)
 		adminSettings.GET("/overload-cooldown", h.Admin.Setting.GetOverloadCooldownSettings)
 		adminSettings.PUT("/overload-cooldown", h.Admin.Setting.UpdateOverloadCooldownSettings)
 		// 429默认回避配置

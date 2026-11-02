@@ -210,18 +210,27 @@
 
           <template #cell-usage="{ row }">
             <div class="text-sm">
-              <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
-                </span>
+              <template v-if="usageState === 'ready' && usageStats[row.id]">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
+                  <span class="font-medium text-gray-900 dark:text-white">
+                    ${{ usageStats[row.id].today_actual_cost.toFixed(4) }}
+                  </span>
+                </div>
+                <div class="mt-0.5 flex items-center gap-1.5">
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
+                  <span class="font-medium text-gray-900 dark:text-white">
+                    ${{ usageStats[row.id].total_actual_cost.toFixed(4) }}
+                  </span>
+                </div>
+              </template>
+              <div v-else-if="usageState === 'error'" class="space-y-1">
+                <span role="status" class="text-gray-500 dark:text-gray-400">{{ t('keys.usageFailed') }}</span>
+                <button class="block text-primary-600 hover:underline dark:text-primary-400" @click="retryUsageStats">
+                  {{ t('keys.retryUsage') }}
+                </button>
               </div>
-              <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
-                </span>
-              </div>
+              <span v-else role="status" class="text-gray-500 dark:text-gray-400">{{ t('keys.usageLoading') }}</span>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center gap-1.5">
@@ -1207,7 +1216,7 @@
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
-import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
@@ -1348,6 +1357,10 @@ const toggleColumn = (key: string) => {
     hiddenColumns.add(key)
   }
   saveColumnsToStorage()
+  if (key === 'usage') {
+    cancelUsageStats()
+    if (isColumnVisible('usage') && !loading.value) void loadUsageStats()
+  }
 }
 
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
@@ -1378,6 +1391,7 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+const usageState = ref<'pending' | 'error' | 'ready'>('pending')
 const userGroupRates = ref<Record<number, number>>({})
 
 const pagination = ref({
@@ -1414,6 +1428,7 @@ const columnDropdownRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
+let usageAbortController: AbortController | null = null
 
 // Get the currently selected key for group change
 const selectedKeyForGroup = computed(() => {
@@ -1583,8 +1598,51 @@ const isAbortError = (error: unknown) => {
   return name === 'AbortError' || code === 'ERR_CANCELED'
 }
 
+const cancelUsageStats = () => {
+  usageAbortController?.abort()
+  usageAbortController = null
+  usageState.value = 'pending'
+  usageStats.value = {}
+}
+
+const loadUsageStats = async () => {
+  cancelUsageStats()
+  const keyIds = apiKeys.value.map((key) => key.id)
+  if (!isColumnVisible('usage') || keyIds.length === 0) return
+  const controller = new AbortController()
+  usageAbortController = controller
+  const { signal } = controller
+  try {
+    // Publish amounts atomically for the page. A failed batch leaves no partial totals.
+    // Serial requests cap concurrency at one and respect the API's 100-ID limit.
+    const stats: Record<string, BatchApiKeyUsageStats> = {}
+    for (let offset = 0; offset < keyIds.length; offset += 100) {
+      const batchIds = keyIds.slice(offset, offset + 100)
+      const response = await usageAPI.getDashboardApiKeysUsage(batchIds, { signal })
+      if (signal.aborted) return
+      for (const id of batchIds) {
+        const entry = response.stats[id]
+        if (!entry || !Number.isFinite(entry.today_actual_cost) || !Number.isFinite(entry.total_actual_cost)) {
+          throw new Error('Incomplete API key usage stats')
+        }
+        stats[id] = entry
+      }
+    }
+    usageStats.value = stats
+    usageState.value = 'ready'
+  } catch (error) {
+    if (signal.aborted || isAbortError(error)) return
+    usageState.value = 'error'
+  }
+}
+
+const retryUsageStats = () => {
+  if (!loading.value) void loadUsageStats()
+}
+
 const loadApiKeys = async () => {
   abortController?.abort()
+  cancelUsageStats()
   const controller = new AbortController()
   abortController = controller
   const { signal } = controller
@@ -1613,23 +1671,13 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // Load usage stats for all API keys in the list
-    if (response.items.length > 0) {
-      const keyIds = response.items.map((k) => k.id)
-      try {
-        const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
-        if (signal.aborted) return
-        usageStats.value = usageResponse.stats
-      } catch (e) {
-        if (!isAbortError(e)) {
-          console.error('Failed to load usage stats:', e)
-        }
-      }
-    }
+    // Usage must not hold the list's loading state open.
+    void loadUsageStats()
   } catch (error) {
-    if (isAbortError(error)) {
+    if (signal.aborted || isAbortError(error)) {
       return
     }
+    usageState.value = 'error'
     appStore.showError(t('keys.failedToLoad'))
   } finally {
     if (abortController === controller) {
@@ -1656,7 +1704,7 @@ const loadUserGroupRates = async () => {
 
 const loadPublicSettings = async () => {
   try {
-    publicSettings.value = await authAPI.getPublicSettings()
+    publicSettings.value = await appStore.fetchPublicSettings()
   } catch (error) {
     console.error('Failed to load public settings:', error)
   }
@@ -2089,6 +2137,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  abortController?.abort()
+  cancelUsageStats()
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
 })
