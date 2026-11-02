@@ -317,8 +317,12 @@ func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account
 // Free cache routing / media free_tier blocks (broader than soft-gate).
 // Soft-gate uses isExplicitGrokFreeOAuthAccount (exact "free" only).
 func isKnownGrokFreeAccount(account *Account) bool {
+	account = GrokSubscriptionAccountView(account)
 	if account == nil || !account.IsGrokOAuth() {
 		return false
+	}
+	if live := liveGrokSubscription(account); live != nil {
+		return isGrokFreeSubscriptionTier(live.Tier)
 	}
 	// Live access-token JWT wins over stale billing/credential snapshots
 	// so a downgrade to free is visible as soon as the AT is refreshed.

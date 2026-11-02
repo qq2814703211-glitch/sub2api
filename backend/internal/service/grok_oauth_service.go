@@ -330,9 +330,12 @@ func (s *GrokOAuthService) RefreshAccountToken(ctx context.Context, account *Acc
 	if err != nil {
 		return nil, err
 	}
-	// New access-token JWT is authoritative. Keep the stored value only when
-	// the refreshed token has no tier claim (opaque AT / missing field).
-	if strings.TrimSpace(tokenInfo.SubscriptionTier) == "" {
+	account = GrokSubscriptionAccountView(account)
+	// Settings is live subscription truth; refresh-token JWT metadata must not
+	// resurrect an old paid tier after a confirmed downgrade.
+	if live := liveGrokSubscription(account); live != nil {
+		tokenInfo.SubscriptionTier = live.Tier
+	} else if strings.TrimSpace(tokenInfo.SubscriptionTier) == "" {
 		tokenInfo.SubscriptionTier = account.GetCredential("subscription_tier")
 	}
 	if strings.TrimSpace(tokenInfo.EntitlementStatus) == "" {

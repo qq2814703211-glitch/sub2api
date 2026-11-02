@@ -85,8 +85,12 @@ func calculateGrokFreeQuotaSoftGateTokens(limit int64, percent int) int64 {
 // subscription_tier or plan_type exactly "free" (case-insensitive). Inferred
 // free / basic / blank plan do not soft-gate.
 func isExplicitGrokFreeOAuthAccount(account *Account) bool {
+	account = GrokSubscriptionAccountView(account)
 	if account == nil || !account.IsGrokOAuth() {
 		return false
+	}
+	if live := liveGrokSubscription(account); live != nil {
+		return live.Tier == "free"
 	}
 	for _, tier := range []string{
 		account.GetCredential("subscription_tier"),
