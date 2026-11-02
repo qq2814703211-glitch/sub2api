@@ -703,7 +703,9 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { getGrokSubscriptionSnapshot } from '@/utils/grokSubscription'
+import { normalizePlanType } from '@/utils/planType'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
@@ -870,6 +872,7 @@ const openAISevenDayEstimatedTotalCost = computed(() => {
 })
 
 const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))
+const grokUsageRefreshKey = computed(() => buildGrokUsageRefreshKey(props.account))
 
 const shouldAutoLoadUsageOnMount = computed(() => {
   return shouldFetchUsage.value
@@ -1301,6 +1304,10 @@ const grokPlanLabelIsPaid = (value: string) => {
 }
 const grokIsFree = computed(() => {
   if (props.account.platform !== 'grok' || props.account.type !== 'oauth') return false
+  const subscription = getGrokSubscriptionSnapshot(props.account.extra)
+  if (subscription) {
+    return ['free', 'basic', 'xbasic'].includes(normalizePlanType(subscription.tier))
+  }
   const billing = grokBilling.value
   const plan = (billing?.plan || '').trim().toLowerCase()
   const tier = (usageInfo.value?.subscription_tier || '').trim().toLowerCase()
@@ -1722,6 +1729,17 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
     return
   }
 
+  _usageCache.delete(props.account.id)
+  requestAutoLoad()
+})
+
+watch(grokUsageRefreshKey, (nextKey, prevKey) => {
+  if (!prevKey || nextKey === prevKey) return
+  if (props.account.platform !== 'grok' || props.account.type !== 'oauth') return
+  if (isBatchManaged.value) {
+    requestParentBatchUsage({ force: true })
+    return
+  }
   _usageCache.delete(props.account.id)
   requestAutoLoad()
 })
