@@ -192,6 +192,11 @@ func (s *GrokQuotaService) refreshGrokSubscription(ctx context.Context, account 
 		return errors.New("missing_scope")
 	}
 	snapshot := map[string]any{"tier": xai.NormalizeSubscriptionTier(display), "display_name": display, "source": "settings", "observed_at": time.Now().UTC().Format(time.RFC3339Nano), "requested_at": requested.Format(time.RFC3339Nano), "status_code": 200, "scope": scope}
+	release, err := s.acquireGrokSubscriptionRefreshLock(ctx, account)
+	if err != nil {
+		return err
+	}
+	defer release()
 	applied, err := repo.UpdateGrokSubscriptionIfUnchanged(ctx, account.ID, account.Credentials, account.ProxyID, snapshot, account.Proxy)
 	if err != nil {
 		return errors.New("persistence")
