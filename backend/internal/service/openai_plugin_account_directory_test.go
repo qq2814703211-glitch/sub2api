@@ -91,7 +91,7 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	// (refresh_token) not handed out by ResolveOutboundIdentity. Groups/AccountGroups
 	// = relational graphs with back-references that would cycle under encoding/json.
 	stripped := map[string]struct{}{
-		"Credentials": {}, "Groups": {}, "AccountGroups": {},
+		"Credentials": {}, "Groups": {}, "AccountGroups": {}, "SchedulerGrokSubscription": {},
 	}
 	// Fields intentionally exposed as readable metadata (incl. Extra and Proxy —
 	// the proxy password is already handed out via ResolveOutboundIdentity's URL).
@@ -124,14 +124,17 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	// The raw Credentials blob must never serialize; Extra and the proxy ARE released.
 	acct := &Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive,
-		Credentials: map[string]any{"access_token": "AT", "refresh_token": "LEAK-REFRESH"},
-		Extra:       map[string]any{"opaque": "extra-released"},
-		Proxy:       &Proxy{Host: "host", Port: 1, Username: "user", Password: "pw-released"},
+		Credentials:               map[string]any{"access_token": "AT", "refresh_token": "LEAK-REFRESH"},
+		Extra:                     map[string]any{"opaque": "extra-released"},
+		Proxy:                     &Proxy{Host: "host", Port: 1, Username: "user", Password: "pw-released"},
+		SchedulerGrokSubscription: &GrokSchedulerSubscription{AccountID: 1, Tier: "free"},
 	}
 	snap := accountReadableSnapshotJSON(acct)
 	require.NotNil(t, snap)
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(snap, &m))
+	assert.NotContains(t, m, "scheduler_grok_subscription", "cache-only identity is not a plugin snapshot field")
+	assert.NotNil(t, acct.SchedulerGrokSubscription, "snapshot projection must not mutate the account")
 	assert.NotContains(t, string(snap), "LEAK-REFRESH", "raw Credentials must never appear in metadata")
 	assert.Contains(t, string(snap), "extra-released", "Extra is intentionally released")
 	assert.Contains(t, string(snap), "pw-released", "proxy is intentionally released (already exposed via 打票)")

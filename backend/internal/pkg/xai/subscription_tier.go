@@ -55,6 +55,8 @@ func NormalizeSubscriptionTier(raw string) string {
 		return "supergrok"
 	case "supergrok_lite", "supergroklite":
 		return "supergrok_lite"
+	case "ultra", "supergrok_ultra", "supergrokultra":
+		return "ultra"
 	case "supergrok_heavy", "supergrokheavy":
 		return "supergrok_heavy"
 	case "supergrok_pro", "supergrokpro":

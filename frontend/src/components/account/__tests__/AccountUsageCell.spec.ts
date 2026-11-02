@@ -1275,6 +1275,124 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).not.toContain('250.0K')
   })
 
+  it.each([
+    ['free', 'Free', 'supergrok_heavy', '24h|', '7d|'],
+    ['supergrok_heavy', 'SuperGrok Heavy', 'free', '7d|', '24h|'],
+    ['ultra', 'Ultra', 'free', '7d|', '24h|'],
+    ['future_free_orbit', 'Future Free Orbit', 'free', '7d|', '24h|'],
+  ])('Grok settings %s selects windows ahead of stale usage identity', async (tier, displayName, oldTier, visible, hidden) => {
+    getUsage.mockResolvedValue({
+      subscription_tier: oldTier,
+      grok_free_token_limit: 1_000_000,
+      grok_billing: { period_type: 'weekly', plan: 'SuperGrok Heavy', usage_percent: 20 },
+      grok_local_usage_24h: { requests: 1, tokens: 100, cost: 0, standard_cost: 0 },
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4600, platform: 'grok', type: 'oauth',
+          extra: { grok_subscription_snapshot: {
+            tier, display_name: displayName, source: 'settings', status_code: 200,
+            observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+          } },
+        }),
+      },
+      global: { stubs: {
+        UsageProgressBar: { props: ['label', 'utilization'], template: '<div>{{ label }}|{{ utilization }}</div>' },
+        GrokQuotaProbeCell: true,
+      } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain(visible)
+    expect(wrapper.text()).not.toContain(hidden)
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('Grok subscription-only changes invalidate usage (batch managed: %s)', async (managed) => {
+    const snapshot = {
+      tier: 'supergrok_heavy', display_name: 'SuperGrok Heavy', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const account = makeAccount({ id: 4601, platform: 'grok', type: 'oauth', extra: { grok_subscription_snapshot: snapshot } })
+    const usage = { subscription_tier: 'supergrok_heavy', grok_billing: { usage_percent: 20 } }
+    getUsage.mockResolvedValue(usage)
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account, ...(managed ? { requestBatchedUsage, batchedUsage: usage } : {}) },
+      global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } },
+    })
+    await flushPromises()
+    requestBatchedUsage.mockClear()
+    getUsage.mockClear()
+    await wrapper.setProps({ account: { ...account, extra: { grok_subscription_snapshot: {
+      ...snapshot, tier: 'free', display_name: 'Free', observed_at: '2026-11-02T12:05:01Z',
+    } } } })
+    await flushPromises()
+    if (managed) {
+      expect(requestBatchedUsage).toHaveBeenCalledTimes(1)
+      expect(requestBatchedUsage).toHaveBeenCalledWith(expect.objectContaining({ id: 4601 }), { bypassCache: true })
+      expect(getUsage).not.toHaveBeenCalled()
+    } else {
+      expect(getUsage).toHaveBeenCalledTimes(1)
+      expect(getUsage).toHaveBeenCalledWith(4601)
+    }
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('does not reload Grok usage for observation timestamps or billing-only changes (batch managed: %s)', async (managed) => {
+    const snapshot = {
+      tier: 'free', display_name: 'Free', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const account = makeAccount({ id: 4602, platform: 'grok', type: 'oauth', extra: { grok_subscription_snapshot: snapshot } })
+    const usage = { subscription_tier: 'free', subscription_tier_raw: 'Free' }
+    getUsage.mockResolvedValue(usage)
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account, ...(managed ? { requestBatchedUsage, batchedUsage: usage } : {}) },
+      global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } },
+    })
+    await flushPromises()
+    requestBatchedUsage.mockClear()
+    getUsage.mockClear()
+    for (const minute of ['01', '02', '03']) {
+      await wrapper.setProps({ account: { ...account, extra: {
+        grok_subscription_snapshot: { ...snapshot, observed_at: `2026-11-02T12:${minute}:01Z`, requested_at: `2026-11-02T12:${minute}:00Z` },
+        grok_billing_snapshot: { updated_at: `2026-11-02T12:${minute}:01Z`, plan: 'Free' },
+        grok_usage_snapshot: { updated_at: `2026-11-02T12:${minute}:01Z`, subscription_tier: 'free' },
+      } } })
+      await flushPromises()
+    }
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    expect(getUsage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('reuses fresh Grok usage when the row subscription catches up (batch managed: %s)', async (managed) => {
+    const snapshot = {
+      tier: 'supergrok_heavy', display_name: 'SuperGrok Heavy', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const account = makeAccount({ id: 4603, platform: 'grok', type: 'oauth', extra: { grok_subscription_snapshot: snapshot } })
+    const usage = { subscription_tier: 'free', subscription_tier_raw: 'Free' }
+    getUsage.mockResolvedValue(usage)
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account, ...(managed ? { requestBatchedUsage, batchedUsage: usage } : {}) },
+      global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } },
+    })
+    await flushPromises()
+    requestBatchedUsage.mockClear()
+    getUsage.mockClear()
+    await wrapper.setProps({ account: { ...account, extra: {
+      grok_subscription_snapshot: { ...snapshot, tier: 'free', display_name: 'Free' },
+    } } })
+    await flushPromises()
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    expect(getUsage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('Grok JWT free tier shows 24h bar even when leftover Heavy billing metrics remain', async () => {
     getUsage.mockResolvedValue({
       grok_free_token_limit: 500_000,
