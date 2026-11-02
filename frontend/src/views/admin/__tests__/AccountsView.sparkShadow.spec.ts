@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AccountsView from '../AccountsView.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
+import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 
@@ -13,6 +14,8 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getBatchUsage,
+  getById,
   getAllProxies,
   getAllGroups,
   duplicateAccount,
@@ -23,6 +26,8 @@ const {
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getBatchUsage: vi.fn(),
+  getById: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
   duplicateAccount: vi.fn(),
@@ -37,8 +42,10 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getBatchUsage,
+      getById,
       duplicate: duplicateAccount,
-      getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
+      getUpstreamBillingProbeSettings: () => Promise.resolve({ enabled: true, interval_minutes: 30 }),
       createSparkShadow,
       delete: vi.fn(),
       batchClearError: vi.fn(),
@@ -224,6 +231,7 @@ const mountViewWithRow = () =>
             <div v-for="(row, idx) in (data || [])" :key="idx">
               <slot name="cell-name" :row="row" :value="row.name" />
               <slot name="cell-platform_type" :row="row" />
+              <slot name="cell-usage" :row="row" />
             </div>
           </div>`
         },
@@ -345,6 +353,240 @@ describe('admin AccountsView — 账号行展示', () => {
     expect(wrapper.text()).toContain('oauth-account')
     expect(wrapper.text()).toContain('invalid-url')
 
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['free', 'Free', 'supergrok_heavy'],
+    ['supergrok_heavy', 'SuperGrok Heavy', 'free'],
+    ['ultra', 'Ultra', 'supergrok_heavy'],
+    ['future_orbit', 'Future Orbit / 2027', 'supergrok_heavy'],
+  ])('prefers successful settings %s over stale credentials and billing', async (tier, displayName, staleTier) => {
+    listAccounts.mockResolvedValue({
+      items: [{
+        id: 220,
+        name: 'Grok-Ultra-13',
+        platform: 'grok',
+        type: 'oauth',
+        credentials: { subscription_tier: staleTier },
+        extra: {
+          grok_billing_snapshot: { plan: 'SuperGrok Heavy', monthly_limit_cents: 0 },
+          grok_subscription_snapshot: {
+            tier,
+            display_name: displayName,
+            source: 'settings',
+            observed_at: '2026-11-02T12:00:01Z',
+            requested_at: '2026-11-02T12:00:00.123456789Z',
+            status_code: 200,
+          },
+        },
+      }],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe(displayName)
+    wrapper.unmount()
+  })
+
+  it('syncs a persisted subscription after usage-loaded without reloading the list', async () => {
+    getById.mockReset()
+    const account = {
+      id: 221, name: 'Grok-Ultra-13', platform: 'grok', type: 'oauth',
+      credentials: { subscription_tier: 'supergrok_heavy', model_mapping: { chat: 'grok-4.5' } },
+      extra: { grok_billing_snapshot: { plan: 'SuperGrok Heavy' }, preserved: true },
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getById.mockResolvedValue({
+      ...account,
+      credentials: { ...account.credentials, subscription_tier: 'free' },
+      extra: {
+        ...account.extra,
+        grok_subscription_snapshot: {
+          tier: 'free', display_name: 'Free', source: 'settings', status_code: 200,
+          observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+        },
+      },
+    })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('supergrok_heavy')
+    const usage = { subscription_tier: 'free', subscription_tier_raw: 'Free' }
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', usage)
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Free')
+    expect(wrapper.findComponent(AccountUsageCell).props('account').extra.preserved).toBe(true)
+    expect(getById).toHaveBeenCalledTimes(1)
+    expect(getById).toHaveBeenCalledWith(221)
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', usage)
+    await flushPromises()
+    expect(getById).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it.each([
+    undefined,
+    { status_code: 503 },
+    { tier: '' },
+    { tier: '   ' },
+    { tier: undefined },
+    { display_name: '' },
+    { source: 'jwt' },
+    { observed_at: 'invalid' },
+    { requested_at: undefined },
+  ])('retains the legacy tier for unusable settings snapshots (%j)', async (invalid) => {
+    const snapshot = {
+      tier: 'free', display_name: 'Free', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+      ...invalid,
+    }
+    listAccounts.mockResolvedValue({
+      items: [{
+        id: 222, name: 'Grok-Ultra-20', platform: 'grok', type: 'oauth',
+        credentials: { subscription_tier: 'supergrok_heavy' },
+        extra: { grok_subscription_snapshot: invalid === undefined ? undefined : snapshot },
+      }], total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('supergrok_heavy')
+    wrapper.unmount()
+  })
+
+  it('keeps the current row snapshot over a conflicting usage response', async () => {
+    getById.mockReset()
+    const account = {
+      id: 223, name: 'Grok-Ultra-1', platform: 'grok', type: 'oauth',
+      credentials: { subscription_tier: 'supergrok_heavy' },
+      extra: { grok_subscription_snapshot: {
+        tier: 'ultra', display_name: 'Ultra', source: 'settings', status_code: 200,
+        observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+      } },
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getById.mockResolvedValue(account)
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', { subscription_tier: 'free', subscription_tier_raw: 'Free' })
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Ultra')
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('ignores a late row lookup after a newer subscription lookup has applied', async () => {
+    getById.mockReset()
+    let resolveOld!: (account: unknown) => void
+    const account = {
+      id: 224, name: 'subscription-race', platform: 'grok', type: 'oauth',
+      credentials: { subscription_tier: 'supergrok_heavy' }, extra: {},
+    }
+    const rowWithTier = (tier: string, displayName: string) => ({
+      ...account,
+      extra: { grok_subscription_snapshot: {
+        tier, display_name: displayName, source: 'settings', status_code: 200,
+        observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+      } },
+    })
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getById.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    getById.mockResolvedValueOnce(rowWithTier('ultra', 'Ultra'))
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', { subscription_tier: 'free' })
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', { subscription_tier: 'ultra' })
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Ultra')
+    resolveOld(rowWithTier('free', 'Free'))
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Ultra')
+    wrapper.unmount()
+  })
+
+  it('allows the latest lookup to apply even when the older lookup finishes first', async () => {
+    getById.mockReset()
+    let resolveOld!: (account: unknown) => void
+    let resolveNew!: (account: unknown) => void
+    const account = {
+      id: 226, name: 'subscription-race-old-first', platform: 'grok', type: 'oauth',
+      credentials: { subscription_tier: 'supergrok_heavy' }, extra: {},
+    }
+    const rowWithTier = (tier: string, displayName: string) => ({
+      ...account,
+      extra: { grok_subscription_snapshot: {
+        tier, display_name: displayName, source: 'settings', status_code: 200,
+        observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+      } },
+    })
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    getById.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    getById.mockImplementationOnce(() => new Promise(resolve => { resolveNew = resolve }))
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', { subscription_tier: 'free' })
+    wrapper.findComponent(AccountUsageCell).vm.$emit('usage-loaded', { subscription_tier: 'ultra' })
+    resolveOld(rowWithTier('free', 'Free'))
+    await flushPromises()
+    resolveNew(rowWithTier('ultra', 'Ultra'))
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Ultra')
+    wrapper.unmount()
+  })
+
+  it('replaces a Grok row when only the subscription snapshot changes', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
+    const account = {
+      id: 225, name: 'snapshot-only', platform: 'grok', type: 'oauth',
+      credentials: { subscription_tier: 'supergrok_heavy' },
+      extra: { grok_subscription_snapshot: {
+        tier: 'supergrok_heavy', display_name: 'SuperGrok Heavy', source: 'settings', status_code: 200,
+        observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+      } },
+    }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    listWithEtag.mockResolvedValueOnce({ notModified: false, etag: 'subscription-only', data: {
+      items: [{ ...account, extra: { grok_subscription_snapshot: {
+        ...account.extra.grok_subscription_snapshot, tier: 'free', display_name: 'Free',
+      } } }], total: 1, page: 1, page_size: 20, pages: 1,
+    } })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('SuperGrok Heavy')
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushPromises()
+    expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Free')
+    wrapper.unmount()
+  })
+
+  it('bypasses only the local batch cache without forcing an upstream probe', async () => {
+    vi.useFakeTimers()
+    getBatchUsage.mockReset()
+    listAccounts.mockResolvedValue({ items: [{
+      id: 227, name: 'batch-cache', platform: 'grok', type: 'oauth',
+    }], total: 1, page: 1, page_size: 20, pages: 1 })
+    getBatchUsage.mockResolvedValue({ usage: { '227': { subscription_tier: 'free' } } })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    const cell = wrapper.findComponent(AccountUsageCell)
+    const request = cell.props('requestBatchedUsage')
+    expect(request).toBeTypeOf('function')
+    request(cell.props('account'))
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(1)
+    getBatchUsage.mockClear()
+    request(cell.props('account'))
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).not.toHaveBeenCalled()
+    request(cell.props('account'), { bypassCache: true })
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(1)
+    expect(getBatchUsage).toHaveBeenCalledWith([227], false)
     wrapper.unmount()
   })
 

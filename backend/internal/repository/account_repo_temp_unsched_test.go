@@ -236,7 +236,11 @@ func TestAccountRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnch
 }
 
 func TestAccountRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemptStateAndAtomicOutbox(t *testing.T) {
-	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectQuery("SELECT COALESCE").WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"snapshot", "proxy"}).AddRow([]byte("null"), []byte("null")))
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1), queryDB: db}
 	repo := newAccountRepositoryWithSQL(nil, exec, nil)
 	proxyID := int64(29)
 
@@ -254,10 +258,11 @@ func TestAccountRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemp
 	normalized := normalizeSQLWhitespace(exec.execQueries[0])
 	require.Contains(t, normalized, "WITH updated AS")
 	require.Contains(t, normalized, "credentials = $1::jsonb")
-	require.Contains(t, normalized, "credentials = $5::jsonb")
+	require.Contains(t, normalized, "credentials - 'subscription_tier' = $5::jsonb - 'subscription_tier'")
 	require.Contains(t, normalized, "proxy_id IS NOT DISTINCT FROM $6")
 	require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
-	require.Len(t, exec.execArgs[0], 7)
+	require.Len(t, exec.execArgs[0], 9)
+	require.NoError(t, mock.ExpectationsWereMet())
 	require.Equal(t, &proxyID, exec.execArgs[0][5])
 }
 
@@ -376,6 +381,7 @@ func (r rowsAffectedResult) LastInsertId() (int64, error) { return 0, nil }
 func (r rowsAffectedResult) RowsAffected() (int64, error) { return int64(r), nil }
 
 type recordingSQLExecutor struct {
+	queryDB     *sql.DB
 	result      sql.Result
 	err         error
 	afterExec   func()
@@ -396,5 +402,8 @@ func (e *recordingSQLExecutor) ExecContext(ctx context.Context, query string, ar
 }
 
 func (e *recordingSQLExecutor) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if e.queryDB != nil {
+		return e.queryDB.QueryContext(ctx, query, args...)
+	}
 	return nil, sql.ErrNoRows
 }
