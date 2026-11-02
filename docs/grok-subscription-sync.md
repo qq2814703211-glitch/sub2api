@@ -19,7 +19,9 @@ This patch is based on production commit `172e847650e266e16844b79ba44cc8ee0b0ace
 
 A successful `/settings` response with a nonempty subscription display is evidence of the current tier. A missing JWT claim, zero monthly allowance, HTTP error, malformed response or missing settings field is not evidence of Free. The last successful observation keeps its own timestamp when a later refresh fails.
 
-A matching live snapshot takes precedence over legacy JWT and credential hints. Persistence updates subscription fields narrowly and preserves tokens, model mappings and unrelated metadata. Credential/proxy changes and out-of-order observations are checked at the persistence boundary; scheduler publication follows the committed change.
+A matching live snapshot takes precedence over legacy JWT and credential hints. Persistence updates subscription fields narrowly and preserves tokens, model mappings and unrelated metadata. Credential/proxy changes and out-of-order observations are checked at the persistence boundary; scheduler publication follows the committed change. A provider-issued token refresh migrates an existing confirmed observation to the new token scope atomically, including opaque/no-sub tokens; separately authorized identities do not inherit that observation. Client create, update, extra and bulk writes cannot replace the managed subscription snapshot.
+
+Candidate scheduling receives only a validated account ID and canonical tier through cache-only metadata. This projection contains no token or proxy identity, is not an admin input or persisted account property, and is excluded from public DTOs and plugin-readable snapshots.
 
 ## Product names
 
