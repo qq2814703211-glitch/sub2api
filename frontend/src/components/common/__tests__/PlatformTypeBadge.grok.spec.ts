@@ -84,6 +84,13 @@ describe('PlatformTypeBadge Grok plans', () => {
     expect(lite.html()).toContain('bg-cyan-100')
   })
 
+  it.each(['Ultra', 'Future Orbit / 2027', 'Future Free Orbit'])('preserves the free-form Grok name %s', (planType) => {
+    const wrapper = mount(PlatformTypeBadge, { props: { platform: 'grok', type: 'oauth', planType } })
+    expect(wrapper.text()).toContain(planType)
+    expect(wrapper.find('[data-testid="grok-free-plan-icon"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('uses a dedicated 12px currentColor Grok mark with a Free sparkle', () => {
     const wrapper = mount(GrokFreeIcon)
 

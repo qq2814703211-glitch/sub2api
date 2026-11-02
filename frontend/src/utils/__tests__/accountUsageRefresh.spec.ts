@@ -63,6 +63,24 @@ describe('buildOpenAIUsageRefreshKey', () => {
 })
 
 describe('buildGrokUsageRefreshKey', () => {
+  it.each([
+    { tier: 'free', display_name: 'Free' },
+    { display_name: 'Ultra' },
+    { observed_at: '2026-11-02T12:05:01Z' },
+    { requested_at: '2026-11-02T12:05:00.123456789Z' },
+  ])('invalidates cached usage for subscription-only changes (%j)', (change) => {
+    const snapshot = {
+      tier: 'supergrok_heavy', display_name: 'SuperGrok Heavy', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const base = { platform: 'grok', extra: { grok_subscription_snapshot: snapshot } } as any
+    const changed = {
+      ...base,
+      extra: { grok_subscription_snapshot: { ...snapshot, ...change } },
+    }
+    expect(buildGrokUsageRefreshKey(base)).not.toBe(buildGrokUsageRefreshKey(changed))
+  })
+
   it('changes when a canonical Grok billing or usage snapshot changes', () => {
     const base = {
       platform: 'grok',
