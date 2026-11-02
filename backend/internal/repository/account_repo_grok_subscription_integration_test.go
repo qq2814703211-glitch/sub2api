@@ -27,8 +27,8 @@ func TestGrokSubscriptionPostgresAtomicBoundaries(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	ctx := context.Background()
 	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key,platform text,type text,credentials jsonb,extra jsonb,proxy_id bigint,deleted_at timestamptz,updated_at timestamptz);
- CREATE TEMP TABLE proxies(id bigint,protocol text,host text,port integer,username text,password text,deleted_at timestamptz);
- INSERT INTO proxies VALUES(9,'http','proxy.test',8080,'','',NULL);
+ CREATE TEMP TABLE proxies(id bigint,protocol text,host text,port integer,username text,password text,deleted_at timestamptz,status text);
+ INSERT INTO proxies VALUES(9,'http','proxy.test',8080,'','',NULL,'');
  CREATE TEMP TABLE scheduler_outbox(event_type text,account_id bigint,group_id bigint,payload jsonb)`)
 	require.NoError(t, err)
 	repo := newAccountRepositoryWithSQL(nil, db, nil)

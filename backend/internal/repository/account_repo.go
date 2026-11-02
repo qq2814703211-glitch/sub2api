@@ -1682,6 +1682,9 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
+	if scoped := r.accountTransactionScope(ctx); scoped != r {
+		return scoped.UpdateGrokOAuthCredentialsIfUnchanged(ctx, id, expectedCredentials, expectedProxyID, credentials)
+	}
 	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
 	if err != nil {
 		return false, err
@@ -1690,7 +1693,12 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 	if err != nil {
 		return false, err
 	}
-	result, err := r.sql.ExecContext(ctx, `
+	for attempt := 0; attempt < 3; attempt++ {
+		previous, migrated, err := r.grokSubscriptionRotation(ctx, id, expectedCredentials, expectedProxyID, credentials)
+		if err != nil {
+			return false, err
+		}
+		result, err := r.sql.ExecContext(ctx, `
 		WITH updated AS (
 		UPDATE accounts AS a
 		SET credentials = $1::jsonb || CASE
@@ -1698,6 +1706,7 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
                  AND a.extra->'grok_subscription_snapshot'->>'tier' = a.credentials->>'subscription_tier'
                 THEN jsonb_build_object('subscription_tier', a.credentials->'subscription_tier')
                 ELSE '{}'::jsonb END,
+            extra = CASE WHEN $9::jsonb IS NOT NULL THEN jsonb_set(COALESCE(a.extra, '{}'::jsonb), '{grok_subscription_snapshot}', $9::jsonb, true) ELSE a.extra END,
 			updated_at = NOW()
 		WHERE a.id = $2
 			AND a.deleted_at IS NULL
@@ -1705,31 +1714,37 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 			AND a.type = $4
 			AND a.credentials - 'subscription_tier' = $5::jsonb - 'subscription_tier'
 			AND a.proxy_id IS NOT DISTINCT FROM $6
+            AND COALESCE(a.extra->'grok_subscription_snapshot','null'::jsonb) = $8::jsonb
 		RETURNING a.id
 		)
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
 		SELECT $7, updated.id, NULL, NULL FROM updated
 	`,
-		string(credentialsJSON),
-		id,
-		service.PlatformGrok,
-		service.AccountTypeOAuth,
-		string(expectedJSON),
-		expectedProxyID,
-		service.SchedulerOutboxEventAccountChanged,
-	)
-	if err != nil {
-		return false, err
+			string(credentialsJSON),
+			id,
+			service.PlatformGrok,
+			service.AccountTypeOAuth,
+			string(expectedJSON),
+			expectedProxyID,
+			service.SchedulerOutboxEventAccountChanged,
+			string(previous), migrated,
+		)
+		if err != nil {
+			return false, err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		if rowsAffected == 0 {
+			continue
+		}
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshotDetached(ctx, id)
+		}
+		return true, nil
 	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if rowsAffected == 0 {
-		return false, nil
-	}
-	r.syncSchedulerAccountSnapshotDetached(ctx, id)
-	return true, nil
+	return false, nil
 }
 
 // SetGrokOAuthRefreshErrorIfCredentialsUnchanged is the background-refresh
@@ -2858,7 +2873,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.UpdateExtra(ctx, id, updates)
 	}
-	updates = poison.StripRestoreEpoch(stripCodexFingerprintSeedFromExtraUpdate(updates))
+	updates = stripGrokSubscriptionExtra(poison.StripRestoreEpoch(stripCodexFingerprintSeedFromExtraUpdate(updates)))
 	if len(updates) == 0 {
 		return nil
 	}
@@ -3135,7 +3150,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	updates.Extra = poison.StripRestoreEpoch(stripCodexFingerprintSeedFromExtraUpdate(updates.Extra))
+	updates.Extra = stripGrokSubscriptionExtra(poison.StripRestoreEpoch(stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)))
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)
