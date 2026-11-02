@@ -1678,6 +1678,9 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 	if s == nil || account == nil || account.ID <= 0 || snapshot == nil {
 		return
 	}
+	if account.IsGrokOAuth() && s.grokQuotaService != nil {
+		s.grokQuotaService.ScheduleSubscriptionRefresh(account.ID)
+	}
 	accountID := account.ID
 	now := time.Now()
 	resetAt, hasActiveLimit := grokRateLimitResetAtForAccount(account, snapshot, now)
@@ -1730,6 +1733,9 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 }
 
 func (s *OpenAIGatewayService) updateGrokUsageFromResponse(ctx context.Context, account *Account, headers http.Header, statusCode int) {
+	if s != nil && account != nil && account.IsGrokOAuth() && s.grokQuotaService != nil {
+		s.grokQuotaService.ScheduleSubscriptionRefresh(account.ID)
+	}
 	snapshot := parseGrokQuotaSnapshot(headers, statusCode, time.Now())
 	if snapshot != nil {
 		stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))

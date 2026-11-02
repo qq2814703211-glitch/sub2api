@@ -532,6 +532,7 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { getGrokSubscriptionSnapshot } from '@/utils/grokSubscription'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -792,7 +793,38 @@ const setUsageBatchState = (accountID: number, usage: AccountUsageInfo | null, e
   }
 }
 
+const grokSubscriptionSyncedUsage = new WeakSet<AccountUsageInfo>()
+const grokSubscriptionSyncTokens = new WeakMap<Account, symbol>()
+const syncGrokSubscriptionAfterUsage = async (accountID: number, usage: AccountUsageInfo) => {
+  const account = accounts.value.find(row => row.id === accountID)
+  if (!account || account.platform !== 'grok' || account.type !== 'oauth') return
+  if (!firstNonBlankString(usage.subscription_tier) || grokSubscriptionSyncedUsage.has(usage)) return
+  grokSubscriptionSyncedUsage.add(usage)
+  const syncToken = Symbol()
+  grokSubscriptionSyncTokens.set(account, syncToken)
+  const subscription = getGrokSubscriptionSnapshot(account.extra)
+  if (subscription &&
+      normalizeGrokPlanKey(subscription.tier) === normalizeGrokPlanKey(usage.subscription_tier) &&
+      (!firstNonBlankString(usage.subscription_tier_raw) || subscription.display_name === usage.subscription_tier_raw)) return
+  try {
+    // Usage probes persist settings independently. Re-read only this row, never
+    // manufacture a successful settings observation from a usage tier.
+    const updated = await adminAPI.accounts.getById(accountID)
+    const snapshot = getGrokSubscriptionSnapshot(updated.extra)
+    if (!snapshot || grokSubscriptionSyncTokens.get(account) !== syncToken ||
+        accounts.value.find(row => row.id === accountID) !== account) return
+    patchAccountInList({
+      ...account,
+      credentials: { ...account.credentials, subscription_tier: snapshot.tier },
+      extra: { ...account.extra, grok_subscription_snapshot: snapshot },
+    })
+  } catch (error) {
+    console.error('Failed to sync Grok subscription after usage:', error)
+  }
+}
+
 const handleAccountUsageLoaded = (accountID: number, usage: AccountUsageInfo) => {
+  void syncGrokSubscriptionAfterUsage(accountID, usage)
   if (usageBatchByAccountId.value[String(accountID)] === usage) return
   setUsageBatchState(accountID, usage, null)
 }
@@ -857,7 +889,7 @@ const flushQueuedUsageBatch = async () => {
   }
 }
 
-const queueBatchedUsage = (account: Account, options?: { force?: boolean }) => {
+const queueBatchedUsage = (account: Account, options?: { force?: boolean; bypassCache?: boolean }) => {
   if (!isDesktopViewport.value) return
   if (!accountSupportsBatchUsage(account)) return
 
@@ -865,7 +897,7 @@ const queueBatchedUsage = (account: Account, options?: { force?: boolean }) => {
   const cacheKey = account.id
   const key = String(cacheKey)
 
-  if (force) {
+  if (force || options?.bypassCache) {
     usageBatchCache.delete(cacheKey)
   } else {
     const cached = usageBatchCache.get(cacheKey)
@@ -1682,13 +1714,15 @@ function grok45ResponsesPlanIsHeavy(snapshot: Record<string, any> | undefined): 
   )
 }
 
-// JWT / unambiguous credentials outrank snapshots. SuperGrokPro is ambiguous
+// Successful settings identity outranks JWT / legacy credentials. SuperGrokPro is ambiguous
 // (covers SuperGrok and Heavy). 8300/53M only upgrades when the window came
 // from grok-4.5 Responses (or a carried 4.5 hint).
 function getAccountPlanType(row: any): string | undefined {
   if (!row) return undefined
   if (row.platform === 'grok') {
     const extra = (row.extra || {}) as Record<string, any>
+    const subscription = getGrokSubscriptionSnapshot(extra)
+    if (subscription) return subscription.display_name
     const billing = extra.grok_billing_snapshot as Record<string, any> | undefined
     const usage = extra.grok_usage_snapshot as Record<string, any> | undefined
     const legacyQuota = extra.grok_quota_snapshot as Record<string, any> | undefined
