@@ -1330,12 +1330,66 @@ describe('AccountUsageCell', () => {
     await flushPromises()
     if (managed) {
       expect(requestBatchedUsage).toHaveBeenCalledTimes(1)
-      expect(requestBatchedUsage).toHaveBeenCalledWith(expect.objectContaining({ id: 4601 }), { force: true })
+      expect(requestBatchedUsage).toHaveBeenCalledWith(expect.objectContaining({ id: 4601 }), { bypassCache: true })
       expect(getUsage).not.toHaveBeenCalled()
     } else {
       expect(getUsage).toHaveBeenCalledTimes(1)
       expect(getUsage).toHaveBeenCalledWith(4601)
     }
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('does not reload Grok usage for observation timestamps or billing-only changes (batch managed: %s)', async (managed) => {
+    const snapshot = {
+      tier: 'free', display_name: 'Free', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const account = makeAccount({ id: 4602, platform: 'grok', type: 'oauth', extra: { grok_subscription_snapshot: snapshot } })
+    const usage = { subscription_tier: 'free', subscription_tier_raw: 'Free' }
+    getUsage.mockResolvedValue(usage)
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account, ...(managed ? { requestBatchedUsage, batchedUsage: usage } : {}) },
+      global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } },
+    })
+    await flushPromises()
+    requestBatchedUsage.mockClear()
+    getUsage.mockClear()
+    for (const minute of ['01', '02', '03']) {
+      await wrapper.setProps({ account: { ...account, extra: {
+        grok_subscription_snapshot: { ...snapshot, observed_at: `2026-11-02T12:${minute}:01Z`, requested_at: `2026-11-02T12:${minute}:00Z` },
+        grok_billing_snapshot: { updated_at: `2026-11-02T12:${minute}:01Z`, plan: 'Free' },
+        grok_usage_snapshot: { updated_at: `2026-11-02T12:${minute}:01Z`, subscription_tier: 'free' },
+      } } })
+      await flushPromises()
+    }
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    expect(getUsage).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('reuses fresh Grok usage when the row subscription catches up (batch managed: %s)', async (managed) => {
+    const snapshot = {
+      tier: 'supergrok_heavy', display_name: 'SuperGrok Heavy', source: 'settings', status_code: 200,
+      observed_at: '2026-11-02T12:00:01Z', requested_at: '2026-11-02T12:00:00.123456789Z',
+    }
+    const account = makeAccount({ id: 4603, platform: 'grok', type: 'oauth', extra: { grok_subscription_snapshot: snapshot } })
+    const usage = { subscription_tier: 'free', subscription_tier_raw: 'Free' }
+    getUsage.mockResolvedValue(usage)
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account, ...(managed ? { requestBatchedUsage, batchedUsage: usage } : {}) },
+      global: { stubs: { UsageProgressBar: true, GrokQuotaProbeCell: true } },
+    })
+    await flushPromises()
+    requestBatchedUsage.mockClear()
+    getUsage.mockClear()
+    await wrapper.setProps({ account: { ...account, extra: {
+      grok_subscription_snapshot: { ...snapshot, tier: 'free', display_name: 'Free' },
+    } } })
+    await flushPromises()
+    expect(requestBatchedUsage).not.toHaveBeenCalled()
+    expect(getUsage).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

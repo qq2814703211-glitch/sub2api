@@ -14,6 +14,7 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getBatchUsage,
   getById,
   getAllProxies,
   getAllGroups,
@@ -25,6 +26,7 @@ const {
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getBatchUsage: vi.fn(),
   getById: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getBatchUsage,
       getById,
       duplicate: duplicateAccount,
       getUpstreamBillingProbeSettings: () => Promise.resolve({ enabled: true, interval_minutes: 30 }),
@@ -555,6 +558,35 @@ describe('admin AccountsView — 账号行展示', () => {
     await vi.advanceTimersByTimeAsync(6000)
     await flushPromises()
     expect(wrapper.findComponent(PlatformTypeBadge).props('planType')).toBe('Free')
+    wrapper.unmount()
+  })
+
+  it('bypasses only the local batch cache without forcing an upstream probe', async () => {
+    vi.useFakeTimers()
+    getBatchUsage.mockReset()
+    listAccounts.mockResolvedValue({ items: [{
+      id: 227, name: 'batch-cache', platform: 'grok', type: 'oauth',
+    }], total: 1, page: 1, page_size: 20, pages: 1 })
+    getBatchUsage.mockResolvedValue({ usage: { '227': { subscription_tier: 'free' } } })
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+    const cell = wrapper.findComponent(AccountUsageCell)
+    const request = cell.props('requestBatchedUsage')
+    expect(request).toBeTypeOf('function')
+    request(cell.props('account'))
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(1)
+    getBatchUsage.mockClear()
+    request(cell.props('account'))
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).not.toHaveBeenCalled()
+    request(cell.props('account'), { bypassCache: true })
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(1)
+    expect(getBatchUsage).toHaveBeenCalledWith([227], false)
     wrapper.unmount()
   })
 
