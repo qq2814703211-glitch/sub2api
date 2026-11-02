@@ -1018,6 +1018,12 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, err.Error())
 	}
 
+	// A manual test has a bounded subscription check regardless of which
+	// inference/media mode follows. Failure does not fail the connection test.
+	if account.IsGrokOAuth() && s.openaiGatewayService != nil && s.openaiGatewayService.grokQuotaService != nil {
+		_ = s.openaiGatewayService.grokQuotaService.RefreshSubscription(ctx, account.ID)
+	}
+
 	// Explicit standalone / media modes always win over model id.
 	switch mode {
 	case AccountTestModeGrokSearch:

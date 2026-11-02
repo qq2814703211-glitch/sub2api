@@ -1103,12 +1103,18 @@ func (s *AccountUsageService) getGrokUsage(ctx context.Context, account *Account
 		return &UsageInfo{UpdatedAt: &now}, nil
 	}
 	var billingProbeResult *GrokQuotaProbeResult
-	if account != nil && account.IsGrokOAuth() && s.grokQuotaService != nil && (force || grokBillingSnapshotNeedsRefresh(account, time.Now())) && s.shouldProbeGrokBilling(account.ID, time.Now(), force) {
+	if account != nil && account.IsGrokOAuth() && s.grokQuotaService != nil && (force || grokBillingSnapshotNeedsRefresh(account, time.Now()) || grokSubscriptionNeedsRefresh(account, time.Now())) && s.shouldProbeGrokBilling(account.ID, time.Now(), force) {
 		result, err := s.grokQuotaService.ProbeBilling(ctx, account.ID)
 		if err == nil && result != nil && result.Billing != nil {
 			billingProbeResult = result
 			mergeAccountExtra(account, map[string]any{grokBillingExtraKey: result.Billing})
-		} else if err != nil && force {
+		}
+		// Token acquisition and subscription persistence can replace the loaded
+		// account. Re-read even when both billing windows failed.
+		if fresh, readErr := s.grokQuotaService.loadGrokOAuthAccount(ctx, account.ID); readErr == nil {
+			account = fresh
+		}
+		if err != nil && force && liveGrokSubscription(account) == nil {
 			return nil, err
 		}
 	}
@@ -1127,7 +1133,9 @@ func (s *AccountUsageService) getGrokUsage(ctx context.Context, account *Account
 				usage.GrokLocalUsage = windowStatsFromAccountStats(stats)
 			}
 		}
-		if billingProbeResult != nil {
+		if live := liveGrokSubscription(account); live != nil && isGrokFreeSubscriptionTier(live.Tier) {
+			usage.GrokLocalUsage24h = grokLocalUsage24h(ctx, s.usageLogRepo, account.ID, time.Now().UTC())
+		} else if billingProbeResult != nil {
 			usage.GrokLocalUsage24h = billingProbeResult.LocalUsage24h
 			usage.GrokLocalUsage7d = billingProbeResult.LocalUsage7d
 			usage.GrokLocalUsageMonthly = billingProbeResult.LocalUsageMonthly

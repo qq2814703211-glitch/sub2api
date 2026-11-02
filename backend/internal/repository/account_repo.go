@@ -685,7 +685,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'poison_guard_restore_epoch',
 			extra -> 'poison_guard_shared_generation',
 			extra -> 'grok_observed_models',
-			extra -> 'upstream_model_metadata'
+			extra -> 'upstream_model_metadata',
+			extra -> 'grok_subscription_snapshot'
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -718,6 +719,7 @@ func lockAndMergeAccountProbeExtra(
 		currentSharedGeneration        []byte
 		currentGrokObservedModels      []byte
 		currentUpstreamModelMetadata   []byte
+		currentGrokSubscription        []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -736,6 +738,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentSharedGeneration,
 		&currentGrokObservedModels,
 		&currentUpstreamModelMetadata,
+		&currentGrokSubscription,
 	); err != nil {
 		return nil, err
 	}
@@ -744,6 +747,23 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(poison.StripRestoreEpoch(account.Extra)))
+	delete(extra, "grok_subscription_snapshot")
+	if len(currentGrokSubscription) > 0 {
+		var value any
+		if err := json.Unmarshal(currentGrokSubscription, &value); err != nil {
+			return nil, err
+		}
+		extra["grok_subscription_snapshot"] = value
+		view := *account
+		view.Extra = extra
+		if service.GrokSubscriptionSnapshotValid(&view) {
+			if snapshot, ok := value.(map[string]any); ok {
+				account.Credentials = copyJSONMap(account.Credentials)
+				account.Credentials["subscription_tier"] = snapshot["tier"]
+				extra["subscription_tier"] = snapshot["tier"]
+			}
+		}
+	}
 	if len(currentRestoreEpoch) > 0 {
 		var value any
 		if err := json.Unmarshal(currentRestoreEpoch, &value); err != nil {
@@ -1673,13 +1693,17 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 	result, err := r.sql.ExecContext(ctx, `
 		WITH updated AS (
 		UPDATE accounts AS a
-		SET credentials = $1::jsonb,
+		SET credentials = $1::jsonb || CASE
+                WHEN a.extra->'grok_subscription_snapshot'->>'source' = 'settings'
+                 AND a.extra->'grok_subscription_snapshot'->>'tier' = a.credentials->>'subscription_tier'
+                THEN jsonb_build_object('subscription_tier', a.credentials->'subscription_tier')
+                ELSE '{}'::jsonb END,
 			updated_at = NOW()
 		WHERE a.id = $2
 			AND a.deleted_at IS NULL
 			AND a.platform = $3
 			AND a.type = $4
-			AND a.credentials = $5::jsonb
+			AND a.credentials - 'subscription_tier' = $5::jsonb - 'subscription_tier'
 			AND a.proxy_id IS NOT DISTINCT FROM $6
 		RETURNING a.id
 		)

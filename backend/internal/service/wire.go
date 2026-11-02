@@ -283,6 +283,7 @@ func ProvideAccountTestService(
 }
 
 func ProvideGrokQuotaService(
+	openAIGatewayService *OpenAIGatewayService,
 	accountRepo AccountRepository,
 	proxyRepo ProxyRepository,
 	tokenProvider *GrokTokenProvider,
@@ -293,6 +294,7 @@ func ProvideGrokQuotaService(
 ) *GrokQuotaService {
 	service := NewGrokQuotaService(accountRepo, proxyRepo, tokenProvider, httpUpstream, cfg, usageLogRepo)
 	service.SetSettingService(settingService)
+	openAIGatewayService.SetGrokQuotaService(service)
 	return service
 }
 
