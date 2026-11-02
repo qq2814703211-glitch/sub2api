@@ -64,6 +64,7 @@ export const buildGrokUsageRefreshKey = (account: Pick<Account, 'platform' | 'ex
     ? undefined
     : extra.grok_quota_snapshot
   return [
+    serializeSnapshotRefreshValue(extra.grok_subscription_snapshot),
     serializeSnapshotRefreshValue(extra.grok_billing_snapshot),
     serializeSnapshotRefreshValue(usageSnapshot),
     serializeSnapshotRefreshValue(legacyQuotaFallback)
