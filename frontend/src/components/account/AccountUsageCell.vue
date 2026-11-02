@@ -703,7 +703,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { getGrokSubscriptionSnapshot } from '@/utils/grokSubscription'
 import { normalizePlanType } from '@/utils/planType'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
@@ -738,7 +738,7 @@ const props = withDefaults(
     batchedUsage?: AccountUsageInfo | null
     batchedUsageError?: string | null
     batchedUsageLoading?: boolean
-    requestBatchedUsage?: ((account: Account, options?: { force?: boolean }) => void) | null
+    requestBatchedUsage?: ((account: Account, options?: { force?: boolean; bypassCache?: boolean }) => void) | null
   }>(),
   {
     todayStats: null,
@@ -872,7 +872,11 @@ const openAISevenDayEstimatedTotalCost = computed(() => {
 })
 
 const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))
-const grokUsageRefreshKey = computed(() => buildGrokUsageRefreshKey(props.account))
+const grokSubscriptionIdentity = computed(() => {
+  if (props.account.platform !== 'grok') return ''
+  const subscription = getGrokSubscriptionSnapshot(props.account.extra)
+  return subscription ? JSON.stringify([normalizePlanType(subscription.tier), subscription.display_name]) : ''
+})
 
 const shouldAutoLoadUsageOnMount = computed(() => {
   return shouldFetchUsage.value
@@ -1446,7 +1450,7 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
   return props.account.platform === 'anthropic' && (props.account.type === 'oauth' || props.account.type === 'setup-token')
 })
 
-const requestParentBatchUsage = (options?: { force?: boolean }) => {
+const requestParentBatchUsage = (options?: { force?: boolean; bypassCache?: boolean }) => {
   if (!isBatchManaged.value || !shouldFetchUsage.value) return
   props.requestBatchedUsage?.(props.account, options)
 }
@@ -1733,11 +1737,18 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   requestAutoLoad()
 })
 
-watch(grokUsageRefreshKey, (nextKey, prevKey) => {
-  if (!prevKey || nextKey === prevKey) return
+watch(grokSubscriptionIdentity, (nextKey, prevKey) => {
+  if (nextKey === prevKey) return
   if (props.account.platform !== 'grok' || props.account.type !== 'oauth') return
+  const subscription = getGrokSubscriptionSnapshot(props.account.extra)
+  const usage = isBatchManaged.value ? props.batchedUsage : usageInfo.value
+  if (subscription && usage &&
+      normalizePlanType(subscription.tier) === normalizePlanType(usage.subscription_tier) &&
+      (!usage.subscription_tier_raw || subscription.display_name === usage.subscription_tier_raw)) return
+  // Identity changes invalidate local data, not the server's settings/billing TTL.
+  // Observation timestamps must never create a forced probe feedback loop.
   if (isBatchManaged.value) {
-    requestParentBatchUsage({ force: true })
+    requestParentBatchUsage({ bypassCache: true })
     return
   }
   _usageCache.delete(props.account.id)
