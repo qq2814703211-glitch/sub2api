@@ -53,7 +53,7 @@ func (r *Runtime) install(ctx context.Context, c Config, persist bool) (Config, 
 		}
 	}
 	// Acquire the source before auxiliary relations, matching TRUNCATE order.
-	if _, err = tx.ExecContext(ctx, `LOCK TABLE usage_logs IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if _, err = tx.ExecContext(ctx, `LOCK TABLE usage_logs IN ACCESS EXCLUSIVE MODE`); err != nil {
 		return c, err
 	}
 	s, err := schemaName(ctx, tx)
@@ -70,11 +70,7 @@ func (r *Runtime) install(ctx context.Context, c Config, persist bool) (Config, 
 			return c, fmt.Errorf("create key usage schema: %w", err)
 		}
 		if !exists {
-			// SHARE ROW EXCLUSIVE serializes trigger installation with writes; it is
-			// held only for DDL, never for the historical scan.
-			if _, err = tx.ExecContext(ctx, `LOCK TABLE `+qualified(s, "usage_logs")+` IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-				return c, err
-			}
+			// The source lock is held only for lifecycle DDL, never backfill.
 			if _, err = tx.ExecContext(ctx, `TRUNCATE `+qualified(s, "key_usage_hourly")+`,`+qualified(s, "key_usage_covered")+`,`+qualified(s, "key_usage_changes")+`;`+captureSQL(s)); err != nil {
 				return c, err
 			}
