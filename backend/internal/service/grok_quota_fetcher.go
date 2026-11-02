@@ -19,6 +19,7 @@ func NewGrokQuotaFetcher() *GrokQuotaFetcher {
 }
 
 func (f *GrokQuotaFetcher) BuildUsageInfo(account *Account) *UsageInfo {
+	account = GrokSubscriptionAccountView(account)
 	now := time.Now()
 	usage := &UsageInfo{
 		Source:             "passive",
@@ -36,7 +37,9 @@ func (f *GrokQuotaFetcher) BuildUsageInfo(account *Account) *UsageInfo {
 	activeProbeClearsForbidden := newerSuccessfulGrokActiveProbeClearsBillingForbidden(billing, snapshot)
 	if billing != nil {
 		usage.GrokBilling = billing
-		applyGrokBillingProgressWindows(usage, billing, now)
+		if live := liveGrokSubscription(account); live == nil || !isGrokFreeSubscriptionTier(live.Tier) {
+			applyGrokBillingProgressWindows(usage, billing, now)
+		}
 		if billing.Plan != "" {
 			usage.SubscriptionTier = billing.Plan
 			usage.SubscriptionTierRaw = billing.Plan
@@ -182,6 +185,11 @@ func applyGrokCredentialUsageFallback(usage *UsageInfo, account *Account, billin
 
 func applyGrokResolvedSubscriptionTier(usage *UsageInfo, account *Account, billing *xai.BillingSummary, snapshot *xai.QuotaSnapshot) {
 	if usage == nil || account == nil {
+		return
+	}
+	if live := liveGrokSubscription(account); live != nil {
+		usage.SubscriptionTier = live.Tier
+		usage.SubscriptionTierRaw = live.DisplayName
 		return
 	}
 	if jwtTier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token")); jwtTier != "" {

@@ -50,14 +50,18 @@ type GrokQuotaResetResult struct {
 }
 
 type GrokQuotaService struct {
-	accountRepo    AccountRepository
-	proxyRepo      ProxyRepository
-	tokenProvider  *GrokTokenProvider
-	httpUpstream   HTTPUpstream
-	usageLogRepo   UsageLogRepository
-	settingService *SettingService
-	cfg            *config.Config
-	probeFlight    singleflight.Group
+	accountRepo         AccountRepository
+	proxyRepo           ProxyRepository
+	tokenProvider       *GrokTokenProvider
+	httpUpstream        HTTPUpstream
+	usageLogRepo        UsageLogRepository
+	settingService      *SettingService
+	cfg                 *config.Config
+	probeFlight         singleflight.Group
+	subscriptionFlight  singleflight.Group
+	subscriptionMu      sync.Mutex
+	subscriptionTasks   map[int64]grokSubscriptionTask
+	subscriptionWorkers int
 }
 
 func NewGrokQuotaService(
@@ -92,7 +96,9 @@ func (s *GrokQuotaService) SetSettingService(settingService *SettingService) {
 // Free accounts, whose billing response does not include usage_percent.
 func (s *GrokQuotaService) QueryQuota(ctx context.Context, accountID int64) (*GrokQuotaProbeResult, error) {
 	billingResult, billingErr := s.ProbeBilling(ctx, accountID)
-	if billingErr == nil && billingResult != nil && grokBillingHasAuthoritativeQuota(billingResult.Billing) {
+	current, _ := s.accountRepo.GetByID(ctx, accountID)
+	live := liveGrokSubscription(current)
+	if billingErr == nil && billingResult != nil && (live == nil || !isGrokFreeSubscriptionTier(live.Tier)) && grokBillingHasAuthoritativeQuota(billingResult.Billing) {
 		if acc, err := s.accountRepo.GetByID(ctx, accountID); err == nil {
 			s.scheduleGrokObservedModelsSync(acc)
 		}
@@ -133,8 +139,7 @@ func grokBillingHasAuthoritativeQuota(billing *xai.BillingSummary) bool {
 	}
 	return billing.UsagePercent != nil ||
 		billing.UsedPercent != nil ||
-		(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0) ||
-		strings.TrimSpace(billing.Plan) != ""
+		(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0)
 }
 
 func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*GrokQuotaProbeResult, error) {
@@ -281,7 +286,12 @@ func (s *GrokQuotaService) probeBilling(ctx context.Context, accountID int64) (*
 	}
 	var weekly, monthly billingResult
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		// Subscription failure never discards a successful billing window.
+		_ = s.refreshGrokSubscription(probeCtx, account, token, proxyURL)
+	}()
 	go func() {
 		defer wg.Done()
 		weekly.summary, weekly.status, weekly.err = s.fetchBilling(probeCtx, account, token, proxyURL, true)
@@ -321,7 +331,13 @@ func (s *GrokQuotaService) probeBilling(ctx context.Context, accountID int64) (*
 		slog.Warn("grok_billing_persist_failed", "account_id", account.ID, "error", persistErr)
 	}
 	now := time.Now().UTC()
-	localUsage24h, localUsage7d, localUsageMonthly := grokLocalUsageForQuota(ctx, s.usageLogRepo, account.ID, billing, now)
+	quotaBilling := billing
+	if current, err := s.loadGrokOAuthAccount(ctx, account.ID); err == nil {
+		if live := liveGrokSubscription(current); live != nil && isGrokFreeSubscriptionTier(live.Tier) {
+			quotaBilling = nil
+		}
+	}
+	localUsage24h, localUsage7d, localUsageMonthly := grokLocalUsageForQuota(ctx, s.usageLogRepo, account.ID, quotaBilling, now)
 	return &GrokQuotaProbeResult{
 		Source:            "billing_probe",
 		Billing:           billing,
@@ -514,6 +530,17 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 		return nil, "", "", infraerrors.New(http.StatusBadGateway, "GROK_QUOTA_TOKEN_UNAVAILABLE", "access token is empty")
 	}
 
+	// The token provider may have rotated credentials. Capture the durable
+	// identity actually used by settings, not the pre-refresh account map.
+	fresh, err := s.loadGrokOAuthAccount(ctx, accountID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if strings.TrimSpace(fresh.GetGrokAccessToken()) != strings.TrimSpace(token) {
+		return nil, "", "", infraerrors.New(http.StatusConflict, "GROK_QUOTA_IDENTITY_CHANGED", "Grok credentials changed while preparing probe")
+	}
+	account = fresh
+	proxyURL = s.resolveProxyURL(ctx, account)
 	return account, token, proxyURL, nil
 }
 
