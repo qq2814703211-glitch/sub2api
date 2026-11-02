@@ -27,6 +27,10 @@ An account name such as `Grok-Ultra-13` is an operator label. It does not determ
 
 ## Integration and verification
 
+The implementation refreshes successful settings observations with a 10-minute freshness interval. Ordinary request observations schedule at most four concurrent background refreshes per process, with a one-minute retry interval and a bounded account registry. Settings requests have a five-second deadline. Manual checks and billing refreshes use the same validated account routing; normal streaming responses do not wait for this background work.
+
+Failed settings attempts are recorded in sanitized service logs; the last successful subscription observation keeps its original timestamp. This patch adds no subscription-change notification channel or automatic account disable action.
+
 The feature is intended to update subscription alongside billing refresh, refresh it during manual account checks, and schedule bounded refreshes from ordinary request observations. Frontend badges and usage panels consume the same subscription observation, and local refresh logic must avoid recursively forcing another billing probe when timestamps change.
 
 Regression coverage includes the no-tier JWT plus stale Heavy failure, Heavy controls, explicit Free, Ultra and future names, independent billing/settings failures, stale identity and observation ordering, narrow persistence and outbox atomicity, manual/ordinary request wiring, and frontend cache/list synchronization.
