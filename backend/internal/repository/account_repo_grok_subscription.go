@@ -2,13 +2,26 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+// Only the guarded settings writer and known token rotation may write this key.
+func stripGrokSubscriptionExtra(extra map[string]any) map[string]any {
+	if _, ok := extra["grok_subscription_snapshot"]; !ok {
+		return extra
+	}
+	copy := copyJSONMap(extra)
+	delete(copy, "grok_subscription_snapshot")
+	return copy
+}
 
 // Patch only subscription keys and publish the durable invalidation atomically.
 // Ignore the materialized tier when comparing credentials; requested_at decides
@@ -19,8 +32,43 @@ func (r *accountRepository) UpdateGrokSubscriptionIfUnchanged(ctx context.Contex
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
+	// Serialize proxy identity before taking any account row lock, matching proxy edits.
+	if proxyID != nil && dbent.TxFromContext(ctx) == nil {
+		client := r.client
+		if client == nil {
+			if db, ok := r.sql.(*sql.DB); ok {
+				client = dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			}
+		}
+		if client == nil {
+			return false, errors.New("proxy subscription transaction is not configured")
+		}
+		tx, err := client.Tx(ctx)
+		if err != nil {
+			return false, err
+		}
+		defer tx.Rollback()
+		applied, err := r.UpdateGrokSubscriptionIfUnchanged(dbent.NewTxContext(ctx, tx), id, expected, proxyID, snapshot, proxy)
+		if err != nil || !applied {
+			return applied, err
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		r.syncSchedulerAccountSnapshotDetached(ctx, id)
+		return true, nil
+	}
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.UpdateGrokSubscriptionIfUnchanged(ctx, id, expected, proxyID, snapshot, proxy)
+	}
+	if proxyID != nil {
+		if proxy == nil || proxy.ID != *proxyID {
+			return false, nil
+		}
+		matches, err := lockAndMatchProbeProxyIdentity(ctx, r.client, &service.Account{ProxyID: proxyID, Proxy: proxy})
+		if err != nil || !matches {
+			return false, err
+		}
 	}
 	tier, _ := snapshot["tier"].(string)
 	requested, _ := snapshot["requested_at"].(string)
