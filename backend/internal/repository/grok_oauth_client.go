@@ -15,6 +15,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	sharedhttp "github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
@@ -159,19 +160,51 @@ func createGrokReqClient(proxyURL string) (*req.Client, error) {
 }
 
 func createGrokSSOHTTPClient(proxyURL string) (*http.Client, error) {
-	client, err := sharedhttp.GetClient(sharedhttp.Options{
-		ProxyURL:              proxyURL,
-		Timeout:               xai.SSOConversionTimeout,
+	// Cloudflare scores the TLS fingerprint on accounts.x.ai / auth.x.ai and
+	// rejects Go's default ClientHello. Drive the SSO flow over a Chrome-shaped
+	// uTLS handshake so device approve is not answered with a 403 block page.
+	profile := tlsfingerprint.ChromeClientProfile()
+	transport := &http.Transport{
+		ForceAttemptHTTP2:     false,
 		ResponseHeaderTimeout: 30 * time.Second,
-	})
-	if err != nil {
-		return nil, err
 	}
-	clone := *client
-	clone.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
+	trimmedProxy := strings.TrimSpace(proxyURL)
+	if trimmedProxy == "" {
+		transport.DialTLSContext = tlsfingerprint.NewDialer(profile, nil).DialTLSContext
+	} else {
+		parsed, err := url.Parse(trimmedProxy)
+		if err != nil {
+			return nil, fmt.Errorf("parse proxy url: %w", err)
+		}
+		switch strings.ToLower(parsed.Scheme) {
+		case "socks5", "socks5h":
+			transport.DialTLSContext = tlsfingerprint.NewSOCKS5ProxyDialer(profile, parsed).DialTLSContext
+		case "http":
+			transport.DialTLSContext = tlsfingerprint.NewHTTPProxyDialer(profile, parsed).DialTLSContext
+		default:
+			client, err := sharedhttp.GetClient(sharedhttp.Options{
+				ProxyURL:              proxyURL,
+				Timeout:               xai.SSOConversionTimeout,
+				ResponseHeaderTimeout: 30 * time.Second,
+			})
+			if err != nil {
+				return nil, err
+			}
+			clone := *client
+			clone.CheckRedirect = func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+			return &clone, nil
+		}
 	}
-	return &clone, nil
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   xai.SSOConversionTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return client, nil
 }
 
 func grokSSOConversionError(err error) error {
