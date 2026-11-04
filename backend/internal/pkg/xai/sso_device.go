@@ -58,6 +58,7 @@ type ssoDeviceFlow struct {
 	userAgent string
 	cookieJar http.CookieJar
 	sleep     func(context.Context, time.Duration) error
+	ssoToken  string
 }
 
 func ConvertSSOToBuild(ctx context.Context, ssoToken string, opts *SSODeviceOptions) (*TokenResponse, error) {
@@ -96,8 +97,9 @@ func ConvertSSOToBuild(ctx context.Context, ssoToken string, opts *SSODeviceOpti
 		userAgent: userAgent,
 		cookieJar: jar,
 		sleep:     sleep,
+		ssoToken:  ssoToken,
 	}
-	return flow.convert(ctx)
+	return flow.convertViaAuthCode(ctx)
 }
 
 func (f *ssoDeviceFlow) convert(ctx context.Context) (*TokenResponse, error) {
@@ -188,9 +190,13 @@ func (f *ssoDeviceFlow) convert(ctx context.Context) (*TokenResponse, error) {
 	return f.pollToken(ctx, device.DeviceCode, time.Duration(device.Interval)*time.Second, time.Duration(device.ExpiresIn)*time.Second)
 }
 
-// xAI binds device approval to a hidden token on the consent page. Keep it in
-// this flow only; older consent pages without the field remain supported.
+// xAI binds device approval to hidden tokens on the consent page. Keep them in
+// this flow only; older consent pages without the fields remain supported.
 func ssoConsentToken(body []byte) string {
+	return ssoHiddenInput(body, "consent_token")
+}
+
+func ssoHiddenInput(body []byte, want string) string {
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
 	for {
 		switch tokenizer.Next() {
@@ -212,7 +218,7 @@ func ssoConsentToken(body []byte) string {
 					inputType = attr.Val
 				}
 			}
-			if name == "consent_token" && strings.EqualFold(inputType, "hidden") {
+			if name == want && strings.EqualFold(inputType, "hidden") {
 				return value
 			}
 		}
@@ -300,7 +306,7 @@ func (f *ssoDeviceFlow) do(ctx context.Context, method, endpoint string, form ur
 			return 0, currentURL, nil, err
 		}
 		request.Header.Set("Accept", "application/json, text/html;q=0.9, */*;q=0.8")
-		request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		request.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		request.Header.Set("User-Agent", f.userAgent)
 		if redirects == 0 {
 			for _, header := range headers {
@@ -360,14 +366,17 @@ func seedSSOCookies(jar http.CookieJar, token string) {
 	if jar == nil {
 		return
 	}
+	// x.ai sets the session cookie on the registrable domain, so auth.x.ai
+	// (device verify/approve) and accounts.x.ai must both receive it. Setting a
+	// host-only cookie leaves the approve call unauthenticated.
 	for _, rawURL := range []string{SSOAccountsURL, OAuthIssuer + "/"} {
 		target, err := url.Parse(rawURL)
 		if err != nil {
 			continue
 		}
 		jar.SetCookies(target, []*http.Cookie{
-			{Name: "sso", Value: token, Path: "/", Secure: true, HttpOnly: true},
-			{Name: "sso-rw", Value: token, Path: "/", Secure: true, HttpOnly: true},
+			{Name: "sso", Value: token, Domain: ".x.ai", Path: "/", Secure: true, HttpOnly: true},
+			{Name: "sso-rw", Value: token, Domain: ".x.ai", Path: "/", Secure: true, HttpOnly: true},
 		})
 	}
 }
