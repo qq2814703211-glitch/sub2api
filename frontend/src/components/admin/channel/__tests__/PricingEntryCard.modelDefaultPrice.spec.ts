@@ -66,6 +66,15 @@ describe('PricingEntryCard default price auto-fill', () => {
     })
   })
 
+  it('preserves explicit media rules instead of filling a catalog scalar price', async () => {
+    const entry = { ...createEntry(), media_pricing: { rules: [{ unit: 'image' as const, price: 0.12 }] } }
+    const wrapper = addModels(entry, ['media-example'])
+    await flushPromises()
+    expect(getModelDefaultPricing).not.toHaveBeenCalled()
+    expect(emittedEntries(wrapper).at(-1)).toMatchObject({ media_pricing: entry.media_pricing, input_price: null })
+    wrapper.unmount()
+  })
+
   it('does not overwrite prices when appending a model to an entry that already has one', async () => {
     const entry = createEntry(['claude-opus-4-7'])
     const wrapper = addModels(entry, ['claude-opus-4-7', 'claude-opus-4-8'])
