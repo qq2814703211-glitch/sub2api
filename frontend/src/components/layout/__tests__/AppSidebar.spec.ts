@@ -95,3 +95,9 @@ describe('AppSidebar MCP entry', () => {
     expect(componentSource).not.toMatch(/path: '\/settings\/mcp'[^\n]*PluginIcon/)
   })
 })
+
+describe('AppSidebar connection diagnostics entry', () => {
+  it('exposes the admin-only connection trace route in the sidebar', () => {
+    expect(componentSource).toContain("path: '/admin/connections', label: t('nav.connectionDiagnostics')")
+  })
+})
