@@ -85,3 +85,9 @@ describe('AppSidebar subscription feature flag', () => {
     expect(componentSource).toContain('flagPayment() || flagExternalCardPurchase()')
   })
 })
+
+describe('AppSidebar connection diagnostics entry', () => {
+  it('exposes the admin-only connection trace route in the sidebar', () => {
+    expect(componentSource).toContain("path: '/admin/connections', label: t('nav.connectionDiagnostics')")
+  })
+})

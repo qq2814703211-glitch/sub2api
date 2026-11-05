@@ -5,6 +5,7 @@
         <div>
           <h1 class="text-xl font-semibold text-gray-900 dark:text-white">{{ t('admin.connectionDiagnostics.title') }}</h1>
           <p class="mt-1 text-sm text-gray-500">{{ t('admin.connectionDiagnostics.retention', { days: retentionDays }) }}</p>
+        <p v-if="stats" class="mt-1 text-xs text-gray-500">{{ t('admin.connectionDiagnostics.queue') }}: {{ stats.queue_depth }} · {{ t('admin.connectionDiagnostics.dropped') }}: {{ stats.dropped }} · {{ t('admin.connectionDiagnostics.writeFailures') }}: {{ stats.write_failures }}</p>
         </div>
         <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
           <input v-model="enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" :disabled="saving" @change="saveEnabled" />
@@ -43,7 +44,7 @@
               <tr class="border-t border-gray-100 align-top dark:border-dark-800">
                 <td class="whitespace-nowrap px-3 py-3">{{ formatTime(row.started_at) }}</td>
                 <td class="px-3 py-3"><span class="font-medium" :class="row.state === 'completed' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'">{{ row.state }}</span><span class="block text-xs text-gray-500">HTTP {{ row.detail.status || '—' }} · {{ row.source }}</span></td>
-                <td class="max-w-64 px-3 py-3"><span class="font-mono">{{ row.method }} {{ row.path }}</span><span class="block truncate text-xs text-gray-500">{{ row.host }} · {{ row.http_version }}</span></td>
+                <td class="max-w-64 px-3 py-3"><span class="font-mono">{{ row.method }} {{ row.path }}</span><span v-if="row.detail.turn" class="block text-xs text-gray-500">WS {{ t('admin.connectionDiagnostics.turn', { turn: row.detail.turn }) }}</span><span class="block truncate text-xs text-gray-500">{{ row.host }} · {{ row.http_version }}</span></td>
                 <td class="max-w-52 truncate px-3 py-3">{{ row.model || '—' }}</td>
                 <td class="whitespace-nowrap px-3 py-3">{{ row.detail.total_ms.toFixed(1) }} ms<span v-if="row.detail.terminal" class="block text-xs text-gray-500">{{ row.detail.terminal }}<span v-if="row.detail.outcome"> / {{ row.detail.outcome }}</span></span></td>
                 <td class="px-3 py-3">{{ row.user_name || row.user_email || (row.user_id ? `#${row.user_id}` : '—') }}</td>
@@ -56,7 +57,7 @@
           </tbody>
         </table>
       </div>
-      <footer class="flex items-center justify-between text-sm text-gray-500"><span>{{ t('admin.connectionDiagnostics.page', { page }) }}</span><div class="flex gap-2"><button class="btn btn-secondary" :disabled="page <= 1 || loading" @click="load(page - 1)">{{ t('common.previous') }}</button><button class="btn btn-secondary" :disabled="!hasMore || loading" @click="load(page + 1)">{{ t('common.next') }}</button></div></footer>
+      <footer class="flex items-center justify-between text-sm text-gray-500"><span>{{ t('admin.connectionDiagnostics.page', { page }) }}</span><div class="flex gap-2"><button class="btn btn-secondary" :disabled="page <= 1 || loading" @click="load(page - 1)">{{ t('admin.connectionDiagnostics.previous') }}</button><button class="btn btn-secondary" :disabled="!hasMore || loading" @click="load(page + 1)">{{ t('common.next') }}</button></div></footer>
     </main>
   </AppLayout>
 </template>
@@ -65,7 +66,7 @@
 import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import connectionDiagnosticsAPI, { type ConnectionTrace } from '@/api/admin/connectionDiagnostics'
+import connectionDiagnosticsAPI, { type ConnectionTrace, type ConnectionDiagnosticsSettings } from '@/api/admin/connectionDiagnostics'
 
 const { t } = useI18n()
 const states = ['edge_failed', 'edge_completed', 'downstream_write_failed', 'client_disconnected', 'failed', 'incomplete', 'completed', 'canceled', 'unknown']
@@ -73,6 +74,7 @@ const filters = reactive({ state: 'abnormal', source: 'all', request_id: '', mod
 const rows = ref<ConnectionTrace[]>([])
 const enabled = ref(false)
 const retentionDays = ref(30)
+const stats = ref<ConnectionDiagnosticsSettings['stats'] | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -81,6 +83,8 @@ const hasMore = ref(false)
 const expanded = ref('')
 let controller: AbortController | undefined
 let generation = 0
+let active = true
+let saveController: AbortController | undefined
 
 function formatTime(value: string) { return new Date(value).toLocaleString() }
 async function load(targetPage = 1) {
@@ -90,8 +94,13 @@ async function load(targetPage = 1) {
   loading.value = true
   error.value = ''
   try {
-    const result = await connectionDiagnosticsAPI.list({ ...filters, page: targetPage, page_size: 20 })
+    const [result, config] = await Promise.all([
+      connectionDiagnosticsAPI.list({ ...filters, page: targetPage, page_size: 20 }, controller.signal),
+      connectionDiagnosticsAPI.settings(controller.signal)
+    ])
     if (current !== generation) return
+    if (!saving.value) enabled.value = config.enabled
+    stats.value = config.stats
     rows.value = result.items
     page.value = result.page
     hasMore.value = result.has_more
@@ -107,14 +116,15 @@ function search() { void load(1) }
 async function saveEnabled() {
   saving.value = true
   error.value = ''
-  try { const result = await connectionDiagnosticsAPI.setEnabled(enabled.value); enabled.value = result.enabled }
-  catch (e) { error.value = e instanceof Error ? e.message : String(e); enabled.value = !enabled.value }
-  finally { saving.value = false }
+  saveController?.abort()
+  saveController = new AbortController()
+  try {
+    const result = await connectionDiagnosticsAPI.setEnabled(enabled.value, saveController.signal)
+    if (active) { enabled.value = result.enabled; stats.value = result.stats }
+  } catch (e) {
+    if (active) { error.value = e instanceof Error ? e.message : String(e); enabled.value = !enabled.value }
+  } finally { if (active) saving.value = false }
 }
-onMounted(async () => {
-  try { const result = await connectionDiagnosticsAPI.settings(); enabled.value = result.enabled; retentionDays.value = result.retention_days }
-  catch (e) { error.value = e instanceof Error ? e.message : String(e) }
-  await load()
-})
-onUnmounted(() => { generation++; controller?.abort() })
+onMounted(() => { void load() })
+onUnmounted(() => { active = false; generation++; controller?.abort(); saveController?.abort() })
 </script>
