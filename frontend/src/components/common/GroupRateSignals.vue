@@ -97,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import { formatRateValue, formatSignalTime } from '@/utils/groupRateSignals'
@@ -199,6 +199,7 @@ const detailStyle = ref<{ top: string; left: string; transform: string }>({
 
 let openTimer: ReturnType<typeof setTimeout> | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+let listening = false
 
 function clearTimers() {
   if (openTimer !== null) {
@@ -228,12 +229,14 @@ function updatePosition() {
 function openDetail(item: SignalItem) {
   clearTimers()
   openKind.value = item.kind
+  addGlobalListeners()
   void nextTick(updatePosition)
 }
 
 function closeDetail() {
   clearTimers()
   openKind.value = null
+  removeGlobalListeners()
 }
 
 function scheduleOpen(item: SignalItem) {
@@ -279,16 +282,25 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeDetail()
 }
 
-onMounted(() => {
+// 只在提示真正打开时监听全局事件，避免上百行 Key 列表各挂一份监听器。
+function addGlobalListeners() {
+  if (listening) return
+  listening = true
   document.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', updatePosition)
   window.addEventListener('scroll', updatePosition, true)
-})
+}
 
-onBeforeUnmount(() => {
-  clearTimers()
+function removeGlobalListeners() {
+  if (!listening) return
+  listening = false
   document.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', updatePosition)
   window.removeEventListener('scroll', updatePosition, true)
+}
+
+onBeforeUnmount(() => {
+  clearTimers()
+  removeGlobalListeners()
 })
 </script>
