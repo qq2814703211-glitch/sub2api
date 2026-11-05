@@ -1592,6 +1592,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, body)
 		return nil, &UpstreamFailoverError{
 			StatusCode:               resp.StatusCode,
+			CreateRequestRejected: resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusUnauthorized,
 			ResponseBody:             body,
 			ResponseHeaders:          resp.Header.Clone(),
 			RetryableOnSameAccount:   retryable,
