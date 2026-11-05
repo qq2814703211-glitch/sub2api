@@ -206,7 +206,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Video task storage unavailable")
 					return
 				}
-				if job == nil { continue }
+				if job == nil {
+					continue
+				}
 				routed, routeErr := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
 				if routeErr != nil {
 					h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
@@ -220,24 +222,24 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 		}
 		if durableVideoJob == nil {
-		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID)
-		if apiKey.HasMultipleRoutes() {
-			for _, gid := range apiKey.CandidateGroupIDs() {
-				boundID, lookupErr := h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), &gid, requestID, subject.UserID, apiKey.ID)
-				if lookupErr != nil || boundID <= 0 {
-					continue
+			boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID)
+			if apiKey.HasMultipleRoutes() {
+				for _, gid := range apiKey.CandidateGroupIDs() {
+					boundID, lookupErr := h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), &gid, requestID, subject.UserID, apiKey.ID)
+					if lookupErr != nil || boundID <= 0 {
+						continue
+					}
+					routed, routeErr := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
+					if routeErr != nil {
+						continue
+					}
+					apiKey = routed
+					boundLookupAccountID = boundID
+					err = nil
+					c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
+					break
 				}
-				routed, routeErr := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
-				if routeErr != nil {
-					continue
-				}
-				apiKey = routed
-				boundLookupAccountID = boundID
-				err = nil
-				c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
-				break
 			}
-		}
 		}
 		if err != nil || boundLookupAccountID <= 0 {
 			reqLog.Info("grok_media.video_lookup_owner_binding_missing", zap.Error(err))

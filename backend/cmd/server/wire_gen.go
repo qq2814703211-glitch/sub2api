@@ -678,10 +678,6 @@ func provideCleanup(
 				pricing.Stop()
 				return nil
 			}},
-			{"EmailQueueService", func() error {
-				emailQueue.Stop()
-				return nil
-			}},
 			{"BillingCacheService", func() error {
 				billingCache.Stop()
 				return nil
@@ -783,6 +779,12 @@ func provideCleanup(
 		}
 
 		infraSteps := []cleanupStep{
+			{"EmailQueueService", func() error {
+				if emailQueue != nil {
+					emailQueue.Stop()
+				}
+				return nil
+			}},
 			{"Redis", func() error {
 				if rdb == nil {
 					return nil
