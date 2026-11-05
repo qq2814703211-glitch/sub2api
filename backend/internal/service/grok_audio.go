@@ -253,7 +253,13 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 		}
 	}()
 
-	return awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	// Join both relay directions before the caller may release execution capacity.
+	firstErr := <-errCh
+	cancel()
+	_ = client.CloseNow()
+	_ = conn.Close()
+	<-errCh
+	return audioObserved.Load(), firstErr
 }
 
 // ProbeGrokRealtime performs the upstream WebSocket handshake without sending
