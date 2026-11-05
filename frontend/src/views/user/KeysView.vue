@@ -1927,7 +1927,9 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
- saveVersion++;saveController?.abort();submitting.value=false
+  formSaveVersion++
+  saveController?.abort()
+  submitting.value = false
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
