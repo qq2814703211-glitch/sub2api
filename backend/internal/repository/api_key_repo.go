@@ -722,26 +722,91 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.attachGroupRoutes(ctx, outKeys); err != nil {
+		return nil, err
+	}
 	return outKeys, nil
 }
 
 // ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil
 func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	n, err := r.client.APIKey.Update().
-		Where(apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
-		ClearGroupID().
-		Save(ctx)
-	return int64(n), err
+	var count int64
+	err := r.routeTransaction(ctx, func(repo *apiKeyRepository) error {
+		keys, err := repo.activeQuery().Where(apiKeyInGroup(groupID)).All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, entity := range keys {
+			key, err := repo.withGroupRoutes(ctx, apiKeyEntityToService(entity))
+			if err != nil {
+				return err
+			}
+			out := []int64{}
+			for _, id := range key.CandidateGroupIDs() {
+				if id != groupID {
+					out = append(out, id)
+				}
+			}
+			key.GroupID = nil
+			if len(out) > 0 {
+				key.GroupID = &out[0]
+			}
+			key.RouteGroupIDs = out
+			if err := repo.update(ctx, key, service.APIKeyUpdateFields{GroupID: true}); err != nil {
+				return err
+			}
+			if err := repo.replaceGroupRoutes(ctx, key.ID, out); err != nil {
+				return err
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	n, err := client.APIKey.Update().
-		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
-		SetGroupID(newGroupID).
-		Save(ctx)
-	return int64(n), err
+	var count int64
+	err := r.routeTransaction(ctx, func(repo *apiKeyRepository) error {
+		keys, err := repo.activeQuery().Where(apikey.UserIDEQ(userID), apiKeyInGroup(oldGroupID)).All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, entity := range keys {
+			key, err := repo.withGroupRoutes(ctx, apiKeyEntityToService(entity))
+			if err != nil {
+				return err
+			}
+			ids := key.CandidateGroupIDs()
+			out := make([]int64, 0, len(ids))
+			seen := map[int64]bool{}
+			for _, id := range ids {
+				if id == oldGroupID {
+					id = newGroupID
+				}
+				if !seen[id] {
+					out = append(out, id)
+					seen[id] = true
+				}
+			}
+			if len(out) > 0 {
+				key.GroupID = &out[0]
+			} else {
+				key.GroupID = nil
+			}
+			key.RouteGroupIDs = out
+			if err := repo.update(ctx, key, service.APIKeyUpdateFields{GroupID: true}); err != nil {
+				return err
+			}
+			if err := repo.replaceGroupRoutes(ctx, key.ID, out); err != nil {
+				return err
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // CountByGroupID 获取分组的 API Key 数量
