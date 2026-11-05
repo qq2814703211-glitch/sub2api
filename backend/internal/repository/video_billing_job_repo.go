@@ -213,7 +213,9 @@ func (r *videoBillingJobRepository) List(ctx context.Context, state, before stri
 	return out, rows.Err()
 }
 func (r *videoBillingJobRepository) Retry(ctx context.Context, id string) error {
-	return videoJobAffected(r.db.ExecContext(ctx, `UPDATE video_billing_jobs SET state=CASE WHEN intent IS NULL THEN 'submitted' ELSE state END,
+	return videoJobAffected(r.db.ExecContext(ctx, `UPDATE video_billing_jobs SET state=CASE
+ WHEN state='billed' THEN state WHEN intent IS NULL THEN 'submitted'
+ WHEN state='reconciliation' THEN 'ready' ELSE state END,
  available_at=NOW(),last_error='',updated_at=NOW() WHERE id=$1 AND task_id IS NOT NULL
  AND state IN ('submitted','ready','billed','reconciliation') AND (lease_until IS NULL OR lease_until<NOW())`, id))
 }
