@@ -216,7 +216,7 @@ func (s *TicketService) sendTicketUserEmail(ctx context.Context, detail *TicketD
 func (s *TicketService) sendTicketAdminEmail(ctx context.Context, detail *TicketDetail, messageID int64) error {
 	recipientEmail, _, err := s.ticketAdminRecipient(ctx)
 	if err != nil {
-		return ticketEmailPermanent(err)
+		return err
 	}
 	requester, err := s.users.GetByID(ctx, detail.Ticket.UserID)
 	if err != nil {
@@ -249,7 +249,7 @@ func (s *TicketService) ticketAdminRecipient(ctx context.Context) (email, name s
 		}
 		if address := strings.TrimSpace(raw); address != "" {
 			if _, err := parseSMTPAddress(address, "recipient"); err != nil {
-				return "", "", fmt.Errorf("ticket admin email is invalid")
+				return "", "", ticketEmailPermanent(fmt.Errorf("ticket admin email is invalid"))
 			}
 			return address, "Support", nil
 		}
@@ -259,10 +259,10 @@ func (s *TicketService) ticketAdminRecipient(ctx context.Context) (email, name s
 		return "", "", err
 	}
 	if admin == nil || admin.DeletedAt != nil || !admin.IsAdmin() {
-		return "", "", fmt.Errorf("no admin recipient for ticket notification")
+		return "", "", ticketEmailPermanent(fmt.Errorf("no admin recipient for ticket notification"))
 	}
 	if _, err := parseSMTPAddress(admin.Email, "recipient"); err != nil {
-		return "", "", fmt.Errorf("ticket admin has no valid email address")
+		return "", "", ticketEmailPermanent(fmt.Errorf("ticket admin has no valid email address"))
 	}
 	return admin.Email, admin.Username, nil
 }

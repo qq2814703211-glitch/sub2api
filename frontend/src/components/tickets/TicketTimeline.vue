@@ -113,6 +113,7 @@ defineExpose({ scrollToBottom, capturePosition, restorePosition })
 <style scoped>
 .ticket-timeline {
   min-height: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 1rem 1.25rem;
