@@ -654,6 +654,11 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
+	if input != nil {
+		if err := validateAPIKeyRouteSubscriptionIdentity(input.APIKey, input.User, input.Subscription); err != nil {
+			return err
+		}
+	}
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
 		Result:             input.Result,
 		APIKey:             input.APIKey,

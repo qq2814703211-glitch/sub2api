@@ -130,6 +130,8 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 	}
 
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
 	streamStarted := false
 	userReleaseFunc, err := geminiConcurrency.AcquireUserSlotWithWait(c, authSubject.UserID, authSubject.Concurrency, false, &streamStarted)
@@ -168,7 +170,22 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 	var lastUpstreamErr *service.GeminiCachedContentUpstreamError
 	var ttlRejectedLimit time.Duration
 	for attempts := 0; attempts < geminiCachedContentCreateMaxAttempts; {
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", modelName, excluded, "", int64(0))
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, "", service.APIKeyRouteRequestModel(apiKey, reqModel, modelName), excluded, "", int64(0), service.PlatformGemini)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				modelName = reqModel
+				if channelMapping.Mapped {
+					modelName = channelMapping.MappedModel
+				}
+			}
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				return
@@ -359,7 +376,7 @@ func (h *GatewayHandler) GeminiCachedContentsList(c *gin.Context) {
 		}
 		beforeID = id
 	}
-	records, err := h.geminiCachedContentService.List(c.Request.Context(), apiKey.ID, *apiKey.GroupID, beforeID, pageSize+1)
+	records, err := h.geminiCachedContentService.ListForAPIKey(c.Request.Context(), apiKey, beforeID, pageSize+1)
 	if err != nil {
 		reqLog.Error("gemini.cached_content.list_failed", zap.Error(err))
 		googleError(c, http.StatusInternalServerError, "Failed to list cached contents")
@@ -431,6 +448,13 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 	c.Request = c.Request.WithContext(pricingCtx)
 
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
+	if apiKey.HasMultipleRoutes() {
+		subscription, err = h.gatewayService.ResolveAPIKeyRouteSubscription(c.Request.Context(), apiKey, subscription)
+		if err != nil {
+			writeGeminiCachedContentBillingError(c, err)
+			return
+		}
+	}
 	if extension := svc.Now().Add(ttl).Sub(record.ExpireTime); extension > 0 {
 		usage := &service.RecordUsageInput{
 			Result: &service.ForwardResult{
@@ -563,7 +587,7 @@ func (h *GatewayHandler) GeminiCachedContentsDelete(c *gin.Context) {
 }
 
 func (h *GatewayHandler) resolveGeminiCachedContentOrWrite(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, cacheID string) (*service.GeminiCachedContent, bool) {
-	record, err := h.geminiCachedContentService.Resolve(c.Request.Context(), apiKey.ID, apiKey.GroupID, cacheID)
+	record, err := h.geminiCachedContentService.ResolveForAPIKey(c.Request.Context(), apiKey, cacheID)
 	if err != nil {
 		if errors.Is(err, service.ErrGeminiCachedContentNotFound) {
 			googleError(c, http.StatusForbidden, service.GeminiCachedContentNotFoundMessage)
@@ -572,6 +596,15 @@ func (h *GatewayHandler) resolveGeminiCachedContentOrWrite(c *gin.Context, reqLo
 		reqLog.Error("gemini.cached_content.lookup_failed", zap.Error(err))
 		googleError(c, http.StatusInternalServerError, "Failed to load cached content")
 		return nil, false
+	}
+	if apiKey.HasMultipleRoutes() {
+		routed, err := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, record.GroupID)
+		if err != nil {
+			googleError(c, 403, service.GeminiCachedContentNotFoundMessage)
+			return nil, false
+		}
+		*apiKey = *routed
+		c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
 	}
 	return record, true
 }
@@ -593,7 +626,7 @@ func (h *GatewayHandler) resolveGeminiCachedContentBinding(c *gin.Context, reqLo
 		googleError(c, http.StatusBadRequest, "cachedContent is not supported on this route")
 		return nil, nil, false
 	}
-	record, err := h.geminiCachedContentService.Resolve(c.Request.Context(), apiKey.ID, apiKey.GroupID, ref.Name)
+	record, err := h.geminiCachedContentService.ResolveForAPIKey(c.Request.Context(), apiKey, ref.Name)
 	if err != nil {
 		if errors.Is(err, service.ErrGeminiCachedContentNotFound) {
 			googleError(c, http.StatusForbidden, service.GeminiCachedContentNotFoundMessage)
@@ -602,6 +635,15 @@ func (h *GatewayHandler) resolveGeminiCachedContentBinding(c *gin.Context, reqLo
 		reqLog.Error("gemini.cached_content.lookup_failed", zap.Error(err))
 		googleError(c, http.StatusInternalServerError, "Failed to load cached content")
 		return nil, nil, false
+	}
+	if apiKey.HasMultipleRoutes() {
+		routed, err := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, record.GroupID)
+		if err != nil {
+			googleError(c, 403, service.GeminiCachedContentNotFoundMessage)
+			return nil, nil, false
+		}
+		*apiKey = *routed
+		c.Request = c.Request.WithContext(service.ContextWithPinnedAPIKeyRoute(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey), record.GroupID))
 	}
 	if record.Model != modelName {
 		googleError(c, http.StatusBadRequest, fmt.Sprintf(

@@ -25,10 +25,20 @@ func (k *APIKey) CandidateGroupIDs() []int64 {
 	}
 	return out
 }
+func APIKeyRouteRequestModel(key *APIKey, public, mapped string) string {
+	if key.HasMultipleRoutes() {
+		return public
+	}
+	return mapped
+}
+
 func (k *APIKey) HasMultipleRoutes() bool { return len(k.CandidateGroupIDs()) > 1 }
 
 // The external contract deduplicates in order and rejects invalid identifiers.
 func normalizeAPIKeyGroupIDs(primary *int64, ids []int64) ([]int64, *int64, error) {
+	if primary != nil && *primary < 0 {
+		return nil, nil, infraerrors.BadRequest("API_KEY_GROUP_ID_INVALID", "group_id must be non-negative")
+	}
 	out := make([]int64, 0, len(ids))
 	seen := map[int64]bool{}
 	for _, id := range ids {

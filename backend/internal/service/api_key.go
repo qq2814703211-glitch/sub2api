@@ -34,6 +34,7 @@ type APIKey struct {
 	Name          string
 	GroupID       *int64
 	RouteGroupIDs []int64
+	RouteDecision *CompositeRouteDecision `json:"-"`
 	Status        string
 	IPWhitelist   []string
 	IPBlacklist   []string

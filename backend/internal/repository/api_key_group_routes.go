@@ -25,6 +25,15 @@ func (r *apiKeyRepository) routeTransaction(ctx context.Context, fn func(*apiKey
 	return tx.Commit()
 }
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
+	if len(key.RouteGroupIDs) > 0 {
+		ids := key.CandidateGroupIDs()
+		if len(ids) != len(key.RouteGroupIDs) {
+			return service.ErrGroupNotAllowed
+		}
+		if key.GroupID == nil || *key.GroupID != ids[0] {
+			return service.ErrGroupNotAllowed
+		}
+	}
 	if len(key.RouteGroupIDs) <= 1 {
 		return r.create(ctx, key)
 	}
@@ -46,6 +55,7 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		ids := key.RouteGroupIDs
 		if !fields.RouteGroupIDs {
 			ids = nil
+			key.RouteGroupIDs = nil
 		} // legacy single-group update resets routing
 		return repo.replaceGroupRoutes(ctx, key.ID, ids)
 	})
