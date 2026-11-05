@@ -8,6 +8,7 @@
         <div><p class="font-medium text-gray-900 dark:text-white">{{ user.email }}</p><p class="text-sm text-gray-500 dark:text-dark-400">{{ user.username }}</p></div>
       </div>
       <div v-if="loading" class="flex justify-center py-8"><svg class="h-8 w-8 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>
+      <p v-else-if="loadError" role="alert" class="text-sm text-red-600">{{ loadError }}</p>
       <div v-else-if="apiKeys.length === 0" class="py-8 text-center"><p class="text-sm text-gray-500">{{ t('admin.users.noApiKeys') }}</p></div>
       <div v-else ref="scrollContainerRef" class="max-h-96 space-y-3 overflow-y-auto" @scroll="closeGroupSelector">
         <div v-for="key in apiKeys" :key="key.id" class="rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-600 dark:bg-dark-800">
@@ -42,9 +43,19 @@
                 <svg v-else class="h-3 w-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9" /></svg>
               </button>
             </div>
+            <button type="button" class="text-primary-600" @click="editRoutes(key)">{{ t('keys.routes.edit') }}</button>
+            <span v-if="key.group_ids && key.group_ids.length > 1" class="max-w-xs truncate" :title="routeSummary(key)">{{ routeSummary(key) }}</span>
             <div class="flex items-center gap-1"><span>{{ t('admin.users.columns.created') }}: {{ formatDateTime(key.created_at) }}</span></div>
           </div>
         </div>
+      </div>
+    </div>
+    <div v-if="routeKey" class="mt-4 space-y-3 border-t border-gray-200 pt-4 dark:border-dark-600">
+      <OrderedGroupRoutesEditor v-model="routeIds" :options="allGroups.map(group => ({ value: group.id, label: group.name }))" :disabled="savingRoutes" />
+      <p v-if="routeError" role="alert" class="text-sm text-red-600">{{ routeError }}</p>
+      <div class="flex justify-end gap-2">
+        <button type="button" class="btn btn-secondary" @click="cancelRoutes">{{ t('common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" :disabled="savingRoutes" @click="saveRoutes">{{ savingRoutes ? t('common.loading') : t('common.save') }}</button>
       </div>
     </div>
   </BaseDialog>
@@ -114,6 +125,7 @@ import { formatDateTime } from '@/utils/format'
 import type { AdminUser, AdminGroup, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
+import OrderedGroupRoutesEditor from '@/components/keys/OrderedGroupRoutesEditor.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
@@ -122,8 +134,40 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const apiKeys = ref<ApiKey[]>([])
+const routeKey = ref<ApiKey | null>(null)
+const routeIds = ref<number[]>([])
+const routeError = ref('')
+let routeSaveVersion = 0
+const savingRoutes = ref(false)
+const routeSummary = (key: ApiKey) => (key.group_ids ?? []).map(id => allGroups.value.find(group => group.id === id)?.name ?? `#${id}`).join(' → ')
+const editRoutes = (key: ApiKey) => {
+  routeSaveVersion++
+  routeKey.value = key
+  routeIds.value = [...(key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [])]
+  routeError.value = ''
+}
+const cancelRoutes = () => { routeSaveVersion++; savingRoutes.value = false; routeKey.value = null }
+const saveRoutes = async () => {
+  if (!routeKey.value || savingRoutes.value) return
+  const key = routeKey.value
+  const saveVersion = ++routeSaveVersion
+  const version = requestVersion
+  savingRoutes.value = true
+  routeError.value = ''
+  try {
+    const result = await adminAPI.apiKeys.updateApiKeyRoutes(key.id, [...routeIds.value])
+    if (saveVersion !== routeSaveVersion || version !== requestVersion || routeKey.value?.id !== key.id) return
+    const index = apiKeys.value.findIndex(item => item.id === key.id)
+    if (index >= 0) apiKeys.value[index] = result.api_key
+    routeKey.value = null
+    appStore.showSuccess(t('admin.users.groupChangedSuccess'))
+  } catch (error: unknown) {
+    if (saveVersion === routeSaveVersion && version === requestVersion) routeError.value = error instanceof Error ? error.message : t('admin.users.groupChangeFailed')
+  } finally { if (saveVersion === routeSaveVersion) savingRoutes.value = false }
+}
 const allGroups = ref<AdminGroup[]>([])
 const loading = ref(false)
+const loadError = ref('')
 let requestVersion = 0
 const updatingKeyIds = ref(new Set<number>())
 const groupSelectorKeyId = ref<number | null>(null)
@@ -148,6 +192,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
   onCleanup(() => { requestVersion++ })
   closeGroupSelector()
+  cancelRoutes()
   if (show && props.user) {
     load()
     loadGroups()
@@ -159,6 +204,7 @@ const load = async () => {
   const version = ++requestVersion
   apiKeys.value = []
   loading.value = true
+  loadError.value = ''
   groupButtonRefs.value.clear()
   try {
     const res = await adminAPI.users.getUserApiKeys(props.user.id)
@@ -166,15 +212,17 @@ const load = async () => {
   } catch (error) {
     if (version !== requestVersion) return
     console.error('Failed to load API keys:', error)
+    loadError.value = t('admin.users.groupChangeFailed')
   } finally {
     if (version === requestVersion) loading.value = false
   }
 }
 
 const loadGroups = async () => {
+  const version = requestVersion
   try {
     const groups = await adminAPI.groups.getAll()
-    allGroups.value = groups
+    if (version === requestVersion) allGroups.value = groups ?? []
   } catch (error) {
     console.error('Failed to load groups:', error)
   }
@@ -249,6 +297,8 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 const handleClose = () => {
+  requestVersion++
+  cancelRoutes()
   closeGroupSelector()
   emit('close')
 }
