@@ -152,7 +152,12 @@ func TestComputeGroupSignalsNewGroup(t *testing.T) {
 		require.True(t, at(0).IsNew)
 	})
 
-	t.Run("a group created in the future is never new", func(t *testing.T) {
+	t.Run("a group created slightly in the future still counts as new", func(t *testing.T) {
+		got := ComputeGroupSignals(&Group{ID: 1, RateMultiplier: 0.08, CreatedAt: rateSignalNow.Add(2 * time.Minute)}, nil, GroupSignalOptions{}, rateSignalNow)
+		require.True(t, got.IsNew)
+	})
+
+	t.Run("a group created far in the future is never new", func(t *testing.T) {
 		got := ComputeGroupSignals(&Group{ID: 1, RateMultiplier: 0.08, CreatedAt: rateSignalNow.Add(time.Hour)}, nil, GroupSignalOptions{}, rateSignalNow)
 		require.False(t, got.IsNew)
 		require.True(t, got.IsZero())
