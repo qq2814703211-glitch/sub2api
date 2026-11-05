@@ -333,8 +333,13 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 	}
 
 	out := make([]dto.Group, 0, len(groups))
+	// 展示提示（近期调价、新分组）。尽力而为：内部失败只扣留提示，
+	// 绝不让分组列表本身失败。
+	signals := h.apiKeyService.GetGroupSignals(c.Request.Context(), subject.UserID, groups, time.Now())
 	for i := range groups {
-		out = append(out, *dto.GroupFromService(&groups[i]).Localized(c.GetHeader("Accept-Language")))
+		item := dto.GroupFromService(&groups[i]).Localized(c.GetHeader("Accept-Language"))
+		dto.ApplyGroupSignals(item, signals[groups[i].ID])
+		out = append(out, *item)
 	}
 	response.Success(c, out)
 }
