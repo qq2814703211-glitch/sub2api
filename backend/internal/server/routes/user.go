@@ -119,6 +119,20 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		// 站内工单（仅本人会话）。nil 保护让只装配部分 handler 的路由测试继续可用。
+		if h.Ticket != nil {
+			tickets := authenticated.Group("/tickets")
+			{
+				tickets.GET("", h.Ticket.List)
+				tickets.GET("/stats", h.Ticket.Stats)
+				tickets.POST("", h.Ticket.Create)
+				tickets.GET("/:id", h.Ticket.Detail)
+				tickets.POST("/:id/replies", h.Ticket.Reply)
+				tickets.PATCH("/:id", h.Ticket.Update)
+				tickets.POST("/:id/read", h.Ticket.MarkRead)
+			}
+		}
+
 		// 卡密兑换
 		redeem := authenticated.Group("/redeem")
 		{
