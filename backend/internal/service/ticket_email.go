@@ -23,8 +23,8 @@ const ticketEmailRetryInterval = 15 * time.Second
 // stops instead of hammering SMTP.
 type ticketEmailPermanentError struct{ err error }
 
-func (e ticketEmailPermanentError) Error() string { return e.err.Error() }
-func (e ticketEmailPermanentError) Unwrap() error { return e.err }
+func (e ticketEmailPermanentError) Error() string         { return e.err.Error() }
+func (e ticketEmailPermanentError) Unwrap() error         { return e.err }
 func (e ticketEmailPermanentError) TicketEmailPermanent() {}
 
 func ticketEmailPermanent(err error) error {

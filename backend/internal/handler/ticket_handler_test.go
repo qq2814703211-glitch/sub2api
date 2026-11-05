@@ -219,5 +219,3 @@ func TestTicketHandlerAdminCreateRequiresAdmin(t *testing.T) {
 	ok := ticketRequest(engine, http.MethodPost, "/api/v1/admin/tickets", body, true)
 	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
 }
-
-

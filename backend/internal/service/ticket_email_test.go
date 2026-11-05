@@ -133,13 +133,13 @@ func ticketEmailTestService(t *testing.T, adminEmail string) (*TicketService, *t
 	t.Helper()
 	smtp := startTicketFakeSMTP(t)
 	settings := &ticketSettingRepoStub{values: map[string]string{
-		SettingKeySMTPHost:     "127.0.0.1",
-		SettingKeySMTPPort:     fmt.Sprint(smtp.listener.Addr().(*net.TCPAddr).Port),
-		SettingKeySMTPUsername: "mailer",
-		SettingKeySMTPPassword: "secret",
-		SettingKeySMTPFrom:     "support@example.test",
-		SettingKeySMTPUseTLS:   "false",
-		SettingKeySiteName:     "TicketSite",
+		SettingKeySMTPHost:         "127.0.0.1",
+		SettingKeySMTPPort:         fmt.Sprint(smtp.listener.Addr().(*net.TCPAddr).Port),
+		SettingKeySMTPUsername:     "mailer",
+		SettingKeySMTPPassword:     "secret",
+		SettingKeySMTPFrom:         "support@example.test",
+		SettingKeySMTPUseTLS:       "false",
+		SettingKeySiteName:         "TicketSite",
 		SettingKeyTicketAdminEmail: adminEmail,
 	}}
 	email := NewEmailService(settings, nil)
