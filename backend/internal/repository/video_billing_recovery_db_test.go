@@ -81,6 +81,143 @@ func TestVideoDBWorkerHotDisableAndTerminalStates(t *testing.T) {
 	}
 }
 
+// Build the intent through production observation and stop at a real SQL failure,
+// rather than installing a synthetic SimpleMode intent that cannot debit money.
+func videoDBRetryFixture(t *testing.T, stage string) (*videoDBFixture, *service.OpenAIGatewayService, *service.OpenAIRecordUsageInput, *service.VideoBillingJob) {
+	t.Helper()
+	f := newVideoDBFixture(t, "grok")
+	svc, in, _ := f.service(t, `{"status":"done","video":{"url":"https://example.test/video","duration":10}}`)
+	j := f.begin(t, svc, in, "admin-retry-"+stage)
+	ctx := context.Background()
+	repo := NewVideoBillingJobRepository(f.db)
+	if stage != "without_intent" {
+		target := "UPDATE OF quota_used ON api_keys"
+		if stage == "billed" {
+			target = "INSERT ON usage_logs"
+		}
+		_, err := f.db.Exec(`CREATE FUNCTION video_retry_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic retry boundary failure'; END $$;
+ CREATE TRIGGER video_retry_fail BEFORE ` + target + ` FOR EACH ROW EXECUTE FUNCTION video_retry_fail()`)
+		require.NoError(t, err)
+		require.NoError(t, svc.RunVideoBillingRecovery(ctx, 1))
+		table := "api_keys"
+		if stage == "billed" {
+			table = "usage_logs"
+		}
+		_, err = f.db.Exec(`DROP TRIGGER video_retry_fail ON ` + table + `;DROP FUNCTION video_retry_fail()`)
+		require.NoError(t, err)
+		row, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+		require.NoError(t, err)
+		require.NotNil(t, row.Intent)
+		require.False(t, row.Intent.SimpleMode)
+		require.InDelta(t, 0.25, row.Intent.Command.BalanceCost, 1e-8)
+		expectedState := "ready"
+		expectedBalance := 100.0
+		if stage == "billed" {
+			expectedState = "billed"
+			expectedBalance = 99.75
+		}
+		require.Equal(t, expectedState, row.State)
+		var balance float64
+		require.NoError(t, f.db.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user).Scan(&balance))
+		require.Equal(t, expectedBalance, balance)
+		var logs int
+		require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM usage_logs WHERE api_key_id=$1`, f.key).Scan(&logs))
+		require.Zero(t, logs)
+	}
+	if stage != "billed" {
+		claim, err := repo.Claim(ctx, j.ID, time.Minute)
+		require.NoError(t, err)
+		require.NoError(t, repo.Finish(ctx, claim, "reconciliation", "done", "manual_review_required", 0))
+	}
+	return f, svc, in, j
+}
+
+func TestVideoDBAdminRetryRecoversRealSettlement(t *testing.T) {
+	for _, stage := range []string{"without_intent", "with_intent", "billed"} {
+		t.Run(stage, func(t *testing.T) {
+			f, svc, in, j := videoDBRetryFixture(t, stage)
+			ctx := context.Background()
+			repo := NewVideoBillingJobRepository(f.db)
+			before, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			// Active leases remain fenced, including their exact token and expiry.
+			claim, err := repo.Claim(ctx, j.ID, time.Minute)
+			require.NoError(t, err)
+			var leaseUntil time.Time
+			require.NoError(t, f.db.QueryRow(`SELECT lease_until FROM video_billing_jobs WHERE id=$1`, j.ID).Scan(&leaseUntil))
+			require.ErrorIs(t, svc.RetryVideoBillingJob(ctx, j.ID), service.ErrVideoJobLeaseLost)
+			var token string
+			var afterLease time.Time
+			require.NoError(t, f.db.QueryRow(`SELECT lease_token,lease_until FROM video_billing_jobs WHERE id=$1`, j.ID).Scan(&token, &afterLease))
+			require.Equal(t, claim.LeaseToken, token)
+			require.Equal(t, leaseUntil, afterLease)
+			require.NoError(t, repo.Finish(ctx, claim, before.State, before.ProviderStatus, before.LastError, 0))
+
+			// Neither a new service's prices nor a changed live card may replace a
+			// frozen completion intent (or the original no-intent snapshot).
+			in.APIKey.Group.VideoModelPrices[f.model]["720p"] = 99
+			fresh, current, upstream := f.service(t, `{"status":"done","video":{"url":"https://example.test/video","duration":10}}`)
+			current.APIKey.Group.VideoModelPrices[f.model]["720p"] = 77
+			require.NoError(t, fresh.RetryVideoBillingJob(ctx, j.ID))
+			requeued, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			require.Equal(t, before.Intent, requeued.Intent)
+			require.NoError(t, fresh.RunVideoBillingRecovery(ctx, 3))
+			row, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			require.Equal(t, "done", row.State, "last_error=%s", row.LastError)
+			f.assertBill(t, 0.25)
+			expectedState := "ready"
+			expectedMethods := []string(nil)
+			if stage == "without_intent" {
+				expectedState = "submitted"
+				expectedMethods = []string{"GET"}
+			} else if stage == "billed" {
+				expectedState = "billed"
+			}
+			require.Equal(t, expectedState, requeued.State)
+			require.Equal(t, expectedMethods, upstream.methods)
+			if before.Intent != nil {
+				require.Equal(t, before.Intent, row.Intent)
+			}
+			// Repeated operational passes must not create another debit or usage.
+			for n := 0; n < 3; n++ {
+				require.NoError(t, fresh.RunVideoBillingRecovery(ctx, 3))
+				f.assertBill(t, 0.25)
+			}
+			require.Equal(t, expectedMethods, upstream.methods)
+		})
+	}
+}
+
+func TestVideoDBReconciliationRequiresManualRetry(t *testing.T) {
+	for _, stage := range []string{"without_intent", "with_intent"} {
+		t.Run(stage, func(t *testing.T) {
+			f, _, _, j := videoDBRetryFixture(t, stage)
+			ctx := context.Background()
+			repo := NewVideoBillingJobRepository(f.db)
+			before, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			fresh, _, upstream := f.service(t, `{"status":"done","video":{"url":"https://example.test/video","duration":10}}`)
+			for n := 0; n < 3; n++ {
+				require.NoError(t, fresh.RunVideoBillingRecovery(ctx, 3))
+			}
+			after, err := repo.GetForOwner(ctx, j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			require.Equal(t, before, after, "unretried reconciliation must not be claimed, polled or settled")
+			require.Zero(t, upstream.calls)
+			var balance float64
+			require.NoError(t, f.db.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user).Scan(&balance))
+			require.Equal(t, 100.0, balance)
+			for _, table := range []string{"usage_billing_dedup", "usage_logs"} {
+				var count int
+				require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE api_key_id=$1`, f.key).Scan(&count))
+				require.Zero(t, count)
+			}
+		})
+	}
+}
+
 func TestVideoDBLongPendingRetainedAndRecoverable(t *testing.T) {
 	f := newVideoDBFixture(t, "grok")
 	svc, in, u := f.service(t, `{"status":"pending"}`)
