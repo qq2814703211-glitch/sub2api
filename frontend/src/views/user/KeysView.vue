@@ -401,6 +401,15 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <!-- Usage Detail Button -->
+              <button
+                @click="openUsageDialog(row)"
+                data-testid="key-usage-open"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-purple-50 hover:text-purple-600 dark:hover:bg-purple-900/20 dark:hover:text-purple-400"
+              >
+                <Icon name="chart" size="sm" />
+                <span class="text-xs">{{ t('keys.usageDialog.action') }}</span>
+              </button>
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
@@ -1089,6 +1098,13 @@
       @close="closeUseKeyModal"
     />
 
+    <!-- Key Usage Detail Dialog -->
+    <KeyUsageDialog
+      :show="showUsageDialog"
+      :api-key="usageDialogKey"
+      @close="closeUsageDialog"
+    />
+
     <!-- CCS Client Selection Dialog for Antigravity -->
     <BaseDialog
       :show="showCcsClientSelect"
@@ -1229,6 +1245,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
@@ -1416,6 +1433,8 @@ const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
+const showUsageDialog = ref(false)
+const usageDialogKey = ref<ApiKey | null>(null)
 const showCcsClientSelect = ref(false)
 const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
@@ -1713,6 +1732,16 @@ const loadPublicSettings = async () => {
 const openUseKeyModal = (key: ApiKey) => {
   selectedKey.value = key
   showUseKeyModal.value = true
+}
+
+const openUsageDialog = (key: ApiKey) => {
+  usageDialogKey.value = key
+  showUsageDialog.value = true
+}
+
+const closeUsageDialog = () => {
+  showUsageDialog.value = false
+  usageDialogKey.value = null
 }
 
 const closeUseKeyModal = () => {

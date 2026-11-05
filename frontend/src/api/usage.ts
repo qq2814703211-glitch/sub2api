@@ -299,15 +299,20 @@ export async function getDashboardModels(params?: {
  * Get daily usage details for one API key owned by the current user.
  * @param apiKeyId - API key ID
  * @param days - Number of days to include (1-90)
+ * @param options - Optional IANA timezone for day boundaries and abort signal
  * @returns Daily usage detail rows
  */
 export async function getMyApiKeyDailyUsage(
   apiKeyId: number,
-  days: number = 30
+  days: number = 30,
+  options?: { timezone?: string; signal?: AbortSignal }
 ): Promise<ApiKeyDailyUsageResponse> {
   const { data } = await apiClient.get<ApiKeyDailyUsageResponse>(
     `/user/api-keys/${apiKeyId}/usage/daily`,
-    { params: { days } }
+    {
+      params: { days, ...(options?.timezone ? { timezone: options.timezone } : {}) },
+      signal: options?.signal
+    }
   )
   return data
 }
