@@ -525,6 +525,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
+		// A leased async video can be retried by a later poll. Do not let an
+		// unsettled log occupy usage_logs' unique task key before that retry:
+		// its successful log would otherwise be ignored by ON CONFLICT.
+		if strings.TrimSpace(result.BillingClaimOwner) != "" {
+			return billingErr
+		}
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return billingErr

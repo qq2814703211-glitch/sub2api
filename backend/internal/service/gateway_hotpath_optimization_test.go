@@ -151,11 +151,11 @@ func (s *stickyGatewayCacheHotpathStub) SetGrokVideoPendingBilling(_ context.Con
 func (s *stickyGatewayCacheHotpathStub) GetGrokVideoPendingBilling(_ context.Context, _ string) ([]byte, error) {
 	return nil, nil
 }
-func (s *stickyGatewayCacheHotpathStub) ClaimGrokVideoBilled(_ context.Context, _ string, _ time.Duration) (bool, error) {
+func (s *stickyGatewayCacheHotpathStub) ClaimGrokVideoBilled(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
 
-func (s *stickyGatewayCacheHotpathStub) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
+func (s *stickyGatewayCacheHotpathStub) ReleaseGrokVideoBilled(_ context.Context, _ string, _ string) error {
 	return nil
 }
 

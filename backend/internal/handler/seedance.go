@@ -49,11 +49,12 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 	if err != nil || pending == nil {
 		return nil
 	}
-	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskID, subject.UserID, key.ID)
-	if err != nil || !claimed {
+	owner, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskID, subject.UserID, key.ID)
+	if err != nil || owner == "" {
 		return nil
 	}
 	merged := *result
+	merged.BillingClaimOwner = owner
 	merged.MediaUsage = service.MergeMediaUsage(pending.MediaUsage, result.MediaUsage)
 	merged.Model = pending.Model
 	merged.BillingModel = firstNonEmptyString(pending.BillingModel, pending.Model)

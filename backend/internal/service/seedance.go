@@ -158,6 +158,12 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			result.MediaUsage.Count = 1
 		}
 	}
-	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	if endpoint == SeedanceEndpointCreate {
+		result.DeferredHTTPStatus = resp.StatusCode
+		result.DeferredHTTPBody = append([]byte(nil), responseBody...)
+		result.DeferredHTTPHeaders = resp.Header.Clone()
+	} else {
+		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	}
 	return result, nil
 }
