@@ -36,6 +36,7 @@ type ticketRepoStub struct {
 	proactiveContent string
 	outboxPending    int64
 	outboxFailed     int64
+	emailDetail      *TicketDetail
 }
 
 func (r *ticketRepoStub) Create(_ context.Context, _ TicketActor, in CreateTicketInput, hash string) (int64, error) {
@@ -92,9 +93,13 @@ type ticketSettingRepoStub struct {
 	SettingRepository
 	values  map[string]string
 	deleted []string
+	err     error
 }
 
 func (s *ticketSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
 	if value, ok := s.values[key]; ok {
 		return value, nil
 	}
