@@ -6,11 +6,11 @@ import (
 	"compress/zlib"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"github.com/klauspost/compress/zstd"
 )
 
