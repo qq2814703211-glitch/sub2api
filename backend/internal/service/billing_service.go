@@ -1565,7 +1565,7 @@ type CostInput struct {
 // CalculateCostUnified 统一计费入口，支持三种计费模式。
 // 使用 ModelPricingResolver 解析定价，然后根据 BillingMode 分发计算。
 func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, error) {
-	if input.Resolver == nil && !(input.Resolved != nil && input.Resolved.channelPricing != nil && input.Resolved.channelPricing.MediaPricing != nil) {
+	if input.Resolver == nil && (input.Resolved == nil || input.Resolved.channelPricing == nil || input.Resolved.channelPricing.MediaPricing == nil) {
 		// 无 Resolver，回退到旧路径
 		applyLongContextBilling := true
 		if input.LongContextBillingEnabled != nil {

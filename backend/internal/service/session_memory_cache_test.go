@@ -205,7 +205,9 @@ func TestSessionMemoryCacheOwnsClonedValue(t *testing.T) {
 	value, ok := cache.Load("session")
 	require.True(t, ok)
 	require.NotSame(t, original, value)
-	require.Equal(t, "original", value.(*sessionEntry).uuid)
+	cloned, ok := value.(*sessionEntry)
+	require.True(t, ok)
+	require.Equal(t, "original", cloned.uuid)
 }
 
 func TestSessionMemoryCacheCompareAndDelete(t *testing.T) {
