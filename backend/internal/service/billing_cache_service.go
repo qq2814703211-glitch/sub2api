@@ -742,6 +742,10 @@ func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, plat
 // 订阅模式：检查缓存用量未超过限额（Group限额从参数传入）
 // platform 为请求的目标平台（如 "anthropic"），传空串 "" 时跳过 user × platform quota 检查。
 func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
+	// Multi-route billing is admitted only once a concrete candidate is selected.
+	if apiKey != nil && !APIKeyRouteSelected(ctx, apiKey) {
+		return nil
+	}
 	// 简易模式默认跳过所有计费检查. An explicit key-window opt-in keeps
 	// balance/subscription/platform checks bypassed while enforcing the three
 	// API-key monetary windows from the database source of truth.
@@ -932,6 +936,9 @@ func (s *BillingCacheService) checkSimpleModeAPIKeyRateLimits(ctx context.Contex
 // 与旧版"级联互斥"设计不同，新版确保 user.rpm_limit 作为全局天花板不会被 group 或 override 覆盖。
 // Redis 故障一律 fail-open（打 warning，不阻塞业务）。
 func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *Group) error {
+	if probe, _ := ctx.Value(apiKeyRouteProbeContextKey{}).(bool); probe {
+		return nil
+	}
 	if s == nil || s.userRPMCache == nil || user == nil {
 		return nil
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcement"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/apikeygrouproute"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
 	"github.com/Wei-Shaw/sub2api/ent/batchimageevent"
@@ -145,6 +146,20 @@ func init() {
 	apikeyDescUsage7d := apikeyFields[16].Descriptor()
 	// apikey.DefaultUsage7d holds the default value on creation for the usage_7d field.
 	apikey.DefaultUsage7d = apikeyDescUsage7d.Default.(float64)
+	apikeygrouprouteFields := schema.APIKeyGroupRoute{}.Fields()
+	_ = apikeygrouprouteFields
+	// apikeygrouprouteDescAPIKeyID is the schema descriptor for api_key_id field.
+	apikeygrouprouteDescAPIKeyID := apikeygrouprouteFields[0].Descriptor()
+	// apikeygrouproute.APIKeyIDValidator is a validator for the "api_key_id" field. It is called by the builders before save.
+	apikeygrouproute.APIKeyIDValidator = apikeygrouprouteDescAPIKeyID.Validators[0].(func(int64) error)
+	// apikeygrouprouteDescGroupID is the schema descriptor for group_id field.
+	apikeygrouprouteDescGroupID := apikeygrouprouteFields[1].Descriptor()
+	// apikeygrouproute.GroupIDValidator is a validator for the "group_id" field. It is called by the builders before save.
+	apikeygrouproute.GroupIDValidator = apikeygrouprouteDescGroupID.Validators[0].(func(int64) error)
+	// apikeygrouprouteDescPosition is the schema descriptor for position field.
+	apikeygrouprouteDescPosition := apikeygrouprouteFields[2].Descriptor()
+	// apikeygrouproute.PositionValidator is a validator for the "position" field. It is called by the builders before save.
+	apikeygrouproute.PositionValidator = apikeygrouprouteDescPosition.Validators[0].(func(int) error)
 	accountMixin := schema.Account{}.Mixin()
 	accountMixinHooks1 := accountMixin[1].Hooks()
 	account.Hooks[0] = accountMixinHooks1[0]

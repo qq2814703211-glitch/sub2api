@@ -136,6 +136,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
+	requestCtx = c.Request.Context()
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
@@ -173,6 +176,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	defer inflightRelease()
+	requestCtx = c.Request.Context()
 
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
@@ -194,7 +198,22 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if failoverClientGone(c) {
 			return
 		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(requestCtx, apiKey, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0), effectiveAPIKeyPlatform(c, apiKey))
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				body = routeState.body
+			}
+			if apiKey.HasMultipleRoutes() {
+				requestCtx = c.Request.Context()
+			}
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("gateway.responses.account_select_aborted_client_disconnected", zap.Error(err))

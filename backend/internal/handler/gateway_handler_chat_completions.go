@@ -132,6 +132,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
@@ -197,7 +199,20 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if failoverClientGone(c) {
 			return
 		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0), effectiveAPIKeyPlatform(c, apiKey))
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				body = routeState.body
+			}
+
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("gateway.cc.account_select_aborted_client_disconnected", zap.Error(err))

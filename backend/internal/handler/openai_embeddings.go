@@ -91,6 +91,8 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	forwardModel := openAIChannelForwardModel(channelMapping, reqModel)
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
@@ -138,19 +140,17 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	c.Request = c.Request.WithContext(embPricingCtx)
 
 	for {
-		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			"",
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityEmbeddings,
-			false,
-			false,
-			true,
-		)
+		selection, _, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, "", "", service.APIKeyRouteRequestModel(apiKey, reqModel, forwardModel), failedAccountIDs, service.OpenAIUpstreamTransportHTTPSSE, service.OpenAIEndpointCapabilityEmbeddings, false, false, true)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_embeddings.account_select_aborted_client_disconnected", zap.Error(err))

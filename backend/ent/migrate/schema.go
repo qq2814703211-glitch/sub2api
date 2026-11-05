@@ -93,6 +93,36 @@ var (
 			},
 		},
 	}
+	// APIKeyGroupRoutesColumns holds the columns for the "api_key_group_routes" table.
+	APIKeyGroupRoutesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "api_key_id", Type: field.TypeInt64},
+		{Name: "group_id", Type: field.TypeInt64},
+		{Name: "position", Type: field.TypeInt},
+	}
+	// APIKeyGroupRoutesTable holds the schema information for the "api_key_group_routes" table.
+	APIKeyGroupRoutesTable = &schema.Table{
+		Name:       "api_key_group_routes",
+		Columns:    APIKeyGroupRoutesColumns,
+		PrimaryKey: []*schema.Column{APIKeyGroupRoutesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "apikeygrouproute_api_key_id_group_id",
+				Unique:  true,
+				Columns: []*schema.Column{APIKeyGroupRoutesColumns[1], APIKeyGroupRoutesColumns[2]},
+			},
+			{
+				Name:    "apikeygrouproute_api_key_id_position",
+				Unique:  true,
+				Columns: []*schema.Column{APIKeyGroupRoutesColumns[1], APIKeyGroupRoutesColumns[3]},
+			},
+			{
+				Name:    "apikeygrouproute_group_id",
+				Unique:  false,
+				Columns: []*schema.Column{APIKeyGroupRoutesColumns[2]},
+			},
+		},
+	}
 	// AccountsColumns holds the columns for the "accounts" table.
 	AccountsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -2102,6 +2132,7 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		APIKeysTable,
+		APIKeyGroupRoutesTable,
 		AccountsTable,
 		AccountGroupsTable,
 		AnnouncementsTable,
@@ -2148,6 +2179,9 @@ func init() {
 	APIKeysTable.ForeignKeys[1].RefTable = UsersTable
 	APIKeysTable.Annotation = &entsql.Annotation{
 		Table: "api_keys",
+	}
+	APIKeyGroupRoutesTable.Annotation = &entsql.Annotation{
+		Table: "api_key_group_routes",
 	}
 	AccountsTable.ForeignKeys[0].RefTable = ProxiesTable
 	AccountsTable.ForeignKeys[1].RefTable = AccountsTable
