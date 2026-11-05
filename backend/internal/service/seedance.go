@@ -142,12 +142,19 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, fmt.Errorf("seedance create response missing task ID")
 		}
 		result.ResponseID = SeedanceTaskKey(id)
+		result.MediaUsage = ExtractMediaRequestUsage(body)
 	}
 	if endpoint == SeedanceEndpointStatus {
 		result.ResponseID = taskID
 		result.UpstreamModel = gjson.GetBytes(responseBody, "model").String()
-		if gjson.GetBytes(responseBody, "status").String() == "succeeded" {
+		result.UpstreamTerminalEvent = gjson.GetBytes(responseBody, "status").String()
+		result.MediaUsage = &MediaUsage{}
+		if result.UpstreamTerminalEvent == "succeeded" &&
+			strings.TrimSpace(gjson.GetBytes(responseBody, "content.video_url").String()) != "" &&
+			!mediaResponseHasError(gjson.ParseBytes(responseBody)) {
 			result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
+			result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
+			result.MediaUsage.Count = 1
 		}
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)

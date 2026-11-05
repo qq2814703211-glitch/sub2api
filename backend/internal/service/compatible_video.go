@@ -1,0 +1,127 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+)
+
+const (
+	CompatibleVideoEndpointCreate           GrokMediaEndpoint        = "compatible_video_create"
+	CompatibleVideoEndpointStatus           GrokMediaEndpoint        = "compatible_video_status"
+	OpenAIEndpointCapabilityCompatibleVideo OpenAIEndpointCapability = "video_generations"
+)
+
+func (e GrokMediaEndpoint) IsCompatibleVideo() bool {
+	return e == CompatibleVideoEndpointCreate || e == CompatibleVideoEndpointStatus
+}
+func (e GrokMediaEndpoint) IsOpenAIAsyncVideo() bool { return e.IsSeedance() || e.IsCompatibleVideo() }
+func CompatibleVideoTaskKey(id string) string        { return "compat-video:" + strings.TrimSpace(id) }
+
+// CompatibleVideo uses the documented singular /video/generations protocol
+// (WhatsTokenAI doc0007), not the xAI plural /videos API or a guessed vendor URL.
+func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
+	if !endpoint.IsCompatibleVideo() || !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityCompatibleVideo) {
+		return nil, fmt.Errorf("compatible video requires an OpenAI API-key account with a custom base URL")
+	}
+	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
+	if err != nil {
+		return nil, err
+	}
+	target := buildOpenAIEndpointURL(base, "/v1/video/generations")
+	method := http.MethodGet
+	model, upstreamModel := "", ""
+	if endpoint == CompatibleVideoEndpointCreate {
+		if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() || gjson.GetBytes(body, "model").Type != gjson.String {
+			return nil, fmt.Errorf("video request requires a JSON object with model")
+		}
+		model = strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if model == "" {
+			return nil, fmt.Errorf("model is required")
+		}
+		upstreamModel = account.GetMappedModel(model)
+		body, err = sjson.SetBytes(body, "model", upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+		method = http.MethodPost
+	} else {
+		id := strings.TrimPrefix(taskID, "compat-video:")
+		if err = validateUpstreamPathSegment("video task ID", id); err != nil || id == "" {
+			return nil, fmt.Errorf("invalid video task ID")
+		}
+		target += "/" + id
+	}
+	token := strings.TrimSpace(account.GetCredential("api_key"))
+	if token == "" {
+		return nil, fmt.Errorf("video account missing api_key")
+	}
+	upstreamCtx, release := detachUpstreamContext(ctx)
+	defer release()
+	started := time.Now()
+	req, err := http.NewRequestWithContext(upstreamCtx, method, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	account.ApplyHeaderOverrides(req.Header)
+	proxy := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxy = account.Proxy.URL()
+	}
+	resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+		return nil, fmt.Errorf("video upstream status %d", resp.StatusCode)
+	}
+	result := &OpenAIForwardResult{Model: model, BillingModel: model, UpstreamModel: upstreamModel, Duration: time.Since(started), ResponseHeaders: resp.Header.Clone()}
+	if endpoint == CompatibleVideoEndpointCreate {
+		id := firstNonEmpty(gjson.GetBytes(responseBody, "id").String(), gjson.GetBytes(responseBody, "task_id").String())
+		if id == "" || mediaResponseHasError(gjson.ParseBytes(responseBody)) {
+			writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+			return nil, fmt.Errorf("video create response missing successful task ID")
+		}
+		result.ResponseID = CompatibleVideoTaskKey(id)
+		result.MediaUsage = ExtractMediaRequestUsage(body)
+	} else {
+		result.ResponseID = taskID
+		result.UpstreamTerminalEvent = gjson.GetBytes(responseBody, "status").String()
+		result.MediaUsage = &MediaUsage{}
+		if result.UpstreamTerminalEvent == "completed" && !mediaResponseHasError(gjson.ParseBytes(responseBody)) {
+			for _, item := range gjson.GetBytes(responseBody, "data").Array() {
+				if strings.TrimSpace(item.Get("url").String()) != "" && !mediaResponseHasError(item) {
+					result.MediaUsage.Count++
+				}
+			}
+			if result.MediaUsage.Count > 0 {
+				count := result.MediaUsage.Count
+				result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
+				result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractCompatibleVideoResponseUsage(responseBody))
+				result.MediaUsage.Count = count
+				result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
+				result.UpstreamModel = gjson.GetBytes(responseBody, "model").String()
+				result.VideoCount = count
+			}
+		}
+	}
+	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	return result, nil
+}

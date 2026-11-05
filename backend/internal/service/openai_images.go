@@ -521,8 +521,15 @@ func isGeminiCompatibleImageModel(model string) bool {
 		(strings.HasSuffix(model, "-image") || strings.Contains(model, "-image-"))
 }
 
+// Ark documents Seedream on the same /images/generations protocol. Keep
+// provider models on API-key passthrough, never the Codex image tool route.
+func isSeedreamCompatibleImageModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "seedream-") || strings.HasPrefix(model, "doubao-seedream-")
+}
+
 func validateCompatibleImagesModel(model string) error {
-	if isGeminiCompatibleImageModel(model) {
+	if isGeminiCompatibleImageModel(model) || isSeedreamCompatibleImageModel(model) {
 		return nil
 	}
 	return validateOpenAIImagesModel(model)
@@ -531,7 +538,7 @@ func validateCompatibleImagesModel(model string) error {
 // RequiredCapabilityForModel also applies the API-key-only fence when channel
 // mapping introduces a compatible provider model after request parsing.
 func (req *OpenAIImagesRequest) RequiredCapabilityForModel(model string) OpenAIImagesCapability {
-	if isGeminiCompatibleImageModel(model) {
+	if isGeminiCompatibleImageModel(model) || isSeedreamCompatibleImageModel(model) {
 		return OpenAIImagesCapabilityAPIKey
 	}
 	return req.RequiredCapability
@@ -553,7 +560,7 @@ func classifyOpenAIImagesCapability(req *OpenAIImagesRequest) OpenAIImagesCapabi
 	if req == nil {
 		return OpenAIImagesCapabilityNative
 	}
-	if isGeminiCompatibleImageModel(req.Model) {
+	if isGeminiCompatibleImageModel(req.Model) || isSeedreamCompatibleImageModel(req.Model) {
 		return OpenAIImagesCapabilityAPIKey
 	}
 	if req.ExplicitModel || req.ExplicitSize {
@@ -646,7 +653,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 	upstreamModel := account.GetMappedModel(requestModel)
 	if err := validateCompatibleImagesModel(upstreamModel); err != nil {
-		return nil, err
+		// Ark endpoint IDs are opaque model mappings, not model-family names.
+		if !isSeedreamCompatibleImageModel(requestModel) || !strings.HasPrefix(upstreamModel, "ep-") || account.GetOpenAIBaseURL() == "" {
+			return nil, err
+		}
 	}
 	SetOpsUpstreamModel(c, upstreamModel)
 	logger.LegacyPrintf(
@@ -751,11 +761,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	imageCounter := newOpenAIImageOutputCounter()
+	requestMedia := extractMediaRequestUsageBody(parsed.ContentType, body)
 	var usage OpenAIUsage
 	var imageCount int
 	var firstTokenMs *int
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
-		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil)
+		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil, imageCounter)
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
@@ -773,12 +785,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 					ImageSize:        parsed.SizeTier,
 					ImageInputSize:   parsed.Size,
 					ImageOutputSizes: streamSizes,
+					MediaUsage:       imageCounter.MediaUsage(requestMedia),
 				}, err
 			}
 			return nil, err
 		}
 		usage = streamUsage
-		imageCount = resolveBillableImageCount(streamCount, 0, imageCountBillingEnabled(getAPIKeyFromContext(c)))
+		imageCount = streamCount // Previews and failed events never create a billable image.
 		imageOutputSizes := streamSizes
 		firstTokenMs = ttft
 		return &OpenAIForwardResult{
@@ -796,14 +809,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageSize:        parsed.SizeTier,
 			ImageInputSize:   parsed.Size,
 			ImageOutputSizes: imageOutputSizes,
+			MediaUsage:       imageCounter.MediaUsage(requestMedia),
 		}, nil
 	} else {
-		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
+		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed, imageCounter)
 		if err != nil {
 			return nil, err
 		}
 		usage = nonStreamUsage
-		imageCount = resolveBillableImageCount(nonStreamCount, parsed.N, imageCountBillingEnabled(getAPIKeyFromContext(c)))
+		imageCount = nonStreamCount // Requested n is not evidence of a successful image.
 		return &OpenAIForwardResult{
 			RequestID:        resp.Header.Get("x-request-id"),
 			UpstreamHeaders:  resp.Header,
@@ -819,6 +833,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageSize:        parsed.SizeTier,
 			ImageInputSize:   parsed.Size,
 			ImageOutputSizes: nonStreamSizes,
+			MediaUsage:       imageCounter.MediaUsage(requestMedia),
 		}, nil
 	}
 }
@@ -975,6 +990,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	c *gin.Context,
 	account *Account,
 	parsed *OpenAIImagesRequest,
+	counters ...*openAIImageOutputCounter,
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -991,7 +1007,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	c.Data(resp.StatusCode, contentType, body)
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
-	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), nil
+	counter := newOpenAIImageOutputCounter()
+	if len(counters) > 0 && counters[0] != nil {
+		counter = counters[0]
+	}
+	counter.AddJSONResponse(body)
+	return usage, counter.Count(), counter.Sizes(), nil
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
@@ -999,6 +1020,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	c *gin.Context,
 	startTime time.Time,
 	direct *OpenAIImagesRequest,
+	counters ...*openAIImageOutputCounter,
 ) (OpenAIUsage, int, []string, *int, error) {
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -1015,6 +1037,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 
 	usage := OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
+	if len(counters) > 0 && counters[0] != nil {
+		imageCounter = counters[0]
+	}
 	var firstTokenMs *int
 	clientDisconnected := false
 	lastDownstreamWriteAt := time.Now()
