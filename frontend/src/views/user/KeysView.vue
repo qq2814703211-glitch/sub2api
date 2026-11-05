@@ -177,6 +177,10 @@
                 <span v-else class="text-sm text-gray-500 dark:text-dark-400">{{
                   t('keys.noGroup')
                 }}</span>
+                <GroupRateSignals
+                  :signals="availableGroupsById.get(row.group?.id ?? -1)"
+                  :show-rate-change="showRateChangeFor(row.group)"
+                />
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-500 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
@@ -1191,6 +1195,8 @@
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
+              :signals="option.signals"
+              :show-rate-change="option.subscriptionType !== 'subscription'"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
                 (!selectedKeyForGroup?.group_id && option.value === null)
@@ -1232,6 +1238,8 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
+	import type { GroupSignalSource } from '@/utils/groupRateSignals'
 	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
@@ -1265,6 +1273,7 @@ interface GroupOption {
   peakRateMultiplier: number
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  signals: GroupSignalSource | null
 }
 
 const appStore = useAppStore()
@@ -1386,6 +1395,7 @@ const handleBulkUpdated = (succeededIds: number[]) => {
 }
 
 const groups = ref<Group[]>([])
+const availableGroupsById = computed(() => new Map(groups.value.map((group) => [group.id, group])))
 const loading = ref(false)
 const submitting = ref(false)
 const now = ref(new Date())
@@ -1538,9 +1548,14 @@ const groupOptions = computed(() =>
     peakEnd: group.peak_end,
     peakRateMultiplier: group.peak_rate_multiplier,
     subscriptionType: group.subscription_type,
-    platform: group.platform
+    platform: group.platform,
+    signals: group
   }))
 )
+
+// 订阅分组用 label 展示订阅状态而非每 token 倍率，箭头没有指向对象。
+const showRateChangeFor = (group: Pick<Group, 'subscription_type'> | null | undefined): boolean =>
+  group?.subscription_type !== 'subscription'
 
 const createProvider = ref<KeyGroupProvider>('anthropic')
 const createProviderOptions = computed(() => KEY_GROUP_PROVIDERS.map((value) => ({
