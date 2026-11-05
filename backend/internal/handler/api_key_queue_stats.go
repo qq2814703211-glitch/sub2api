@@ -74,6 +74,10 @@ func (h *APIKeyHandler) GetConcurrencyQueue(c *gin.Context) {
 		return
 	}
 
+	if h.apiKeyService == nil {
+		response.InternalError(c, "API key service unavailable")
+		return
+	}
 	policy := h.apiKeyService.APIKeyQueuePolicy()
 	out := apiKeyQueueStatsResponse{
 		QueuePolicy: apiKeyQueuePolicyDTO{
