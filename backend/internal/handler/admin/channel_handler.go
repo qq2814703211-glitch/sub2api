@@ -60,7 +60,7 @@ type updateChannelRequest struct {
 type channelModelPricingRequest struct {
 	Platform                   string                     `json:"platform" binding:"omitempty,max=50"`
 	Models                     []string                   `json:"models" binding:"required,min=1,max=100"`
-	BillingMode                string                     `json:"billing_mode" binding:"omitempty,oneof=token per_request image"`
+	BillingMode                string                     `json:"billing_mode" binding:"omitempty,oneof=token per_request image video"`
 	InputPrice                 *float64                   `json:"input_price" binding:"omitempty,min=0"`
 	OutputPrice                *float64                   `json:"output_price" binding:"omitempty,min=0"`
 	CacheWritePrice            *float64                   `json:"cache_write_price" binding:"omitempty,min=0"`
@@ -74,6 +74,7 @@ type channelModelPricingRequest struct {
 	PerRequestPrice            *float64                   `json:"per_request_price" binding:"omitempty,min=0"`
 	Intervals                  []pricingIntervalRequest   `json:"intervals"`
 	TimePricing                *channelTimePricingRequest `json:"time_pricing"`
+	MediaPricing               *service.MediaPricing      `json:"media_pricing"`
 }
 
 type channelTimePricingRequest struct {
@@ -148,6 +149,7 @@ type channelModelPricingResponse struct {
 	PerRequestPrice            *float64                    `json:"per_request_price"`
 	Intervals                  []pricingIntervalResponse   `json:"intervals"`
 	TimePricing                *channelTimePricingResponse `json:"time_pricing"`
+	MediaPricing               *service.MediaPricing       `json:"media_pricing"`
 }
 
 type channelTimePricingResponse struct {
@@ -278,6 +280,7 @@ func pricingToResponse(p *service.ChannelModelPricing) channelModelPricingRespon
 		PerRequestPrice:            p.PerRequestPrice,
 		Intervals:                  intervals,
 		TimePricing:                timePricingToResponse(p.TimePricing),
+		MediaPricing:               p.MediaPricing.Clone(),
 	}
 }
 
@@ -376,6 +379,7 @@ func pricingRequestToService(reqs []channelModelPricingRequest, allowChannelMult
 			PerRequestPrice:            r.PerRequestPrice,
 			Intervals:                  intervals,
 			TimePricing:                timePricingRequestToService(r.TimePricing),
+			MediaPricing:               r.MediaPricing.Clone(),
 		})
 	}
 	return result
