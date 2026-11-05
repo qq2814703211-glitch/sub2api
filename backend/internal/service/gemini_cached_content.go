@@ -96,9 +96,15 @@ type GeminiCachedContent struct {
 	TotalTokenCount int64
 	ExpireTime      time.Time
 	// ChannelUsage 是创建时的渠道计费口径（渠道 ID、请求模型、计费模型来源），延长有效期按同一口径计费。
-	ChannelUsage ChannelUsageFields
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ChannelUsage       ChannelUsageFields
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	BillingPending     bool
+	ChargeIntent       *GeminiCachedContentChargeIntent
+	ChargeTargetExpire *time.Time
+	ChargeLeaseToken   string
+	ChargeAttempts     int
+	ChargeLastError    string
 }
 
 // PublicName 返回客户端可见的缓存资源名。
@@ -621,10 +627,11 @@ func (e *GeminiCachedContentUpstreamError) RetryableOnOtherAccount() bool {
 
 // GeminiCachedContentService 管理显式缓存的上游资源与网关绑定。
 type GeminiCachedContentService struct {
-	repo   GeminiCachedContentRepository
-	compat *GeminiMessagesCompatService
-	cfg    *config.Config
-	now    func() time.Time
+	repo           GeminiCachedContentRepository
+	compat         *GeminiMessagesCompatService
+	cfg            *config.Config
+	billingGateway *GatewayService
+	now            func() time.Time
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -655,6 +662,9 @@ func (s *GeminiCachedContentService) runMutationRecovery() {
 	ticker := time.NewTicker(geminiCachedContentMutationRecoveryInterval)
 	defer ticker.Stop()
 	for {
+		if _, err := s.RecoverPendingCharges(context.Background()); err != nil {
+			logger.LegacyPrintf("service.gemini_cached_content", "cached content charge recovery failed: %v", err)
+		}
 		select {
 		case <-s.stopCh:
 			return
@@ -717,7 +727,7 @@ func (s *GeminiCachedContentService) Resolve(ctx context.Context, apiKeyID int64
 	if err != nil {
 		return nil, err
 	}
-	if groupID == nil || record.GroupID != *groupID || !record.ExpireTime.After(s.now()) {
+	if record.BillingPending || groupID == nil || record.GroupID != *groupID || !record.ExpireTime.After(s.now()) {
 		return nil, ErrGeminiCachedContentNotFound
 	}
 	return record, nil
