@@ -218,9 +218,11 @@ func TestGPTImage26RecordUsageBillsFirstImage(t *testing.T) {
 				svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
 				svc.resolver = NewModelPricingResolver(nil, svc.billingService)
 				group := &Group{ID: 123, RateMultiplier: 1}
-				want := 0.016081
+				want := 0.025
 				if mode == "token" {
-					group.ModelPricing = []ChannelModelPricing{{Models: []string{model}, BillingMode: BillingModeToken}}
+					// Explicit settlement-unit prices; no official USD fallback.
+					group.ModelPricing = []ChannelModelPricing{{Models: []string{model}, BillingMode: BillingModeToken,
+						InputPrice: f64p(0), ImageInputPrice: f64p(0), ImageOutputPrice: f64p(want / 439)}}
 				}
 				if mode == "default" {
 					// Existing default per-image billing stays unchanged.
