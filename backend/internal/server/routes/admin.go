@@ -193,6 +193,10 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	ops := admin.Group("/ops")
 	{
+		ops.GET("/video-billing/jobs", h.Admin.Ops.ListVideoBillingJobs)
+		ops.POST("/video-billing/jobs/:id/retry", h.Admin.Ops.RetryVideoBillingJob)
+		ops.GET("/video-billing/worker", h.Admin.Ops.GetVideoBillingWorker)
+		ops.PUT("/video-billing/worker", h.Admin.Ops.SetVideoBillingWorker)
 		// Realtime ops signals
 		ops.GET("/concurrency", h.Admin.Ops.GetConcurrencyStats)
 		ops.GET("/user-concurrency", h.Admin.Ops.GetUserConcurrencyStats)

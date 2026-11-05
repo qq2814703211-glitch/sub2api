@@ -291,6 +291,8 @@ type OpenAIForwardResult struct {
 	VideoResolution    string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
+	VideoStatus          string
+	VideoUsageKnown      bool
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
 	// 上游不返回 usage 字段，>0 时走按次计费（分组单价 × 次数 × 倍率）。
 	WebSearchCalls int
@@ -445,13 +447,18 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRepo      AccountRepository
-	usageLogRepo     UsageLogRepository
-	usageBillingRepo UsageBillingRepository
-	userRepo         UserRepository
-	userSubRepo      UserSubscriptionRepository
-	cache            GatewayCache
-	cfg              *config.Config
+	accountRepo           AccountRepository
+	usageLogRepo          UsageLogRepository
+	usageBillingRepo      UsageBillingRepository
+	videoBillingJobs      VideoBillingJobRepository
+	videoBillingAuthCache APIKeyAuthCacheInvalidator
+	videoWorkerOnce       sync.Once
+	videoWorkerCancel     context.CancelFunc
+	videoWorkerDone       chan struct{}
+	userRepo              UserRepository
+	userSubRepo           UserSubscriptionRepository
+	cache                 GatewayCache
+	cfg                   *config.Config
 	// passthroughReplayStore is nil in production and uses the process disk
 	// budget. Tests inject a private budget or a failing temp file. It is not
 	// a config field and does not change gateway.max_body_size.
