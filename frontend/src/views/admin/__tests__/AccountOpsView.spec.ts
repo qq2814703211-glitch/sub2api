@@ -1,6 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
+import en from '@/i18n/locales/en/admin';
 import AccountOpsView from '../AccountOpsView.vue';
 import UpstreamMonitorView from '../UpstreamMonitorView.vue';
 enableAutoUnmount(afterEach);
@@ -8,12 +9,12 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div/>' } }));
 vi.mock('@/components/admin/operations/UpstreamHistoryPanel.vue', () => ({ default: { template: '<div/>' } }));
 const mocks = vi.hoisted(() => ({ settings: vi.fn(), events: vi.fn(), accounts: vi.fn(), save: vi.fn(), overview: vi.fn(), list: vi.fn(), alerts: vi.fn(), rates: vi.fn(), sample: vi.fn(), rule: vi.fn() }));
-vi.mock('@/api/admin/accountOps', () => ({ getAccountOpsSettings: mocks.settings, getAccountOpsEvents: mocks.events, getAccountOpsThresholdAccounts: mocks.accounts, saveAccountOpsNotificationSettings: mocks.save, saveAccountOpsRule: mocks.rule }));
+vi.mock('@/api/admin/accountOps', () => ({ getAccountOpsSettings: mocks.settings, getAccountOpsEvents: mocks.events, getAccountOpsThresholdAccounts: mocks.accounts, getAccountOpsThresholdGroups: vi.fn().mockResolvedValue([]), saveAccountOpsNotificationSettings: mocks.save, saveAccountOpsRule: mocks.rule }));
 vi.mock('@/api/admin/accounts', () => ({ default: {}, getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }), updateUpstreamBillingProbeSettings: vi.fn(), probeUpstreamBilling: vi.fn(), setUpstreamBillingProbeEnabled: vi.fn() }));
 vi.mock('@/api/admin/upstreamMonitor', () => ({ getOverview: mocks.overview, listAccounts: mocks.list, listAlerts: mocks.alerts, listRateChanges: mocks.rates, sampleNow: mocks.sample }));
-vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ locale: ref('en') }) }));
-vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: (fn: () => Promise<unknown>) => fn() }), isStepUpCancelled: () => false }));
-const stubs = { AppLayout: { template: '<div><slot/></div>' }, AdminPageHeader: { template: '<header><slot name="actions"/></header>' }, TotpStepUpDialog: true, RouterLink: { template: '<a><slot/></a>' }, UpstreamHistoryPanel: true };
+vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ locale: ref('en'), t: (key: string) => { let value: unknown = { admin: en }; for (const part of key.split('.')) value = (value as Record<string, unknown>)?.[part]; return String(value ?? key); } }) }));
+vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: (fn: () => Promise<unknown>) => fn(), onCancel: vi.fn() }), isStepUpCancelled: () => false }));
+const stubs = { AppLayout: { template: '<div><slot/></div>' }, AdminPageHeader: { template: '<header><slot name="actions"/></header>' }, TotpStepUpDialog: true, ConfirmDialog: true, RouterLink: { template: '<a><slot/></a>' }, UpstreamHistoryPanel: true };
 const config = { enabled: false, monitor_enabled: false, sample_interval_minutes: 5, recipient: 'operator@example.test', balance_low: true, weekly_quota: true, cooldown_minutes: 60, webhooks: [], balance_thresholds: [], quota_thresholds: [] };
 beforeEach(() => { vi.clearAllMocks(); mocks.settings.mockResolvedValue({ config: { ...config }, smtp_configured: true, encryption_key_configured: true, dropped_signals: 0, storage_failures: 0 }); mocks.events.mockResolvedValue({ items: [], has_more: false }); mocks.accounts.mockResolvedValue([]); mocks.save.mockImplementation(async (p) => ({ ...config, ...p })); mocks.overview.mockResolvedValue({ total_accounts: 1, with_balance: 0, failed: 0, stale: 1, unsupported: 0, open_alerts: 0, currencies: [], attention: [], spend: [] }); mocks.list.mockResolvedValue({ items: [{ account_id: 9, name: 'Stale account', balance: null, balance_status: 'stale', platform: 'openai', unit: 'USD', rate: null, rate_status: 'unknown', balance_read_at: null, balance_fresh_until: null }], total: 1, pages: 1 }); mocks.alerts.mockResolvedValue({ items: [] }); mocks.rates.mockResolvedValue({ items: [] }); mocks.sample.mockResolvedValue({ sampled: 0 }); });
 describe('account operations behavior', () => {
