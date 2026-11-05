@@ -61,6 +61,20 @@ func TestDurableVideoHandlerNoReplayOnAmbiguousCreate(t *testing.T) {
 	}
 }
 
+func TestDurableVideoHandlerPreservesNativeCreateError(t *testing.T) {
+	h, slots, _, upstream := newGrokMediaSlotHandler(t, false, false, service.PlatformOpenAI)
+	c, w := grokMediaSlotContext(context.Background(), true)
+	c.Request.Body = io.NopCloser(strings.NewReader(`{"model":"video","content":[{"type":"text","text":"x"}]}`))
+	upstream.call = func(*http.Request, int64) (*http.Response, error) {
+		return &http.Response{StatusCode: 400, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"InvalidParameter","message":"native error"}}`))}, nil
+	}
+	h.handleGrokMedia(c, service.SeedanceEndpointCreate, "")
+	require.Equal(t, 400, w.Code)
+	require.JSONEq(t, `{"error":{"code":"InvalidParameter","message":"native error"}}`, w.Body.String())
+	require.Equal(t, 1, upstream.calls)
+	slots.assertReleased(t)
+}
+
 func TestDurableVideoHandlerPersistenceBeforePublicTask(t *testing.T) {
 	for _, scenario := range []string{"save fails", "submit fails", "success"} {
 		t.Run(scenario, func(t *testing.T) {
