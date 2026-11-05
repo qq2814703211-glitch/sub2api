@@ -120,7 +120,7 @@ func TestDurableVideoHandlerPersistenceBeforePublicTask(t *testing.T) {
 // The shared media fixture embeds a nil repository for unused methods. A 429
 // really writes quota observations before reaching the rejection persistence.
 func (r grokMediaSlotRepo) UpdateExtra(context.Context, int64, map[string]any) error { return nil }
-func (r grokMediaSlotRepo) SetRateLimited(context.Context, int64, time.Time) error { return nil }
+func (r grokMediaSlotRepo) SetRateLimited(context.Context, int64, time.Time) error   { return nil }
 
 func TestDurableVideoRejectStorageFailureBlocksFailover(t *testing.T) {
 	h, slots, _, u := newGrokMediaSlotHandler(t, false, false)
@@ -131,7 +131,6 @@ func TestDurableVideoRejectStorageFailureBlocksFailover(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`))}, nil
 	}
 	h.GrokVideoGeneration(c)
-	t.Logf("body=%s calls=%d rejected=%v", w.Body.String(), u.calls, store.rejected)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	require.Equal(t, 1, u.calls)
 	require.Len(t, store.rejected, 1)
