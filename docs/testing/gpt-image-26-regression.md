@@ -24,7 +24,7 @@ Checked on 2026-11-05:
 
 The model pages distinguish image-only models from top-level Responses text drivers. The existing bridge uses a text driver and a separate image-generation tool. Mocked forwarding tests do not establish real account entitlement or upstream availability.
 
-Concrete-model fallback rates are USD per million tokens: text input 5, cached text input 1.25, image input 8, cached image input 2, image output 30. Explicit operator/catalog rates take precedence. These values are not CNY and no currency conversion was introduced. The existing per-image default/override policy is unchanged: 0.134 USD at 1K is the repository's historical default, not a claimed official GPT Image 2.6 per-image price. There is no first-image exemption.
+The integrated GloryCode candidate removes the implementation lane's USD fallback rates: this deployment settles one site dollar as one CNY. Configure the settlement price in the group/channel/catalog; exact operator prices retain precedence. The three new 2.6 names do not inherit an older image model's token rate. The historical per-image defaults are unchanged and are not claimed as official GPT Image 2.6 prices. The first image is charged normally.
 
 ## Executed regression coverage
 
