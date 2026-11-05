@@ -31,6 +31,25 @@ func (r *capacityShedAccountRepoStub) SetTempUnschedulable(_ context.Context, _ 
 	return nil
 }
 
+// WS 输出前容量降载必须与 HTTP 路径同语义：503 客户端结果、请求级瞬时标记、
+// 允许同账号重试；ResponseBody 保留原始降载 payload 供状态判定。
+func TestNewOpenAIWSCapacityShedFailoverErrorIsRequestScoped(t *testing.T) {
+	payload := []byte(`{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)
+	failoverErr := (*OpenAIGatewayService)(nil).newOpenAIWSCapacityShedFailoverError(
+		&Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		nil,
+		payload,
+		"Our servers are currently overloaded. Please try again later.",
+	)
+
+	require.True(t, failoverErr.RequestScopedTransient)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.ClientStatusCode)
+	require.Contains(t, failoverErr.ClientMessage, "currently overloaded")
+	require.Equal(t, payload, failoverErr.ResponseBody)
+}
+
 // 上游容量降载是请求级信号：故障因素（客户端身份、模型容量）与账号无关，
 // 同账号重试用尽后不得把账号临时摘掉——否则一个被降载的请求会顺着 failover
 // 把整池账号逐个封禁，而每个账号都会以同一个错误失败。
