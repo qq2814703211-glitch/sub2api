@@ -2048,7 +2048,9 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   if (submitting.value) return
-  const saveVersion = ++formSaveVersion
+  formSaveVersion++
+  saveController?.abort()
+  const saveVersion = formSaveVersion
   if (!Number.isSafeInteger(formData.value.concurrency_limit) || (formData.value.concurrency_limit < 0 || formData.value.concurrency_limit > 2147483647)) { appStore.showError(t('keys.concurrencyInvalid')); return }
   // Validate group_id is required
   if (formData.value.group_id === null) {
