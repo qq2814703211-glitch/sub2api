@@ -54,7 +54,7 @@ func ExtractMediaRequestUsage(body []byte) *MediaUsage {
 	// Native content is authoritative when present; compatible adapters do
 	// not overlay top-level media onto an explicit content array.
 	if !root.Get("content").IsArray() {
-		for _, key := range []string{"image", "images", "image_url", "image_urls", "input_reference"} {
+		for _, key := range []string{"image", "images", "image_url", "image_urls", "input_reference", "first_frame_image", "last_frame_image", "first_frame", "last_frame"} {
 			if mediaInputPresent(root.Get(key)) {
 				usage.InputType = "image"
 			}
@@ -62,9 +62,11 @@ func ExtractMediaRequestUsage(body []byte) *MediaUsage {
 		if mediaInputPresent(root.Get("reference_images")) {
 			usage.InputType = "reference"
 		}
-		if mediaInputPresent(root.Get("video")) || mediaInputPresent(root.Get("video_url")) || mediaInputPresent(root.Get("videos")) {
-			reference = true
-			usage.InputType = "video"
+		for _, key := range []string{"video", "video_url", "videos", "video_urls", "reference_video", "reference_videos"} {
+			if mediaInputPresent(root.Get(key)) {
+				reference = true
+				usage.InputType = "video"
+			}
 		}
 	}
 	if items := root.Get("content"); items.IsArray() {
@@ -144,6 +146,7 @@ func ExtractMediaRequestUsage(body []byte) *MediaUsage {
 		usage.Layer = &v
 	}
 	ApplyMediaUsageModelDimensions(usage, model)
+	usage.InputImageCount, usage.InputDurationSeconds = extractMediaReferenceRequest(root)
 	return usage
 }
 
@@ -193,7 +196,7 @@ func extractMediaRequestUsageBody(contentType string, body []byte) *MediaUsage {
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
 	fields := make(map[string]any)
-	hasImage := false
+	imageFiles := 0
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -204,23 +207,30 @@ func extractMediaRequestUsageBody(contentType string, body []byte) *MediaUsage {
 		}
 		name := part.FormName()
 		if part.FileName() != "" {
-			if name == "image" || name == "image[]" || name == "input_reference" {
-				hasImage = true
+			if isMediaImageFormField(name) {
+				imageFiles++
 			}
 			_ = part.Close()
 			continue
 		}
 		switch name {
-		case "model", "size", "resolution", "mode", "duration", "seconds", "fps", "framespersecond", "frames", "generate_audio", "layer_decomposition", "image", "image_url", "video", "video_url":
+		case "model", "size", "resolution", "mode", "duration", "seconds", "fps", "framespersecond", "frames", "generate_audio", "layer_decomposition", "image", "image[]", "images", "images[]", "image_url", "image_urls", "input_reference", "reference_images", "first_frame_image", "last_frame_image", "video", "video_url":
 			value, err := io.ReadAll(io.LimitReader(part, 4097))
 			if err != nil {
 				_ = part.Close()
 				return nil
 			}
 			if len(value) > 4096 {
+				// A truncated structured media field has an unknown count. Do not
+				// collapse an arbitrarily long reference array into a single image.
+				prefix := strings.TrimSpace(string(value))
+				if strings.HasPrefix(prefix, "[") || strings.HasPrefix(prefix, "{") {
+					_ = part.Close()
+					return nil
+				}
 				switch name {
-				case "image", "image_url", "video", "video_url":
-					fields[name] = "present"
+				case "image", "image[]", "images", "images[]", "image_url", "input_reference", "first_frame_image", "last_frame_image", "video", "video_url":
+					appendMediaFormField(fields, name, "present")
 					_ = part.Close()
 					continue
 				default:
@@ -236,7 +246,16 @@ func extractMediaRequestUsageBody(contentType string, body []byte) *MediaUsage {
 					fields[name] = value
 				}
 			default:
-				fields[name] = text
+				if isMediaImageFormField(name) {
+					var value any
+					if json.Unmarshal([]byte(text), &value) == nil {
+						appendMediaFormField(fields, name, value)
+					} else {
+						appendMediaFormField(fields, name, text)
+					}
+				} else {
+					fields[name] = text
+				}
 			}
 		}
 		_ = part.Close()
@@ -246,7 +265,10 @@ func extractMediaRequestUsageBody(contentType string, body []byte) *MediaUsage {
 		return nil
 	}
 	usage := ExtractMediaRequestUsage(raw)
-	if hasImage && usage.InputType == "text" {
+	if usage.InputImageCount != nil {
+		*usage.InputImageCount += imageFiles
+	}
+	if usage.InputImageCount != nil && *usage.InputImageCount > 0 && usage.InputType == "text" {
 		usage.InputType = "image"
 	}
 	return usage
@@ -380,6 +402,15 @@ func MergeMediaUsage(request, response *MediaUsage) *MediaUsage {
 	if response.DurationSeconds > 0 {
 		out.DurationSeconds = response.DurationSeconds
 	}
+	if response.InputImageCount != nil {
+		out.InputImageCount = mediaCopyPtr(response.InputImageCount)
+	}
+	if response.InputDurationSeconds != nil {
+		out.InputDurationSeconds = mediaCopyPtr(response.InputDurationSeconds)
+	}
+	if response.TotalDurationSeconds != nil {
+		out.TotalDurationSeconds = mediaCopyPtr(response.TotalDurationSeconds)
+	}
 	if response.FPS > 0 {
 		out.FPS = response.FPS
 	}
@@ -403,6 +434,9 @@ func cloneMediaUsage(u *MediaUsage) *MediaUsage {
 		return nil
 	}
 	out := *u
+	out.InputImageCount = mediaCopyPtr(u.InputImageCount)
+	out.InputDurationSeconds = mediaCopyPtr(u.InputDurationSeconds)
+	out.TotalDurationSeconds = mediaCopyPtr(u.TotalDurationSeconds)
 	if u.Audio != nil {
 		v := *u.Audio
 		out.Audio = &v
@@ -439,7 +473,11 @@ func imageOutputMediaUsage(item gjson.Result) MediaUsage {
 }
 
 func (c *openAIImageOutputCounter) MediaUsage(request *MediaUsage) *MediaUsage {
-	response := &MediaUsage{Count: c.Count()}
+	response := cloneMediaUsage(c.referenceUsage)
+	if response == nil {
+		response = &MediaUsage{}
+	}
+	response.Count = c.Count()
 	if len(c.dataMedia) > len(c.seenOrder) {
 		response.Images = c.dataMedia
 	} else {

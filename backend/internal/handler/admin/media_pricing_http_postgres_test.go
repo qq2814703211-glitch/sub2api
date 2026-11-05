@@ -53,7 +53,7 @@ func TestMediaPricingChannelHTTPPostgresRoundTrip(t *testing.T) {
 		require.Equal(t, wantStatus, result.Code, result.Body.String())
 		return result.Body.String()
 	}
-	media := `{"rules":[{"name":"fixture","unit":"image","conditions":{"layer":false,"audio":false,"reference_video":false,"min_pixels":0,"max_pixels":1048576},"price":0.2,"prompt_price":0.03}]}`
+	media := `{"extra_input_image_price":0.02,"free_input_images":1,"duration_source":"output","rules":[{"name":"fixture","unit":"image","conditions":{"layer":false,"audio":false,"reference_video":false,"min_pixels":0,"max_pixels":1048576},"price":0.2,"prompt_price":0.03}]}`
 	card := `{"platform":"openai","models":["fixture-image"],"billing_mode":"image","media_pricing":` + media + `}`
 	created := call(http.MethodPost, "/channels", `{"name":"media-http-fixture","model_pricing":[`+card+`],"account_stats_pricing_rules":[{"name":"stats","account_ids":[123],"pricing":[`+card+`]}]}`, http.StatusOK)
 	id := gjson.Get(created, "data.id").Int()
@@ -69,12 +69,27 @@ func TestMediaPricingChannelHTTPPostgresRoundTrip(t *testing.T) {
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), media)
 	assertConfig(call(http.MethodPut, path, `{"description":"retains omitted rules"}`, http.StatusOK), media)
 	nextMedia := strings.Replace(media, `"price":0.2`, `"price":0`, 1)
+	nextMedia = strings.Replace(nextMedia, `"extra_input_image_price":0.02`, `"extra_input_image_price":0`, 1)
+	nextMedia = strings.Replace(nextMedia, `"free_input_images":1`, `"free_input_images":0`, 1)
 	nextCard := strings.Replace(card, media, nextMedia, 1)
 	assertConfig(call(http.MethodPut, path, `{"model_pricing":[`+nextCard+`]}`, http.StatusOK), nextMedia)
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)
 	var stored string
 	require.NoError(t, db.QueryRow("SELECT media_pricing::text FROM channel_model_pricing WHERE channel_id=$1", id).Scan(&stored))
 	require.JSONEq(t, nextMedia, stored)
+	var statsStored string
+	require.NoError(t, db.QueryRow(`SELECT p.media_pricing::text FROM channel_account_stats_model_pricing p JOIN channel_account_stats_pricing_rules r ON r.id=p.rule_id WHERE r.channel_id=$1`, id).Scan(&statsStored))
+	require.JSONEq(t, media, statsStored)
+	for _, bad := range []string{
+		strings.Replace(nextCard, `"extra_input_image_price":0`, `"extra_input_image_price":-1`, 1),
+		strings.Replace(nextCard, `"free_input_images":0`, `"free_input_images":0.5`, 1),
+		strings.Replace(nextCard, `"free_input_images":0`, `"free_input_images":-1`, 1),
+		strings.Replace(nextCard, `"duration_source":"output"`, `"duration_source":"input"`, 1),
+		strings.Replace(nextCard, `"duration_source":"output"`, `"duration_source":"total"`, 1),
+	} {
+		call(http.MethodPut, path, `{"model_pricing":[`+bad+`]}`, http.StatusBadRequest)
+		assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)
+	}
 	invalidCard := strings.Replace(nextCard, `"price":0,`, ``, 1)
 	call(http.MethodPut, path, `{"model_pricing":[`+invalidCard+`]}`, http.StatusBadRequest)
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)
@@ -116,7 +131,7 @@ func TestMediaPricingGroupHTTPPostgresRoundTrip(t *testing.T) {
 		require.Equal(t, wantStatus, result.Code, result.Body.String())
 		return result.Body.String()
 	}
-	media := `{"rules":[{"name":"fixture","unit":"second","conditions":{"mode":"pro","audio":false,"reference_video":true},"price":0.4,"prompt_price":0.03}]}`
+	media := `{"extra_input_image_price":0.2,"free_input_images":5,"duration_source":"total","rules":[{"name":"fixture","unit":"second","conditions":{"mode":"pro","audio":false,"reference_video":true},"price":0.4,"prompt_price":0.03}]}`
 	card := `{"platform":"openai","models":["fixture-video"],"billing_mode":"video","media_pricing":` + media + `}`
 	created := call(http.MethodPost, "/groups", `{"name":"media-http-group-fixture","platform":"openai","rate_multiplier":1,"model_pricing":[`+card+`]}`, http.StatusOK)
 	id := gjson.Get(created, "data.id").Int()
@@ -131,12 +146,22 @@ func TestMediaPricingGroupHTTPPostgresRoundTrip(t *testing.T) {
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), media)
 	assertConfig(call(http.MethodPut, path, `{"description":"preserve omitted rules"}`, http.StatusOK), media)
 	nextMedia := strings.Replace(media, `"price":0.4`, `"price":0`, 1)
+	nextMedia = strings.Replace(nextMedia, `"extra_input_image_price":0.2`, `"extra_input_image_price":0`, 1)
+	nextMedia = strings.Replace(nextMedia, `"free_input_images":5`, `"free_input_images":0`, 1)
 	nextCard := strings.Replace(card, media, nextMedia, 1)
 	assertConfig(call(http.MethodPut, path, `{"model_pricing":[`+nextCard+`]}`, http.StatusOK), nextMedia)
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)
 	var raw string
 	require.NoError(t, db.QueryRow("SELECT model_pricing->0->'media_pricing' FROM groups WHERE id=$1", id).Scan(&raw))
 	require.JSONEq(t, nextMedia, raw)
+	for _, bad := range []string{
+		strings.Replace(nextCard, `"extra_input_image_price":0`, `"extra_input_image_price":-1`, 1),
+		strings.Replace(nextCard, `"free_input_images":0`, `"free_input_images":0.5`, 1),
+		strings.Replace(nextCard, `"duration_source":"total"`, `"duration_source":"input"`, 1),
+	} {
+		call(http.MethodPut, path, `{"model_pricing":[`+bad+`]}`, http.StatusBadRequest)
+		assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)
+	}
 	invalidCard := strings.Replace(nextCard, `"price":0,`, ``, 1)
 	call(http.MethodPut, path, `{"model_pricing":[`+invalidCard+`]}`, http.StatusBadRequest)
 	assertConfig(call(http.MethodGet, path, "", http.StatusOK), nextMedia)

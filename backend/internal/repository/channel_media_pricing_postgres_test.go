@@ -101,7 +101,8 @@ func TestMediaPricingPostgresRoundTrip(t *testing.T) {
 	billing := service.NewBillingService(&config.Config{}, nil)
 	resolver := service.NewModelPricingResolver(nil, billing)
 	audio, ref, layer := false, true, false
-	cost, err := billing.CalculateCostUnified(service.CostInput{Ctx: ctx, Model: "fixture", Group: loaded, Resolver: resolver, RateMultiplier: loaded.RateMultiplier, MediaUsage: &service.MediaUsage{Count: 2, Resolution: "2K", Mode: "standard", InputType: "text", Audio: &audio, ReferenceVideo: &ref, Layer: &layer, Pixels: 4194304, DurationSeconds: 5, FPS: 24}})
+	inputImages := 0 // exact synthetic text-only input, not unknown
+	cost, err := billing.CalculateCostUnified(service.CostInput{Ctx: ctx, Model: "fixture", Group: loaded, Resolver: resolver, RateMultiplier: loaded.RateMultiplier, MediaUsage: &service.MediaUsage{InputImageCount: &inputImages, Count: 2, Resolution: "2K", Mode: "standard", InputType: "text", Audio: &audio, ReferenceVideo: &ref, Layer: &layer, Pixels: 4194304, DurationSeconds: 5, FPS: 24}})
 	require.NoError(t, err)
 	require.InDelta(t, 0.03, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.06, cost.ActualCost, 1e-12)

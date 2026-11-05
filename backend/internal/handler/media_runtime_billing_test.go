@@ -27,12 +27,19 @@ type mediaRuntimeLedger struct {
 	attempts int
 	applied  map[string]*service.UsageBillingCommand
 	fail     bool
+	durable  service.UsageBillingRepository
 }
 
-func (l *mediaRuntimeLedger) Apply(_ context.Context, c *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
+func (l *mediaRuntimeLedger) Apply(ctx context.Context, c *service.UsageBillingCommand) (*service.UsageBillingApplyResult, error) {
 	l.attempts++
 	if l.fail {
 		return nil, errors.New("fixture durable write failed")
+	}
+	if l.durable != nil {
+		result, err := l.durable.Apply(ctx, c)
+		if err != nil || !result.Applied {
+			return result, err
+		}
 	}
 	if old := l.applied[c.RequestID]; old != nil {
 		if old.RequestFingerprint != c.RequestFingerprint {

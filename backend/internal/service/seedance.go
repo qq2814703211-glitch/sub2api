@@ -142,7 +142,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, fmt.Errorf("seedance create response missing task ID")
 		}
 		result.ResponseID = SeedanceTaskKey(id)
-		result.MediaUsage = ExtractMediaRequestUsage(body)
+		result.MediaUsage = MergeMediaUsage(ExtractMediaRequestUsage(body), extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
 	}
 	if endpoint == SeedanceEndpointStatus {
 		result.ResponseID = taskID
@@ -154,6 +154,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			!mediaResponseHasError(gjson.ParseBytes(responseBody)) {
 			result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
 			result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
+			result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
 			result.MediaUsage.Count = 1
 		}
 	}

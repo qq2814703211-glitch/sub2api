@@ -100,24 +100,34 @@ func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gi
 			return nil, fmt.Errorf("video create response missing successful task ID")
 		}
 		result.ResponseID = CompatibleVideoTaskKey(id)
-		result.MediaUsage = ExtractMediaRequestUsage(body)
+		result.MediaUsage = MergeMediaUsage(ExtractMediaRequestUsage(body), extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
 	} else {
 		result.ResponseID = taskID
-		result.UpstreamTerminalEvent = gjson.GetBytes(responseBody, "status").String()
+		root := gjson.ParseBytes(responseBody)
+		envelope := root
+		nativeTask := !root.Get("status").Exists() && root.Get("task").IsObject()
+		if nativeTask {
+			envelope = root.Get("task")
+		}
+		result.UpstreamTerminalEvent = envelope.Get("status").String()
 		result.MediaUsage = &MediaUsage{}
-		if result.UpstreamTerminalEvent == "completed" && !mediaResponseHasError(gjson.ParseBytes(responseBody)) {
-			for _, item := range gjson.GetBytes(responseBody, "data").Array() {
+		if (result.UpstreamTerminalEvent == "completed" || (nativeTask && result.UpstreamTerminalEvent == "succeeded")) && !mediaResponseHasError(root) && !mediaResponseHasError(envelope) {
+			for _, item := range envelope.Get("data").Array() {
 				if strings.TrimSpace(item.Get("url").String()) != "" && !mediaResponseHasError(item) {
 					result.MediaUsage.Count++
 				}
 			}
+			if result.MediaUsage.Count == 0 && nativeTask && strings.TrimSpace(envelope.Get("content.url").String()) != "" {
+				result.MediaUsage.Count = 1
+			}
 			if result.MediaUsage.Count > 0 {
+				result.UpstreamTerminalEvent = "completed"
 				count := result.MediaUsage.Count
-				result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
+				result.MediaUsage = extractMediaDimensions(envelope)
 				result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractCompatibleVideoResponseUsage(responseBody))
 				result.MediaUsage.Count = count
-				result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
-				result.UpstreamModel = gjson.GetBytes(responseBody, "model").String()
+				result.Usage.OutputTokens = max(0, int(envelope.Get("usage.completion_tokens").Int()))
+				result.UpstreamModel = envelope.Get("model").String()
 				result.VideoCount = count
 			}
 		}

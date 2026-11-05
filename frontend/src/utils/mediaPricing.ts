@@ -30,8 +30,16 @@ export function validateMediaPricing(value: MediaPricingFormValue, t: TranslateF
   let parsed: unknown
   try { parsed = parse(value) } catch { return error('json') }
   if (parsed == null) return null
-  if (!isObject(parsed) || Object.keys(parsed).some(key => key !== 'rules') ||
+  if (!isObject(parsed) ||
       !Array.isArray(parsed.rules) || parsed.rules.length === 0) return error('rules')
+  for (const key of Object.keys(parsed)) {
+    if (!['rules', 'extra_input_image_price', 'free_input_images', 'duration_source'].includes(key)) return error('unknown', key)
+  }
+  const extra = parsed.extra_input_image_price
+  if (extra != null && (typeof extra !== 'number' || !Number.isFinite(extra) || extra < 0)) return error('price', 'extra_input_image_price')
+  const free = parsed.free_input_images
+  if (free != null && (typeof free !== 'number' || !Number.isSafeInteger(free) || free < 0)) return error('inputCount', 'free_input_images')
+  if (parsed.duration_source != null && !['', 'output', 'total'].includes(parsed.duration_source as string)) return error('durationSource', 'duration_source')
   for (const [index, rule] of parsed.rules.entries()) {
     const path = `rules[${index}]`
     if (!isObject(rule)) return error('rule', path)
@@ -40,6 +48,7 @@ export function validateMediaPricing(value: MediaPricingFormValue, t: TranslateF
     }
     if (rule.name != null && typeof rule.name !== 'string') return error('string', `${path}.name`)
     if (!units.includes(rule.unit as string)) return error('unit', `${path}.unit`)
+    if (parsed.duration_source === 'total' && rule.unit !== 'second') return error('durationUnit', `${path}.unit`)
     for (const key of prices) {
       const price = rule[key]
       if (price != null && (typeof price !== 'number' || !Number.isFinite(price) || price < 0)) return error('price', `${path}.${key}`)
@@ -88,8 +97,8 @@ export function formMediaPricingToAPI(value: MediaPricingFormValue): MediaPricin
   return parsed == null ? null : JSON.parse(JSON.stringify(parsed)) as MediaPricing
 }
 
-export const MEDIA_PRICING_EXAMPLES: Record<'image' | 'video' | 'token', MediaPricing> = {
-  image: { rules: [
+export const MEDIA_PRICING_EXAMPLES: Record<'image' | 'video' | 'referenceVideo' | 'token', MediaPricing> = {
+  image: { extra_input_image_price: 0.02, free_input_images: 1, rules: [
     { name: 'pixel / layer', unit: 'image', conditions: { min_pixels: 0, max_pixels: 4194304, layer: false }, price: 0.12, prompt_price: 0.01 },
     { name: 'larger output / layer', unit: 'image', conditions: { min_pixels: 4194305, layer: false }, price: 0.24, prompt_price: 0.01 },
     { name: 'layered output', unit: 'image', conditions: { layer: true }, price: 0.18, prompt_price: 0.01 },
@@ -101,6 +110,26 @@ export const MEDIA_PRICING_EXAMPLES: Record<'image' | 'video' | 'token', MediaPr
   token: { rules: [
     { name: 'multimodal tokens', unit: 'token', conditions: {}, input_price: 0.000002, output_price: 0.000008, image_input_price: 0.000003, image_output_price: 0.00001, prompt_price: 0.01 },
   ] },
+  referenceVideo: { duration_source: 'total', extra_input_image_price: 0.2, free_input_images: 5, rules: [
+    { name: 'total video seconds', unit: 'second', conditions: { resolution: '2k' }, price: 0.5 },
+  ] },
+}
+
+/** Request-level charges are shown separately so they cannot look per-output. */
+export function mediaRequestLabels(pricing: MediaPricing, multiplier: number, t: TranslateFn): string[] {
+  const labels: string[] = []
+  if (pricing.extra_input_image_price != null) {
+    labels.push(t('mediaPricing.inputSurcharge', {
+      count: pricing.free_input_images ?? 0,
+      price: String(Number((pricing.extra_input_image_price * multiplier).toPrecision(12))),
+    }))
+  } else if (pricing.free_input_images != null) {
+    labels.push(t('mediaPricing.inputAllowanceOnly', { count: pricing.free_input_images }))
+  }
+  if (pricing.rules.some(rule => rule.unit === 'second')) {
+    labels.push(t(`mediaPricing.durationSources.${pricing.duration_source || 'output'}`))
+  }
+  return labels
 }
 
 /** Human-readable conditions retain explicit false and zero and disclose every configured dimension. */

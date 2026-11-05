@@ -35,10 +35,18 @@ export default {
   "editorHint": "Prices use site billing units without currency conversion. For image/second/frame/request, price is per image/second/frame/request. Token input_price, output_price, image_input_price and image_output_price are per token (not per million). prompt_price is a once-per-request text surcharge. Explicit false and 0 are retained.",
   "matchHint": "Conditions: resolution, mode, input_type, audio, reference_video, layer, min_pixels/max_pixels, min_duration/max_duration, fps/min_fps/max_fps. Pixel, duration and FPS bounds are inclusive; the next pixel tier starts at the previous maximum + 1. More conditions take priority, then declaration order. Missing match data or rules produces an error, not a scalar-price fallback. Configure explicit, non-overlapping tiers.",
   "examples": "View rule examples",
+  "referenceInputHint": "Top-level free_input_images (default 0) is the input-image allowance per successful request; extra_input_image_price is charged for each input above it, once per request. It never makes the first output free. duration_source defaults to output; total requires second rules and charges output plus reference-video seconds once. Reported total_seconds already includes input. Unknown measurements remain pending; prompt_price is not the reference-image price.",
+  "inputSurcharge": "Per successful request: {count} input images included; each extra input image costs {price}. All successful outputs are charged normally.",
+  "inputAllowanceOnly": "Input-image allowance: {count}; no extra input-image price configured.",
+  "durationSources": {
+    "output": "Seconds: output video only.",
+    "total": "Seconds: request total (output + reference video), charged once; reported totals already include input."
+  },
   "exampleHint": "Configuration examples only, not vendor quotes. Copy the structure you need and enter actual rules. Blank or null clears rules and restores existing pricing.",
   "exampleLabels": {
     "image": "Image: pixels / layers / prompt",
     "video": "Video: seconds / frames / resolution / audio / reference / FPS / duration",
+    "referenceVideo": "Reference video: total seconds + extra input images",
     "token": "Multimodal tokens"
   },
   "badge": "Media rules",
@@ -49,6 +57,9 @@ export default {
   "allConditions": "Any conditions",
   "unnamedRule": "Rule {index}",
   "validation": {
+    "inputCount": "{field} must be a non-negative safe integer or null.",
+    "durationSource": "{field} must be output or total.",
+    "durationUnit": "{field}: total duration requires second rules.",
     "json": "Invalid media pricing JSON. Correct it before saving.",
     "rules": "Media pricing must be an object with a non-empty rules array; leave blank or enter null to use existing pricing.",
     "rule": "{field} must be a rule object.",

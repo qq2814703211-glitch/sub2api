@@ -46,6 +46,11 @@ func prepareCompatibleVideoCompletionBilling(ctx context.Context, h *OpenAIGatew
 	merged.Model = pending.Model
 	merged.BillingModel = firstNonEmptyString(pending.BillingModel, pending.Model)
 	merged.UpstreamModel = firstNonEmptyString(pending.UpstreamModel, result.UpstreamModel)
+	if strings.EqualFold(merged.UpstreamModel, "MiniMax-H3") || strings.EqualFold(merged.Model, "MiniMax-H3") {
+		// Requested duration is not a measured output duration. MiniMax total
+		// billing must wait for authoritative total or output+input measurements.
+		merged.MediaUsage.DurationSeconds = result.MediaUsage.DurationSeconds
+	}
 	service.ApplyMediaUsageModelDimensions(merged.MediaUsage, merged.UpstreamModel)
 	// Seedance's existing no-rule path is token settlement. Other compatible
 	// video keeps scalar-video legacy behavior; an explicit media card supersedes it.
