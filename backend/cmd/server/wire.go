@@ -452,7 +452,9 @@ func provideCleanup(
 		// Stop email consumers only after notification/ticket producers have joined.
 		infraSteps := []cleanupStep{
 			{"EmailQueueService", func() error {
-				if emailQueue != nil { emailQueue.Stop() }
+				if emailQueue != nil {
+					emailQueue.Stop()
+				}
 				return nil
 			}},
 			{"Redis", func() error {

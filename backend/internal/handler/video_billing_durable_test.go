@@ -18,8 +18,8 @@ type handlerVideoJobStore struct {
 	service.VideoBillingJobRepository
 	job                  *service.VideoBillingJob
 	createErr, submitErr error
-	rejectErr error
-	rejected []string
+	rejectErr            error
+	rejected             []string
 	submitted            string
 	onSubmit             func()
 }
@@ -125,7 +125,7 @@ func TestDurableVideoRejectStorageFailureBlocksFailover(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`))}, nil
 	}
 	h.GrokVideoGeneration(c)
-	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	require.Equal(t, 1, u.calls)
 	require.Len(t, store.rejected, 1)
 	require.Equal(t, store.job.ID, store.rejected[0])
