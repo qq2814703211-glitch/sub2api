@@ -2383,10 +2383,7 @@ func (s *BillingService) getDefaultImagePrice(model string, imageSize string) fl
 
 	// 从 PricingService 获取 output_cost_per_image
 	if s.pricingService != nil {
-		pricing := s.pricingService.GetModelPricing(model)
-		if pricing != nil && pricing.OutputCostPerImage > 0 {
-			basePrice = pricing.OutputCostPerImage
-		}
+		basePrice = s.pricingService.GetImagePrice(model)
 	}
 
 	// 如果没有找到价格，使用硬编码默认值（$0.134，来自 gemini-3-pro-image-preview）
