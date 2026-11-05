@@ -254,6 +254,12 @@ const mountView = async () => {
         SearchInput: SearchInputStub,
         Icon: IconStub,
         UseKeyModal: true,
+        KeyUsageDialog: {
+          name: 'KeyUsageDialog',
+          props: ['show', 'apiKey'],
+          emits: ['close'],
+          template: '<div v-if="show" data-test="key-usage-dialog-stub">{{ apiKey?.id }}:{{ apiKey?.name }}</div>',
+        },
         BulkEditKeysModal: true,
         EndpointPopover: true,
         GroupBadge: true,
@@ -336,6 +342,17 @@ describe('user KeysView column settings', () => {
     expect(wrapper.get('[data-test="usage-1"]').text()).toContain('Last 30d')
     expect(wrapper.get('[data-test="usage-1"]').text().match(/\$0\.0000/g)).toHaveLength(2)
     expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('Loading usage…')
+    wrapper.unmount()
+  })
+
+  it('opens the usage dialog for the clicked key row', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-test="key-usage-dialog-stub"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="key-usage-open"]').trigger('click')
+
+    const dialog = wrapper.get('[data-test="key-usage-dialog-stub"]')
+    expect(dialog.text()).toBe('1:test-key')
     wrapper.unmount()
   })
 
