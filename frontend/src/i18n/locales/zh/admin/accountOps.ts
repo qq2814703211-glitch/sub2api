@@ -164,6 +164,32 @@ export default {
       "unsupported": "不支持",
       "monitorLoadError": "看板加载失败",
       "samplingFailed": "采样失败",
-      "acknowledgeError": "确认失败"
+      "acknowledgeError": "确认失败",
+      history: {
+          title: "历史、趋势与异常规则",
+          days: "天数",
+          unit: "币种",
+          refreshTrend: "刷新趋势",
+          estimateNote: "仅估算同账号同币种的余额下降；充值、共享钱包与采样缺口会影响结果。不是精确消耗或利润。日期按 UTC+08:00 汇总。",
+          loading: "加载中…",
+          estimatedDecline: "估算下降",
+          noTrend: "暂无趋势数据",
+          accountHistory: "账号历史及异常规则（当前页账号）",
+          selectAccount: "选择账号",
+          loadingHistory: "加载历史…",
+          balance: "余额",
+          noHistory: "暂无历史点",
+          ruleNote: "以下规则生成看板异常记录；外部通知及恢复在账号运营页面配置。",
+          lowBalance: "低余额",
+          rateMove: "倍率变动 %",
+          quotaLeft: "剩余额度 %",
+          expiryDays: "到期天数",
+          saveRule: "保存规则",
+          deleteRule: "删除规则",
+          loadFailed: "加载失败",
+          historyLoadFailed: "历史加载失败",
+          saveFailed: "保存失败",
+          deleteFailed: "删除失败"
+      }
   }
 }
