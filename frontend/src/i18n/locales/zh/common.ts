@@ -215,6 +215,7 @@ export default {
     contentModeration: '内容审计',
     promptAudit: '提示词审计',
     auditLogs: '操作日志',
+    groupCacheTests: '分组缓存测试',
   },
 
   // Auth
