@@ -51,6 +51,9 @@ func RegisterAdminRoutes(
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
+		// 站内工单（共享收件箱）
+		registerTicketRoutes(admin, h)
+
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h)
 
@@ -455,6 +458,28 @@ func registerAnnouncementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		announcements.PUT("/:id", h.Admin.Announcement.Update)
 		announcements.DELETE("/:id", h.Admin.Announcement.Delete)
 		announcements.GET("/:id/read-status", h.Admin.Announcement.ListReadStatus)
+	}
+}
+
+func registerTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Ticket == nil {
+		// Partial handler graphs in route tests do not include the ticket module.
+		return
+	}
+	tickets := admin.Group("/tickets")
+	{
+		// Static routes must be declared before /:id for clarity; gin already
+		// prioritises static segments, but keeping the order explicit avoids
+		// surprises if the router implementation changes.
+		tickets.GET("/stats", h.Ticket.AdminStats)
+		tickets.GET("/settings", h.Ticket.NotificationSettings)
+		tickets.PUT("/settings", h.Ticket.UpdateNotificationSettings)
+		tickets.GET("", h.Ticket.AdminList)
+		tickets.POST("", h.Ticket.AdminCreate)
+		tickets.GET("/:id", h.Ticket.AdminDetail)
+		tickets.POST("/:id/replies", h.Ticket.AdminReply)
+		tickets.PATCH("/:id", h.Ticket.AdminUpdate)
+		tickets.POST("/:id/read", h.Ticket.AdminMarkRead)
 	}
 }
 

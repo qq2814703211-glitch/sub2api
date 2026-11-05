@@ -107,6 +107,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // keyUsage
 		nil, // settingService
 		nil, // accountOps
+		nil, // ticketService
 	)
 
 	require.NotPanics(t, func() {

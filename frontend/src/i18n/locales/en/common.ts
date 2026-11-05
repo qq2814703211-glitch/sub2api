@@ -168,6 +168,7 @@ export default {
     upstreamMonitor: 'Upstream monitor',
     dashboard: 'Dashboard',
     announcements: 'Announcements',
+    tickets: 'Tickets',
     apiKeys: 'API Keys',
     batchImage: 'Batch Images',
     usage: 'Usage',

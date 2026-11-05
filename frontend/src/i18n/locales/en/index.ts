@@ -10,6 +10,7 @@ import imagegen from './imagegen'
 import groupSignals from './groupSignals'
 import admin from './admin'
 import misc from './misc'
+import tickets from './tickets'
 
 export default {
   adminAccessKeys,
@@ -24,4 +25,5 @@ export default {
   ...groupSignals,
   admin,
   ...misc,
+  ...tickets,
 }
