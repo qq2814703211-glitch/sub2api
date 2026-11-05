@@ -750,6 +750,9 @@ export interface CompositeRouteDecision {
 }
 
 export interface ApiKey {
+  concurrency_limit?: number
+  waiting_count?: number | null
+  queue_stats_available?: boolean
   id: number
   user_id: number
   key: string
@@ -782,6 +785,7 @@ export interface ApiKey {
 }
 
 export interface CreateApiKeyRequest {
+  concurrency_limit?: number
   name: string
   group_id?: number | null
   custom_key?: string // Optional custom API Key
@@ -795,6 +799,7 @@ export interface CreateApiKeyRequest {
 }
 
 export interface UpdateApiKeyRequest {
+  concurrency_limit?: number
   name?: string
   group_id?: number | null
   status?: 'active' | 'inactive'

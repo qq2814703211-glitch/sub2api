@@ -66,6 +66,13 @@ export default {
 
   // API Keys
   keys: {
+    concurrencyLimit: "Key 并发上限",
+    concurrencyHint: "0 不额外限流；达到上限后按服务排队配置等待。",
+    concurrencyInvalid: "请输入非负整数并发上限",
+    waiting: "排队",
+    queueUnavailable: "队列状态暂不可用",
+    saveConcurrency: "保存并发上限",
+
     title: 'API 密钥',
     description: '管理您的 API 密钥和访问令牌',
     searchPlaceholder: '搜索名称或Key...',

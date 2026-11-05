@@ -65,9 +65,11 @@ export async function create(
   ipBlacklist?: string[],
   quota?: number,
   expiresInDays?: number,
-  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
+  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
+  concurrencyLimit: number = 0,
+  options?: {signal?:AbortSignal}
 ): Promise<ApiKey> {
-  const payload: CreateApiKeyRequest = { name }
+  const payload: CreateApiKeyRequest = { name, concurrency_limit: concurrencyLimit }
   if (groupId !== undefined) {
     payload.group_id = groupId
   }
@@ -96,7 +98,7 @@ export async function create(
     payload.rate_limit_7d = rateLimitData.rate_limit_7d
   }
 
-  const { data } = await apiClient.post<ApiKey>('/keys', payload)
+  const { data } = await apiClient.post<ApiKey>('/keys', payload, options)
   return data
 }
 
@@ -106,8 +108,8 @@ export async function create(
  * @param updates - Fields to update
  * @returns Updated API key
  */
-export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKey> {
-  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates)
+export async function update(id: number, updates: UpdateApiKeyRequest, options?: {signal?:AbortSignal}): Promise<ApiKey> {
+  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates, options)
   return data
 }
 
