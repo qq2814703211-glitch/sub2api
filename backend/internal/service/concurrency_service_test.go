@@ -285,7 +285,7 @@ func TestTrackAPIKeySlot_ReleaseDecrements(t *testing.T) {
 	require.Equal(t, cache.trackedAPIKeyRequestIDs, cache.releasedAPIKeyRequestIDs)
 }
 
-func TestTrackAPIKeySlot_FailOpen(t *testing.T) {
+func TestTrackAPIKeySlot_FailOpenCompensatesAmbiguousWrite(t *testing.T) {
 	cache := &stubConcurrencyCacheForTest{apiKeyTrackErr: errors.New("redis down")}
 	svc := NewConcurrencyService(cache)
 
@@ -294,7 +294,9 @@ func TestTrackAPIKeySlot_FailOpen(t *testing.T) {
 	require.Equal(t, []int64{88}, cache.trackedAPIKeyIDs)
 
 	require.NotPanics(t, release)
-	require.Empty(t, cache.releasedAPIKeyIDs)
+	release()
+	require.Equal(t, []int64{88}, cache.releasedAPIKeyIDs)
+	require.Equal(t, cache.trackedAPIKeyRequestIDs, cache.releasedAPIKeyRequestIDs, "compensate only the ambiguous member, once")
 }
 
 func TestGetAPIKeyConcurrencyBatch_Fallbacks(t *testing.T) {

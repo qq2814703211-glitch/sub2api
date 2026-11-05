@@ -103,7 +103,7 @@ export default {
     emailEnabled: '邮件提醒',
     emailEnabledHint: '关闭后不再发送工单邮件；已排队的通知会被静默丢弃，不会在重新开启后补发。',
     adminEmail: '客服收件邮箱',
-    adminEmailPlaceholder: 'support@example.com',
+    adminEmailPlaceholder: "support{'@'}example.com",
     adminEmailHint: '留空时发送给第一个管理员账号的邮箱。',
     pendingEmails: '待发送邮件',
     failedEmails: '失败邮件',
