@@ -3,8 +3,10 @@
 package requestcapture
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +38,68 @@ func captureDB(t *testing.T) *sql.DB {
 	require.NoError(t, e)
 	return db
 }
+
+func TestRequestCaptureSQLLifecycleFailureRecoveryAndCleanup(t *testing.T) {
+	db := captureDB(t)
+	store := &SQLStore{DB: db}
+	dir := t.TempDir()
+	cfg := Config{Enabled: true, QuotaMiB: 16, RetentionDays: 1}
+	m, e := New(store, dir, cfg)
+	require.NoError(t, e)
+	task, e := m.Create(t.Context(), CreateTask{TargetType: "user", TargetID: 27, DurationMinutes: 1}, "fixture")
+	require.NoError(t, e)
+	instance := m.InstanceID()
+	session := m.Begin(Meta{UserID: 27, RequestID: "fixture-db-failure"})
+	require.NotNil(t, session)
+	session.ClientRequest([]byte(`{"input":"database-lifecycle-fixture","access_token":"fixture-redacted"}`), "application/json", nil)
+	session.Finish(503)
+	drain(t, m)
+	success := m.Begin(Meta{UserID: 27, RequestID: "fixture-db-success"})
+	require.NotNil(t, success)
+	success.ClientRequest([]byte(`{"input":"success-must-disappear"}`), "application/json", nil)
+	success.Finish(200)
+	drain(t, m)
+	rows, e := m.Records(t.Context(), task.ID, "", true, 20, 0)
+	require.NoError(t, e)
+	require.Len(t, rows, 1)
+	recordID := rows[0].ID
+	require.NoError(t, m.Stop(t.Context(), task.ID))
+	m.Close()
+	m, e = New(store, dir, cfg)
+	require.NoError(t, e)
+	defer m.Close()
+	require.Equal(t, instance, m.InstanceID())
+	record, e := m.Record(t.Context(), task.ID, recordID)
+	require.NoError(t, e)
+	require.NotEmpty(t, record.Parts)
+	text, _, _, e := m.Preview(t.Context(), task.ID, record.ID, record.Parts[0].Name, 0)
+	require.NoError(t, e)
+	require.Contains(t, text, "database-lifecycle-fixture")
+	require.NotContains(t, text, "fixture-redacted")
+	var archive bytes.Buffer
+	require.NoError(t, m.Export(t.Context(), &archive, task.ID, ""))
+	require.Positive(t, archive.Len())
+	rows, e = store.Records(t.Context(), task.ID, "fixture-db-success", false, 20, 0)
+	require.NoError(t, e)
+	require.Empty(t, rows)
+	stored, e := store.Task(t.Context(), instance, task.ID)
+	require.NoError(t, e)
+	old := time.Now().Add(-48 * time.Hour)
+	stored.EndedAt = &old
+	require.NoError(t, store.SaveTask(t.Context(), stored))
+	m.cleanExpired()
+	_, e = store.Task(t.Context(), instance, task.ID)
+	require.ErrorIs(t, e, sql.ErrNoRows)
+	rows, e = store.Records(t.Context(), task.ID, "", false, 20, 0)
+	require.NoError(t, e)
+	require.Empty(t, rows)
+	entries, e := os.ReadDir(dir)
+	require.NoError(t, e)
+	for _, entry := range entries {
+		require.False(t, strings.HasPrefix(entry.Name(), task.ID))
+	}
+}
+
 func TestRequestCaptureMigrationReplayPreservesExistingMetadata(t *testing.T) {
 	db := captureDB(t)
 	store := &SQLStore{DB: db}
