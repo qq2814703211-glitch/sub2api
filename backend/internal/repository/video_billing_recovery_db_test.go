@@ -81,6 +81,57 @@ func TestVideoDBWorkerHotDisableAndTerminalStates(t *testing.T) {
 	}
 }
 
+func TestVideoDBAdminRetryRequeuesReconciliationForClaimDue(t *testing.T) {
+	f := newVideoDBFixture(t, "grok")
+	svc, in, _ := f.service(t, `{"status":"pending"}`)
+	repo := NewVideoBillingJobRepository(f.db)
+
+	tests := []struct {
+		name       string
+		withIntent bool
+	}{
+		{name: "without intent"},
+		{name: "with intent", withIntent: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			j := f.begin(t, svc, in, "reconciliation-retry-"+tc.name)
+			if tc.withIntent {
+				intent, err := json.Marshal(&service.VideoBillingIntent{SimpleMode: true})
+				require.NoError(t, err)
+				_, err = f.db.Exec(`UPDATE video_billing_jobs SET intent=$2::jsonb WHERE id=$1`, j.ID, intent)
+				require.NoError(t, err)
+			}
+			_, err := f.db.Exec(`UPDATE video_billing_jobs SET state='reconciliation', available_at=NOW(), lease_token=NULL, lease_until=NULL WHERE id=$1`, j.ID)
+			require.NoError(t, err)
+			require.NoError(t, svc.RetryVideoBillingJob(context.Background(), j.ID))
+
+			row, err := repo.GetForOwner(context.Background(), j.TaskID, f.user, f.key, f.group)
+			require.NoError(t, err)
+			if tc.withIntent {
+				require.Equal(t, "reconciliation", row.State)
+				require.NotNil(t, row.Intent)
+			} else {
+				require.Equal(t, "submitted", row.State)
+				require.Nil(t, row.Intent)
+			}
+
+			claimed, err := repo.ClaimDue(context.Background(), time.Minute)
+			require.NoError(t, err)
+			require.Equal(t, j.ID, claimed.ID)
+			require.Equal(t, j.TaskID, claimed.TaskID)
+			require.Equal(t, row.State, claimed.State)
+			require.NotEmpty(t, claimed.LeaseToken)
+			if tc.withIntent {
+				require.NotNil(t, claimed.Intent)
+			}
+
+			// An administrator retry cannot clear or replace an active worker lease.
+			require.ErrorIs(t, svc.RetryVideoBillingJob(context.Background(), j.ID), service.ErrVideoJobLeaseLost)
+		})
+	}
+}
+
 func TestVideoDBLongPendingRetainedAndRecoverable(t *testing.T) {
 	f := newVideoDBFixture(t, "grok")
 	svc, in, u := f.service(t, `{"status":"pending"}`)

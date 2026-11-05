@@ -100,7 +100,8 @@ func (r *videoBillingJobRepository) Claim(ctx context.Context, id string, lease 
 func (r *videoBillingJobRepository) ClaimDue(ctx context.Context, lease time.Duration) (*service.VideoBillingJob, error) {
 	return scanVideoJob(r.db.QueryRowContext(ctx, `UPDATE video_billing_jobs SET lease_token=$1,
  lease_until=NOW()+make_interval(secs=>$2::double precision),attempts=attempts+1,updated_at=NOW()
- WHERE id=(SELECT id FROM video_billing_jobs WHERE state IN ('creating','submitted','ready','billed')
+ WHERE id=(SELECT id FROM video_billing_jobs WHERE state IN ('creating','submitted','ready','billed','reconciliation')
+ AND (state <> 'reconciliation' OR task_id IS NOT NULL)
  AND available_at<=NOW() AND (lease_until IS NULL OR lease_until<NOW())
  ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING `+videoJobColumns, uuid.NewString(), lease.Seconds()))
 }
