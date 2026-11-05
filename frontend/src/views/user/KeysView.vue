@@ -155,6 +155,9 @@
           </template>
 
           <template #cell-group="{ row }">
+            <p v-if="row.group_ids?.length > 1" class="mb-1 max-w-xs truncate text-xs text-gray-500" :title="row.group_ids.map((id: number) => groups.find(g => g.id === id)?.name ?? `#${id}`).join(' → ')">
+              {{ row.group_ids.map((id: number) => groups.find(g => g.id === id)?.name ?? `#${id}`).join(' → ') }}
+            </p>
             <div class="group/dropdown relative">
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
@@ -588,6 +591,13 @@
             </template>
           </Select>
         </div>
+
+        <OrderedGroupRoutesEditor
+          :model-value="formData.group_ids"
+          :options="groupOptions"
+          :disabled="submitting"
+          @update:model-value="updateRouteGroups"
+        />
 
         <!-- Custom Key Section (only for create) -->
         <div v-if="!showEditModal" class="space-y-3">
@@ -1231,6 +1241,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
+import OrderedGroupRoutesEditor from '@/components/keys/OrderedGroupRoutesEditor.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -1388,6 +1399,7 @@ const handleBulkUpdated = (succeededIds: number[]) => {
 const groups = ref<Group[]>([])
 const loading = ref(false)
 const submitting = ref(false)
+let formSaveVersion = 0
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
@@ -1447,6 +1459,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 const formData = ref({
   name: '',
   group_id: null as number | null,
+  group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1464,6 +1477,16 @@ const formData = ref({
   enable_expiration: false,
   expiration_preset: '30' as '7' | '30' | '90' | 'custom',
   expiration_date: ''
+})
+
+const updateRouteGroups = (ids: number[]) => {
+  formData.value.group_ids = [...ids]
+  formData.value.group_id = ids[0] ?? null
+}
+watch(() => formData.value.group_id, (id) => {
+  if (id === null) { formData.value.group_ids = []; return }
+  if (formData.value.group_ids[0] === id) return
+  formData.value.group_ids = [id, ...formData.value.group_ids.filter(value => value !== id)]
 })
 
 // 自定义Key验证
@@ -1566,7 +1589,7 @@ watch([showCreateModal, createProviderOptions], ([isOpen, providers], [wasOpen])
   if (!wasOpen || !providers.some((provider) => provider.value === createProvider.value && provider.count > 0)) {
     selectCreateProvider(providers.find((provider) => provider.count > 0)?.value ?? 'anthropic')
   }
-  if (!formGroupOptions.value.some((group) => group.value === formData.value.group_id)) {
+  if (!groupOptions.value.some((group) => group.value === formData.value.group_id)) {
     formData.value.group_id = null
   }
 })
@@ -1748,6 +1771,7 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    group_ids: [...(key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [])],
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1846,6 +1870,8 @@ const confirmDelete = (key: ApiKey) => {
 }
 
 const handleSubmit = async () => {
+  if (submitting.value) return
+  const saveVersion = ++formSaveVersion
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1905,6 +1931,7 @@ const handleSubmit = async () => {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
         group_id: formData.value.group_id,
+        group_ids: [...formData.value.group_ids],
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1917,6 +1944,7 @@ const handleSubmit = async () => {
         updates.status = formData.value.status
       }
       await keysAPI.update(selectedKey.value.id, updates)
+      if (saveVersion !== formSaveVersion) return
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
@@ -1928,8 +1956,10 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        [...formData.value.group_ids]
       )
+      if (saveVersion !== formSaveVersion) return
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1939,11 +1969,12 @@ const handleSubmit = async () => {
     closeModals()
     loadApiKeys()
   } catch (error: any) {
+    if (saveVersion !== formSaveVersion) return
     const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
-    submitting.value = false
+    if (saveVersion === formSaveVersion) submitting.value = false
   }
 }
 
@@ -1968,12 +1999,15 @@ const handleDelete = async () => {
 }
 
 const closeModals = () => {
+  formSaveVersion++
+  submitting.value = false
   showCreateModal.value = false
   showEditModal.value = false
   selectedKey.value = null
   formData.value = {
     name: '',
     group_id: null,
+    group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',
@@ -2137,6 +2171,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  formSaveVersion++
   abortController?.abort()
   cancelUsageStats()
   document.removeEventListener('click', closeGroupSelector)

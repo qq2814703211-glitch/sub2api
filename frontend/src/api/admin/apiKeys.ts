@@ -26,7 +26,13 @@ export async function updateApiKeyGroup(id: number, groupId: number | null): Pro
   return data
 }
 
+export async function updateApiKeyRoutes(id: number, groupIds: number[]): Promise<UpdateApiKeyGroupResult> {
+  const { data } = await apiClient.put<UpdateApiKeyGroupResult>(`/admin/api-keys/${id}`, { group_ids: groupIds })
+  return data
+}
+
 export const apiKeysAPI = {
+  updateApiKeyRoutes,
   updateApiKeyGroup
 }
 

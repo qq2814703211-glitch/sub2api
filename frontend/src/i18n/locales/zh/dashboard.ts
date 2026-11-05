@@ -115,6 +115,7 @@ export default {
     disable: '禁用',
     nameLabel: '名称',
     namePlaceholder: '我的 API 密钥',
+    routes: { title: '有序回退分组', hint: '第一组为主组。不可用或不兼容时按顺序回退，按最终命中分组计费。', primary: '主组', empty: '尚未选择分组', add: '添加回退分组', noMore: '已选中所有可用分组', up: '上移分组', down: '下移分组', remove: '移除分组', edit: '编辑回退顺序' },
     groupLabel: '分组',
     providerLabel: '厂商',
     providers: {
