@@ -1185,8 +1185,13 @@ func (s *OpenAIGatewayService) parseOpenAIImagesSSEUsageBytes(data []byte, usage
 	if usage == nil || !gjson.ValidBytes(data) || gjson.GetBytes(data, "type").String() != "response.completed" {
 		return
 	}
-	if toolUsage, ok := openAIImagesToolUsageFromGJSON(gjson.GetBytes(data, "response.tool_usage.image_gen")); ok {
+	imageGen := gjson.GetBytes(data, "response.tool_usage.image_gen")
+	if toolUsage, ok := openAIImagesToolUsageFromGJSON(imageGen); ok {
 		*usage = toolUsage
+	} else if imageGen.IsObject() && usage.hostedSnapshot != nil {
+		// Dedicated Images retains its atomic fallback contract: malformed or
+		// incomplete tool records must not partially change the base fallback.
+		*usage = usage.hostedSnapshot.base
 	}
 }
 
