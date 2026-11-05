@@ -89,7 +89,13 @@ describe('PlazaModelPricingTable', () => {
       videoRateIndependent: true, videoRateMultiplier: 0.5,
     })
     expect(wrapper.get('[data-testid="media-pricing-rules"]').text()).toContain('1 / mediaPricing.units.request')
-    expect(wrapper.findAll('tbody tr td').at(-1)!.text()).toBe('0.5x')
+    const options = wrapper.findAll('[data-testid="media-rate-option"]')
+    expect(options).toHaveLength(3)
+    expect(options[0]!.text()).toContain('mediaPricing.rateGeneral')
+    expect(options[0]!.text()).toContain('0.1 / mediaPricing.units.request')
+    expect(options[1]!.text()).toContain('mediaPricing.rateImage')
+    expect(options[2]!.text()).toContain('mediaPricing.rateVideo')
+    expect(wrapper.findAll('tbody tr td').at(-1)!.text()).toContain('mediaPricing.rateImage0.5x')
     wrapper.unmount()
   })
 
