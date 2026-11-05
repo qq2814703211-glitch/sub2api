@@ -363,7 +363,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useTicketNotificationsStore } from '@/stores/ticketNotifications'
@@ -421,6 +421,8 @@ const proactiveSending = ref(false)
 const proactiveClientID = ref(newClientID())
 let proactiveFingerprint = ''
 let proactiveSearchTimer: ReturnType<typeof setTimeout> | undefined
+let proactiveSearchSeq = 0
+let proactiveSearchController: AbortController | null = null
 const closeDialogOpen = ref(false)
 const settingsOpen = ref(false)
 const settingsForm = reactive({ enabled: true, admin_email: '' })
@@ -498,36 +500,65 @@ function openProactive() {
   proactiveOpen.value = true
   proactiveUsers.value = []
   proactiveSearched.value = false
+  proactiveSearching.value = false
   proactiveClientID.value = newClientID()
   proactiveFingerprint = ''
 }
 function closeProactive() {
-  if (!proactiveSending.value) proactiveOpen.value = false
+  if (proactiveSending.value) return
+  proactiveOpen.value = false
+  clearTimeout(proactiveSearchTimer)
+  cancelProactiveSearch()
+}
+function cancelProactiveSearch() {
+  proactiveSearchSeq += 1
+  proactiveSearchController?.abort()
+  proactiveSearchController = null
+  proactiveSearching.value = false
 }
 function onProactiveSearchInput() {
   proactiveUser.value = null
   clearTimeout(proactiveSearchTimer)
+  cancelProactiveSearch()
+  proactiveSearched.value = false
+  if (!proactiveUserSearch.value.trim()) {
+    proactiveUsers.value = []
+    return
+  }
   proactiveSearchTimer = setTimeout(() => void searchProactiveUsers(), 300)
 }
 async function searchProactiveUsers() {
   const query = proactiveUserSearch.value.trim()
-  proactiveSearched.value = false
+  const seq = ++proactiveSearchSeq
+  proactiveSearchController?.abort()
+  proactiveUsers.value = []
   if (!query) {
-    proactiveUsers.value = []
+    proactiveSearched.value = false
+    proactiveSearching.value = false
     return
   }
+  const controller = new AbortController()
+  proactiveSearchController = controller
+  proactiveSearched.value = false
   proactiveSearching.value = true
   try {
-    const result = await usersAPI.list(1, 10, { search: query })
+    const result = await usersAPI.list(1, 10, { search: query }, { signal: controller.signal })
+    // A slower earlier query must never replace the candidates of the query
+    // currently in the box, otherwise an admin can select the wrong user.
+    if (seq !== proactiveSearchSeq || controller.signal.aborted || query !== proactiveUserSearch.value.trim()) return
     proactiveUsers.value = result.items || []
     proactiveSearched.value = true
   } catch {
+    if (seq !== proactiveSearchSeq || controller.signal.aborted) return
     proactiveUsers.value = []
+    proactiveSearched.value = true
   } finally {
-    proactiveSearching.value = false
+    if (seq === proactiveSearchSeq) proactiveSearching.value = false
   }
 }
 function pickProactiveUser(user: AdminUser) {
+  clearTimeout(proactiveSearchTimer)
+  cancelProactiveSearch()
   proactiveUser.value = user
   proactiveUserSearch.value = `${user.username || '#' + user.id}${user.email ? ' · ' + user.email : ''}`
   proactiveUsers.value = []
@@ -558,6 +589,8 @@ async function submitProactiveTicket() {
       client_id: proactiveClientID.value
     })
     proactiveOpen.value = false
+    clearTimeout(proactiveSearchTimer)
+    cancelProactiveSearch()
     proactiveUser.value = null
     proactiveUserSearch.value = ''
     proactiveUsers.value = []
@@ -614,6 +647,11 @@ watch(
     adminReplyStatus.value = 'waiting_user'
   }
 )
+
+onBeforeUnmount(() => {
+  clearTimeout(proactiveSearchTimer)
+  cancelProactiveSearch()
+})
 </script>
 
 <style scoped>
