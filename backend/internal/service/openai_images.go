@@ -92,6 +92,12 @@ type OpenAIImagesRequest struct {
 	Moderation         string
 	InputFidelity      string
 	Style              string
+	Markup             string
+	MarkupUpload       *OpenAIImagesUpload
+	SVGModel           string
+	SVGReasoningEffort string
+	FrameCount         *int
+	FrameDurationMs    *int
 	OutputCompression  *int
 	PartialImages      *int
 	HasMask            bool
@@ -281,7 +287,24 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 	req.Moderation = strings.TrimSpace(gjson.GetBytes(body, "moderation").String())
 	req.InputFidelity = strings.TrimSpace(gjson.GetBytes(body, "input_fidelity").String())
 	req.Style = strings.TrimSpace(gjson.GetBytes(body, "style").String())
+	if markup := gjson.GetBytes(body, "markup"); markup.Exists() {
+		req.Markup = markup.Raw
+	}
+	req.SVGModel = strings.TrimSpace(gjson.GetBytes(body, "svg.model").String())
+	req.SVGReasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "svg.reasoning.effort").String())
 	req.HasMask = gjson.GetBytes(body, "mask").Exists()
+	for path, target := range map[string]**int{"frame_count": &req.FrameCount, "frame_duration_ms": &req.FrameDurationMs} {
+		if value := gjson.GetBytes(body, path); value.Exists() {
+			if value.Type != gjson.Number {
+				return fmt.Errorf("invalid %s field type", path)
+			}
+			n, ok := boundedJSONNonNegativeInt(value)
+			if !ok {
+				return fmt.Errorf("%s must be a non-negative integer within range", path)
+			}
+			*target = &n
+		}
+	}
 	if outputCompression := gjson.GetBytes(body, "output_compression"); outputCompression.Exists() {
 		if outputCompression.Type != gjson.Number {
 			return fmt.Errorf("invalid output_compression field type")
@@ -392,6 +415,11 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 					Height:      height,
 				})
 			}
+			if name == "markup" {
+				width, height := parseOpenAIImageDimensions(part.Header)
+				req.MarkupUpload = &OpenAIImagesUpload{FieldName: name, FileName: fileName, ContentType: partContentType, Data: data, Width: width, Height: height}
+				req.HasNativeOptions = true
+			}
 			continue
 		}
 
@@ -439,6 +467,26 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 			req.HasNativeOptions = true
 		case "style":
 			req.Style = value
+			req.HasNativeOptions = true
+		case "markup":
+			req.Markup = value
+			req.HasNativeOptions = true
+		case "frame_count", "frame_duration_ms":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return fmt.Errorf("invalid %s field value", name)
+			}
+			if name == "frame_count" {
+				req.FrameCount = &n
+			} else {
+				req.FrameDurationMs = &n
+			}
+			req.HasNativeOptions = true
+		case "svg.model", "svg[model]":
+			req.SVGModel = value
+			req.HasNativeOptions = true
+		case "svg.reasoning.effort", "svg[reasoning][effort]":
+			req.SVGReasoningEffort = value
 			req.HasNativeOptions = true
 		case "output_compression":
 			n, err := strconv.Atoi(value)
@@ -588,11 +636,16 @@ func hasOpenAINativeImageOptions(exists func(path string) bool) bool {
 		"quality",
 		"complexity",
 		"style",
+		"markup",
 		"output_format",
 		"output_compression",
 		"moderation",
 		"input_fidelity",
 		"partial_images",
+		"frame_count",
+		"frame_duration_ms",
+		"svg.model",
+		"svg.reasoning.effort",
 	} {
 		if exists(path) {
 			return true
@@ -603,7 +656,7 @@ func hasOpenAINativeImageOptions(exists func(path string) bool) bool {
 
 func isOpenAINativeImageOption(name string) bool {
 	switch strings.TrimSpace(strings.ToLower(name)) {
-	case "background", "quality", "complexity", "style", "output_format", "output_compression", "moderation", "input_fidelity", "partial_images":
+	case "background", "quality", "complexity", "style", "markup", "output_format", "output_compression", "moderation", "input_fidelity", "partial_images", "frame_count", "frame_duration_ms", "svg.model", "svg.reasoning.effort", "svg[model]", "svg[reasoning][effort]":
 		return true
 	default:
 		return false
