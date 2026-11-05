@@ -516,6 +516,7 @@ func ProvideRateLimitService(
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 	ollamaCloudUsage *OllamaCloudUsageService,
+	accountOps *AccountOpsService,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -526,6 +527,7 @@ func ProvideRateLimitService(
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	svc.SetOllamaCloudUsageProbeScheduler(ollamaCloudUsage)
+	svc.SetAccountOpsService(accountOps)
 	return svc
 }
 
@@ -880,6 +882,8 @@ var ProviderSet = wire.NewSet(
 	NewPromoService,
 	ProvideUsageService,
 	ProvideKeyUsageRuntime,
+	ProvideAccountOpsService,
+	ProvideUpstreamMonitorService,
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,

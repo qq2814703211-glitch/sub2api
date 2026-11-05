@@ -163,6 +163,9 @@ export default {
 
   // Navigation
   nav: {
+    opsCenter: '运营中心',
+    accountOps: '账号运营',
+    upstreamMonitor: '上游监控',
     dashboard: '仪表盘',
     announcements: '公告',
     apiKeys: 'API 密钥',
