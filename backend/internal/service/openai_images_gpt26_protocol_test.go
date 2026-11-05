@@ -93,13 +93,10 @@ func TestGPTImage26ImagesProtocolMatrix(t *testing.T) {
 									account.Credentials["api_key"] = "sk-test"
 									account.Credentials["base_url"] = "https://api.openai.com/v1"
 								}
-								payload := fmt.Sprintf(`{"model":%q,"data":[{"b64_json":"AA=="},{"b64_json":"AQ=="}],"usage":{"input_tokens":371,"input_tokens_details":{"text_tokens":19,"image_tokens":352},"output_tokens":439,"output_tokens_details":{"image_tokens":439}}}`, upstreamModel)
+								payload := fmt.Sprintf(`{"model":%q,"data":[{"b64_json":"AA==","output_format":"png"},{"b64_json":"AQ==","output_format":"png"}],"usage":{"input_tokens":371,"input_tokens_details":{"text_tokens":19,"image_tokens":352},"output_tokens":439,"output_tokens_details":{"image_tokens":439}}}`, upstreamModel)
 								responseType := "application/json"
-								if accountType != AccountTypeAPIKey {
-									payload = "data: " + `{"type":"response.completed","response":` + gpt26ResponsesPayload(upstreamModel) + "}\n\n"
-									responseType = "text/event-stream"
-								} else if stream {
-									payload = "data: " + `{"type":"image_generation.completed","b64_json":"AA=="}` + "\n\ndata: " + `{"type":"image_generation.completed","b64_json":"AQ==","usage":{"input_tokens":371,"input_tokens_details":{"text_tokens":19,"image_tokens":352},"output_tokens":439,"output_tokens_details":{"image_tokens":439}}}` + "\n\n"
+								if stream {
+									payload = "data: " + `{"type":"image_generation.completed","b64_json":"AA==","output_format":"png"}` + "\n\ndata: " + `{"type":"image_generation.completed","b64_json":"AQ==","output_format":"png","usage":{"input_tokens":371,"input_tokens_details":{"text_tokens":19,"image_tokens":352},"output_tokens":439,"output_tokens_details":{"image_tokens":439}}}` + "\n\n"
 									responseType = "text/event-stream"
 								}
 								upstream := &httpUpstreamRecorder{resp: gpt26Response(payload, responseType)}
@@ -124,16 +121,19 @@ func TestGPTImage26ImagesProtocolMatrix(t *testing.T) {
 									require.Contains(t, rec.Body.String(), ".completed")
 								}
 								if accountType != AccountTypeAPIKey {
-									require.Equal(t, "/backend-api/codex/responses", upstream.lastReq.URL.Path)
-									require.Equal(t, upstreamModel, gjson.GetBytes(upstream.lastBody, "tools.0.model").String())
-									require.Equal(t, complexity, gjson.GetBytes(upstream.lastBody, "tools.0.complexity").String())
-									require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "tools.0.quality").String())
-									require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
-									require.Equal(t, int64(2), gjson.GetBytes(upstream.lastBody, "tools.0.n").Int())
+									wantPath := "/backend-api/codex/images/generations"
 									if edits {
-										require.Equal(t, "edit", gjson.GetBytes(upstream.lastBody, "tools.0.action").String())
-										require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "input.0.content.1.image_url").String())
-										require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "tools.0.input_image_mask.image_url").String())
+										wantPath = "/backend-api/codex/images/edits"
+									}
+									require.Equal(t, wantPath, upstream.lastReq.URL.Path)
+									require.Equal(t, upstreamModel, gjson.GetBytes(upstream.lastBody, "model").String())
+									require.Equal(t, complexity, gjson.GetBytes(upstream.lastBody, "complexity").String())
+									require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "quality").String())
+									require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning").Exists())
+									require.Equal(t, int64(2), gjson.GetBytes(upstream.lastBody, "n").Int())
+									if edits {
+										require.Len(t, gjson.GetBytes(upstream.lastBody, "images").Array(), 1)
+										require.True(t, gjson.GetBytes(upstream.lastBody, "mask.image_url").Exists())
 									}
 								} else {
 									require.Equal(t, c.Request.URL.Path, upstream.lastReq.URL.Path)
@@ -193,10 +193,7 @@ func TestGPTImage26ChannelAndAccountMapping(t *testing.T) {
 			account.Credentials["api_key"] = "sk-test"
 			account.Credentials["base_url"] = "https://api.openai.com/v1"
 			account.Credentials["model_mapping"] = map[string]any{"gpt-image-2.6": "gpt-image-2.6-sunburst"}
-			response := complexityResponsesTestResponse()
-			if accountType == AccountTypeAPIKey {
-				response = openAIImagesJSONResponse()
-			}
+			response := openAIImagesJSONResponse()
 			upstream := &httpUpstreamRecorder{resp: response}
 			svc := newOpenAIImagesTestService(upstream)
 			parsed, err := svc.ParseOpenAIImagesRequest(c, body)
