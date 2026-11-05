@@ -87,6 +87,7 @@ func RegisterAdminRoutes(
 		// 运维监控（Ops）
 		registerOpsRoutes(admin, h)
 		registerRequestCaptureRoutes(admin, h)
+		registerAccountOpsRoutes(admin, h)
 
 		// 系统管理
 		registerSystemRoutes(admin, h)
