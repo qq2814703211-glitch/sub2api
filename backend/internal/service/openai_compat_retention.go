@@ -1,7 +1,6 @@
 package service
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -13,7 +12,7 @@ const openAICompatRetentionSweepEvery uint64 = 256
 
 // openAICompatRetentionDeleteHook 在 CompareAndDelete 之前运行。
 // 生产路径保持 nil；测试用它把过期值换成刷新后的值，证明比较删除不会误伤。
-type openAICompatRetentionDeleteHook func(m *sync.Map, key, observed any)
+type openAICompatRetentionDeleteHook func(m *sessionMemoryCache, key, observed any)
 
 var openAICompatRetentionBeforeCompareDelete atomic.Pointer[openAICompatRetentionDeleteHook]
 
@@ -21,7 +20,7 @@ func openAICompatBindingExpired(expiresAt, now time.Time) bool {
 	return !expiresAt.IsZero() && now.After(expiresAt)
 }
 
-func compareDeleteOpenAICompatEntry(m *sync.Map, key, observed any) {
+func compareDeleteOpenAICompatEntry(m *sessionMemoryCache, key, observed any) {
 	if m == nil {
 		return
 	}
@@ -73,7 +72,7 @@ func (s *OpenAIGatewayService) sweepOpenAICompatDigestSessions() {
 	})
 }
 
-func sweepExpiredOpenAICompatEntries(m *sync.Map, drop func(any) bool) {
+func sweepExpiredOpenAICompatEntries(m *sessionMemoryCache, drop func(any) bool) {
 	if m == nil || drop == nil {
 		return
 	}
