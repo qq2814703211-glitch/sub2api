@@ -418,6 +418,8 @@ const proactiveUser = ref<AdminUser | null>(null)
 const proactiveSubject = ref('')
 const proactiveContent = ref('')
 const proactiveSending = ref(false)
+const proactiveClientID = ref(newClientID())
+let proactiveFingerprint = ''
 let proactiveSearchTimer: ReturnType<typeof setTimeout> | undefined
 const closeDialogOpen = ref(false)
 const settingsOpen = ref(false)
@@ -496,6 +498,8 @@ function openProactive() {
   proactiveOpen.value = true
   proactiveUsers.value = []
   proactiveSearched.value = false
+  proactiveClientID.value = newClientID()
+  proactiveFingerprint = ''
 }
 function closeProactive() {
   if (!proactiveSending.value) proactiveOpen.value = false
@@ -540,10 +544,18 @@ async function submitProactiveTicket() {
   }
   proactiveSending.value = true
   try {
+    // Reuse the same id while the message is unchanged so a lost response does
+    // not create a duplicate proactive ticket.
+    const fingerprint = JSON.stringify([proactiveUser.value.id, proactiveSubject.value, proactiveContent.value])
+    if (fingerprint !== proactiveFingerprint) {
+      proactiveClientID.value = newClientID()
+      proactiveFingerprint = fingerprint
+    }
     const created = await ticketsAPI(true).proactiveCreate({
       user_id: proactiveUser.value.id,
       subject: proactiveSubject.value.trim(),
-      content: proactiveContent.value.trim()
+      content: proactiveContent.value.trim(),
+      client_id: proactiveClientID.value
     })
     proactiveOpen.value = false
     proactiveUser.value = null
@@ -551,6 +563,8 @@ async function submitProactiveTicket() {
     proactiveUsers.value = []
     proactiveSubject.value = ''
     proactiveContent.value = ''
+    proactiveClientID.value = newClientID()
+    proactiveFingerprint = ''
     await refresh(true)
     if (created?.ticket?.id) select(created.ticket.id)
     app.showSuccess(t('tickets.proactiveCreated'))

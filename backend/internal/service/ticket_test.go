@@ -46,7 +46,7 @@ func (r *ticketRepoStub) Create(_ context.Context, _ TicketActor, in CreateTicke
 	return r.ticket.ID, nil
 }
 
-func (r *ticketRepoStub) CreateForUser(_ context.Context, _ TicketActor, userID int64, subject, content string) (int64, error) {
+func (r *ticketRepoStub) CreateForUser(_ context.Context, _ TicketActor, userID int64, subject, content, _, _ string) (int64, error) {
 	r.proactiveUserID, r.proactiveSubject, r.proactiveContent = userID, subject, content
 	return 10, nil
 }
