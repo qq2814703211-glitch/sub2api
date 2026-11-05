@@ -399,10 +399,12 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		// 分组模型级固定价就是实收价，不能再被分组图片兜底档位覆盖。
 		// 否则模型广场会显示 image_price_1k/2k/4k，而实际按 model_pricing 扣费。
 		if groupPricing.MediaPricing != nil || groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest {
+			m.TimePricing = resolvedTimePricingSchedule(&ResolvedPricing{Source: PricingSourceGroup, channelPricing: groupPricing})
 			return
 		}
 	}
 	if m.Pricing != nil && m.Pricing.MediaPricing != nil {
+		m.TimePricing = resolvedTimePricingSchedule(&ResolvedPricing{Source: PricingSourceChannel, channelPricing: m.Pricing})
 		return
 	}
 	if s.billingService != nil && s.resolver != nil {

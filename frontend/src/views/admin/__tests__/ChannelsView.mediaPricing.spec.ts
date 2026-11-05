@@ -1,4 +1,5 @@
 import { defineComponent } from 'vue'
+import { readFileSync,writeFileSync,existsSync } from 'node:fs'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ChannelsView from '../ChannelsView.vue'
@@ -10,6 +11,7 @@ const { list, update, create, getGroups, showError } = vi.hoisted(() => ({
 }))
 vi.mock('@/api/admin', () => ({ adminAPI: {
   channels: { list, update, create }, groups: { getAll: getGroups },
+  accounts: { getById:vi.fn().mockResolvedValue({id:123,name:'synthetic-account'}) },
   settings: { getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false }) },
 } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: vi.fn(), showError }) }))
@@ -144,4 +146,42 @@ describe('ChannelsView media rule persistence (mock API)', () => {
       expect(wrapper.findAll<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').map(e => JSON.parse(e.element.value))).toEqual([fixture, fixture])
     } finally { wrapper.unmount() }
   })
+})
+
+
+describe('ChannelsView scheduled media production response',()=>{
+ it('opens, saves and reloads a real channel DTO while account-stats schedules remain disabled',async()=>{
+  const root=process.env.PLAZA_FIXTURE_DIR || process.cwd()+'/src/__tests__/fixtures/plaza'
+  let stored=JSON.parse(readFileSync(root+'/ui-scheduled-channel-http-response.json','utf8')).data
+  vi.clearAllMocks();localStorage.clear()
+  getGroups.mockResolvedValue(stored.group_ids.map((id:number)=>({id,name:'Synthetic scheduled group',platform:'openai',status:'active'})))
+  list.mockImplementation(async()=>({items:[wire(stored)],total:1}))
+  update.mockImplementation(async(_id,request)=>{stored=wire({...stored,...request});return wire(stored)})
+  const wrapper=mountView()
+  try{
+   await edit(wrapper)
+   const openaiTab=wrapper.findAll('button.channel-tab').find(b=>b.text()==='admin.groups.platforms.openai')
+   if(openaiTab) await openaiTab.trigger('click')
+   let cards=wrapper.findAllComponents({name:'PricingEntryCard'})
+   expect(cards[0].findComponent({name:'TimePricingSection'}).exists()).toBe(true)
+   expect(cards[1].findComponent({name:'TimePricingSection'}).exists()).toBe(false)
+   const pricing=wire(stored.model_pricing)
+   await wrapper.get('input[placeholder="admin.channels.form.namePlaceholder"]').setValue('Scheduled channel changed')
+   await wrapper.get('#channel-form').trigger('submit');await flushPromises()
+   expect(showError).not.toHaveBeenCalled();expect(update).toHaveBeenCalledOnce()
+   const payload=update.mock.calls[0]![1]
+   expect(payload.model_pricing[0].media_pricing).toEqual(pricing[0].media_pricing)
+   expect(payload.model_pricing[0].time_pricing).toEqual({weekdays_only:false,...pricing[0].time_pricing})
+   expect(payload.account_stats_pricing_rules[0].pricing[0].time_pricing).toBeNull()
+   if(process.env.PLAZA_FIXTURE_DIR){
+    writeFileSync(root+'/ui-save-channel.json',JSON.stringify(payload))
+    if(existsSync(root+'/ui-reloaded-channel.json'))stored=JSON.parse(readFileSync(root+'/ui-reloaded-channel.json','utf8')).data
+   }
+   await edit(wrapper)
+   cards=wrapper.findAllComponents({name:'PricingEntryCard'})
+   expect(Number(cards[0].props('entry').time_pricing.periods[0].multiplier)).toBe(3)
+   expect(cards[1].findComponent({name:'TimePricingSection'}).exists()).toBe(false)
+   expect(JSON.parse(wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').element.value)).toEqual(pricing[0].media_pricing)
+  }finally{wrapper.unmount()}
+ })
 })

@@ -1,0 +1,89 @@
+{
+  "actual_cost": 1.7399999999999998,
+  "group": {
+    "id": 10,
+    "name": "",
+    "description": "",
+    "platform": "",
+    "subscription_type": "",
+    "rate_multiplier": 0.1,
+    "user_rate_multiplier": 0.2,
+    "peak_rate_enabled": false,
+    "peak_start": "",
+    "peak_end": "",
+    "peak_rate_multiplier": 0,
+    "is_exclusive": false,
+    "image_rate_independent": true,
+    "image_rate_multiplier": 0.5,
+    "video_rate_independent": true,
+    "video_rate_multiplier": 0.8,
+    "long_context_pricing_enabled": false,
+    "models": [
+      {
+        "name": "opaque-name",
+        "platform": "openai",
+        "pricing": {
+          "billing_mode": "per_request",
+          "input_price": null,
+          "output_price": null,
+          "cache_write_price": null,
+          "cache_write_1h_price": null,
+          "cache_read_price": null,
+          "image_input_price": null,
+          "image_output_price": null,
+          "per_request_price": null,
+          "intervals": [],
+          "media_pricing": {
+            "rules": [
+              {
+                "name": "",
+                "unit": "request",
+                "conditions": {},
+                "price": 2,
+                "prompt_price": 0.4
+              }
+            ],
+            "extra_input_image_price": 0.25,
+            "free_input_images": 1,
+            "duration_source": "output"
+          },
+          "time_pricing": {
+            "timezone": "UTC",
+            "periods": [
+              {
+                "start_time": "00:00:00",
+                "end_time": "23:59:59",
+                "multiplier": 3
+              }
+            ]
+          }
+        },
+        "official_pricing": null,
+        "time_pricing": {
+          "timezone": "UTC",
+          "periods": [
+            {
+              "start_time": "00:00:00",
+              "end_time": "23:59:59",
+              "multiplier": 3
+            }
+          ]
+        },
+        "media_rate_options": [
+          {
+            "request_type": "general",
+            "multiplier": 0.2
+          },
+          {
+            "request_type": "image",
+            "multiplier": 0.5
+          },
+          {
+            "request_type": "video",
+            "multiplier": 0.8
+          }
+        ]
+      }
+    ]
+  }
+}
