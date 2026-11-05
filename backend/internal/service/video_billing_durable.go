@@ -135,6 +135,17 @@ func (s *OpenAIGatewayService) BeginVideoBillingJob(ctx context.Context, in *Ope
 	return job, nil
 }
 
+// RejectVideoBillingCreate closes a known-unaccepted attempt before failover.
+// A storage failure blocks retry: the old attempt must never look ambiguous.
+func (s *OpenAIGatewayService) RejectVideoBillingCreate(ctx context.Context, job *VideoBillingJob) error {
+	if job == nil { return nil }
+	rejector, ok := s.videoBillingJobs.(interface { RejectCreate(context.Context, string) error })
+	if !ok { return errors.New("video create rejection storage unavailable") }
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return rejector.RejectCreate(persistCtx, job.ID)
+}
+
 func (s *OpenAIGatewayService) SubmitVideoBillingJob(ctx context.Context, j *VideoBillingJob, task string) error {
 	if j == nil {
 		return nil

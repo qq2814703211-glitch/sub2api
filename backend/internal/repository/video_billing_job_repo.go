@@ -70,6 +70,13 @@ func videoJobAffected(result sql.Result, err error) error {
 	return nil
 }
 
+// Only a producer-proven unaccepted create may become terminal without a task ID.
+func (r *videoBillingJobRepository) RejectCreate(ctx context.Context, id string) error {
+	return videoJobAffected(r.db.ExecContext(ctx, `UPDATE video_billing_jobs
+ SET state='failed',last_error='create_rejected',updated_at=NOW()
+ WHERE id=$1 AND state='creating' AND task_id IS NULL`, id))
+}
+
 func (r *videoBillingJobRepository) Submit(ctx context.Context, id, taskID string) error {
 	if taskID == "" {
 		return errors.New("video task id is empty")

@@ -18,6 +18,8 @@ type handlerVideoJobStore struct {
 	service.VideoBillingJobRepository
 	job                  *service.VideoBillingJob
 	createErr, submitErr error
+	rejectErr error
+	rejected []string
 	submitted            string
 	onSubmit             func()
 }
@@ -26,6 +28,11 @@ func (r *handlerVideoJobStore) Create(_ context.Context, j *service.VideoBilling
 	r.job = j
 	return r.createErr
 }
+func (r *handlerVideoJobStore) RejectCreate(_ context.Context, id string) error {
+	r.rejected = append(r.rejected, id)
+	return r.rejectErr
+}
+
 func (r *handlerVideoJobStore) Submit(_ context.Context, id, task string) error {
 	if r.onSubmit != nil {
 		r.onSubmit()
@@ -107,4 +114,20 @@ func TestDurableVideoHandlerPersistenceBeforePublicTask(t *testing.T) {
 			slots.assertReleased(t)
 		})
 	}
+}
+
+func TestDurableVideoRejectStorageFailureBlocksFailover(t *testing.T) {
+	h, slots, _, u := newGrokMediaSlotHandler(t, false, false)
+	c, w := grokMediaSlotContext(context.Background(), true)
+	store := &handlerVideoJobStore{rejectErr: errors.New("synthetic reject storage failure")}
+	h.gatewayService.SetVideoBillingJobs(store)
+	u.call = func(*http.Request, int64) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`))}, nil
+	}
+	h.GrokVideoGeneration(c)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Equal(t, 1, u.calls)
+	require.Len(t, store.rejected, 1)
+	require.Equal(t, store.job.ID, store.rejected[0])
+	slots.assertReleased(t)
 }

@@ -473,7 +473,16 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
 		if err != nil {
-			if isGrokVideoCreateEndpoint(endpoint) {
+			var rejectedCreate *service.UpstreamFailoverError
+			createDefinitelyRejected := errors.As(err, &rejectedCreate) && (rejectedCreate.IsCredentialFailure() || rejectedCreate.CreateRequestRejected)
+			if isGrokVideoCreateEndpoint(endpoint) && createDefinitelyRejected {
+				if rejectErr := h.gatewayService.RejectVideoBillingCreate(requestCtx, durableVideoJob); rejectErr != nil {
+					h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Video create rejection could not be saved")
+					return
+				}
+				durableVideoJob = nil
+			}
+			if isGrokVideoCreateEndpoint(endpoint) && !createDefinitelyRejected {
 				if !service.IsResponseCommitted(c) && !c.Writer.Written() {
 					h.errorResponse(c, http.StatusBadGateway, "video_create_failed", "Video create could not be accepted; the gateway will not resend it")
 				}
