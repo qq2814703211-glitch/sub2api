@@ -1168,6 +1168,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					}
 				}
 				replayCollector.AddEvent(eventType, upstreamMessage)
+				// 首次下游输出前的容量降载是请求级信号：上游按客户端身份/模型容量
+				// 降载，换账号不会改变结果，但也不能把一个降载错误当成本次 HTTP
+				// 会话的终态。此时尚未写出任何字节，把整轮 turnaround 交回服务端
+				// 重选（UpstreamFailoverError 携带 503、RequestScopedTransient 与
+				// 同账号重试许可，由 handler 既有预算决定重试）。lease 标记 broken，
+				// 因为该 WS 连接上的 session 状态已不可信。写出过任意帧后本分支
+				// 不成立，继续走原有客户端错误改写，避免跨账号重放已开始的输出。
+				if !wroteDownstream && isOpenAIUpstreamCapacityShedEvent(upstreamMessage) {
+					lease.MarkBroken()
+					return nil, s.newOpenAIWSCapacityShedFailoverError(
+						account,
+						lease.HandshakeHeaders(),
+						upstreamMessage,
+						extractOpenAISSEErrorMessage(upstreamMessage),
+					)
+				}
 				// 客户端写出副本改写容量降载码：Codex 对 error/response.failed 中的
 				// server_is_overloaded / slow_down 判致命并终止会话，改写后走客户端
 				// 内置退避重试。HTTP/SSE（openai_gateway_response_handling.go）与
