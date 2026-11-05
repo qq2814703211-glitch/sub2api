@@ -74,15 +74,14 @@ func (c *ssoDeviceFakeClient) Do(req *http.Request) (*http.Response, error) {
 	}
 }
 
-func TestConvertSSOToBuildCompletesDeviceFlow(t *testing.T) {
+func TestLegacySSODeviceFlowStillCompletes(t *testing.T) {
 	t.Setenv(EnvClientID, "")
 	client := &ssoDeviceFakeClient{t: t}
-	token, err := ConvertSSOToBuild(context.Background(), "sso=sso-token; ignored=1", &SSODeviceOptions{
-		HTTPClient: client,
-		Sleep: func(context.Context, time.Duration) error {
-			return nil
-		},
-	})
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	seedSSOCookies(jar, "sso-token")
+	flow := &ssoDeviceFlow{client: client, userAgent: ssoDefaultUA, cookieJar: jar, ssoToken: "sso-token", sleep: func(context.Context, time.Duration) error { return nil }}
+	token, err := flow.convert(context.Background())
 
 	require.NoError(t, err)
 	require.Equal(t, "access-token", token.AccessToken)
