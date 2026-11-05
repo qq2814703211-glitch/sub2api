@@ -68,9 +68,10 @@ func TestAPIKeyRoutesPostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ids, got.CandidateGroupIDs())
 	keyService := service.NewAPIKeyService(repo, users, NewGroupRepository(client, db), nil, nil, nil, &config.Config{})
-	createdByService, err := keyService.Create(ctx, user.ID, service.CreateAPIKeyRequest{Name: "via-service", GroupIDs: ids})
+	createdByService, err := keyService.Create(ctx, user.ID, service.CreateAPIKeyRequest{Name: "via-service", GroupIDs: ids, ConcurrencyLimit: 3})
 	require.NoError(t, err)
 	require.Equal(t, ids, createdByService.CandidateGroupIDs())
+	require.Equal(t, 3, createdByService.ConcurrencyLimit)
 	reversed := append([]int64(nil), ids...)
 	for l, r := 0, len(reversed)-1; l < r; l, r = l+1, r-1 {
 		reversed[l], reversed[r] = reversed[r], reversed[l]
@@ -80,6 +81,7 @@ func TestAPIKeyRoutesPostgres(t *testing.T) {
 	fromAuth, err := keyService.GetByKey(ctx, createdByService.Key)
 	require.NoError(t, err)
 	require.Equal(t, reversed, fromAuth.CandidateGroupIDs())
+	require.Equal(t, 3, fromAuth.ConcurrencyLimit)
 	require.EqualValues(t, ids[29], *fromAuth.GroupID)
 	// Real FK error rolls metadata and DELETE/INSERT route replacement back.
 	got.Name = "rollback"

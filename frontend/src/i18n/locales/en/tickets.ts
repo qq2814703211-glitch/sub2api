@@ -103,7 +103,7 @@ export default {
     emailEnabled: 'Email notifications',
     emailEnabledHint: 'When off, no ticket emails are sent. Queued notifications are dropped silently rather than replayed later.',
     adminEmail: 'Support inbox',
-    adminEmailPlaceholder: 'support@example.com',
+    adminEmailPlaceholder: "support{'@'}example.com",
     adminEmailHint: 'Leave empty to use the first administrator email.',
     pendingEmails: 'Queued emails',
     failedEmails: 'Failed emails',

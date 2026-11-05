@@ -9,7 +9,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
@@ -595,7 +594,7 @@ func detachUpstreamContext(ctx context.Context, drainTimeout ...time.Duration) (
 	if ctx == nil {
 		return context.Background(), func() {}
 	}
-	return pkghttputil.DetachUpstreamContext(ctx, drainTimeout...), func() {}
+	return detachAPIKeyUpstreamContext(ctx, drainTimeout...)
 }
 
 // billingDeps 扣费逻辑依赖的服务（由各 gateway service 提供）

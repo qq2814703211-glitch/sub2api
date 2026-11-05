@@ -6,9 +6,8 @@
  * throws on mount, so this renders the real component with the network stubbed
  * and asserts the interactive parts appear.
  *
- * vitest.config.ts aliases vue-i18n to the runtime-only build, so `t()` returns
- * the message key rather than the translated string. Assertions therefore look
- * for keys, which also makes them locale-independent.
+ * Render the real Chinese messages using the installed vue-i18n compiler.
+ * Assertions use the locale values so translated controls remain interactive.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -86,9 +85,9 @@ describe('ImageGenView', () => {
 
     // The primary action and the token field are the two things a user needs.
     const buttons = wrapper.findAll('button').map((node) => node.text())
-    expect(buttons.some((label) => label.includes('imagegen.generate'))).toBe(true)
+    expect(buttons.some((label) => label.includes(zh.imagegen.generate))).toBe(true)
     expect(wrapper.find('input[type="password"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('imagegen.promptLabel')
+    expect(wrapper.text()).toContain(zh.imagegen.promptLabel)
 
     wrapper.unmount()
   })
@@ -118,7 +117,7 @@ describe('ImageGenView', () => {
 
     const retouchToggle = wrapper
       .findAll('button')
-      .find((node) => node.text().includes('imagegen.retouchTitle'))
+      .find((node) => node.text().includes(zh.imagegen.retouchTitle))
     expect(retouchToggle).toBeTruthy()
     await retouchToggle!.trigger('click')
     await flushPromises()
@@ -127,8 +126,8 @@ describe('ImageGenView', () => {
     // real Chinese strings even under the runtime-only i18n build.
     expect(wrapper.text()).toContain('人像')
     expect(wrapper.text()).toContain('AI色彩')
-    expect(wrapper.text()).toContain('imagegen.retouchIntensity')
-    expect(wrapper.text()).toContain('imagegen.retouchSubject')
+    expect(wrapper.text()).toContain(zh.imagegen.retouchIntensity)
+    expect(wrapper.text()).toContain(zh.imagegen.retouchSubject)
 
     wrapper.unmount()
   })
@@ -139,7 +138,7 @@ describe('ImageGenView', () => {
 
     const retouchToggle = wrapper
       .findAll('button')
-      .find((node) => node.text().includes('imagegen.retouchTitle'))
+      .find((node) => node.text().includes(zh.imagegen.retouchTitle))
     await retouchToggle!.trigger('click')
     await flushPromises()
 
@@ -155,13 +154,13 @@ describe('ImageGenView', () => {
 
     const openButton = wrapper
       .findAll('button')
-      .find((node) => node.text().includes('imagegen.templatesOpen'))
+      .find((node) => node.text().includes(zh.imagegen.templatesOpen))
     expect(openButton).toBeTruthy()
     await openButton!.trigger('click')
     await flushPromises()
 
     // The drawer Teleports to body, so it lives outside the wrapper element.
-    expect(document.body.textContent).toContain('imagegen.templatesTitle')
+    expect(document.body.textContent).toContain(zh.imagegen.templatesTitle)
     expect(document.body.textContent).toContain('测试模板')
 
     wrapper.unmount()
@@ -176,7 +175,7 @@ describe('ImageGenView', () => {
 
     const generate = wrapper
       .findAll('button')
-      .find((node) => node.text().includes('imagegen.generate'))
+      .find((node) => node.text().includes(zh.imagegen.generate))
     await generate!.trigger('click')
     await flushPromises()
 
