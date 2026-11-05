@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import GroupCacheTestView from '../GroupCacheTestView.vue'
-import { DEFAULT_CACHE_SETTINGS, loadCacheHistory, saveCacheHistory, type CacheTestRun } from '@/utils/groupCacheTest'
+import { DEFAULT_CACHE_SETTINGS, loadCacheHistory, saveCacheHistory, type CacheRound, type CacheTestRun } from '@/utils/groupCacheTest'
 
 const mocks = vi.hoisted(() => ({
   groups: vi.fn(), candidates: vi.fn(), keys: vi.fn(), getKey: vi.fn(), execute: vi.fn(), reconcile: vi.fn(),
@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/api/admin/groups', () => ({ getAll: mocks.groups, getModelAllowlistCandidates: mocks.candidates }))
 vi.mock('@/api/keys', () => ({ list: mocks.keys, getById: mocks.getKey }))
-vi.mock('@/api/groupCacheTest', () => ({ executeCacheRun: mocks.execute, reconcileCacheBills: mocks.reconcile }))
+vi.mock('@/api/groupCacheTest', async () => {
+  const actual = await vi.importActual<typeof import('@/api/groupCacheTest')>('@/api/groupCacheTest')
+  return { ...actual, executeCacheRun: mocks.execute, reconcileCacheBills: mocks.reconcile }
+})
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('file-saver', () => ({ saveAs: mocks.saveAs }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
@@ -25,6 +28,20 @@ const mountView = () => mount(GroupCacheTestView, { global: { stubs: {
   AppLayout: { template: '<main><slot /></main>' },
   RouterLink: { template: '<a><slot /></a>' }
 } } })
+function round(overrides: Partial<CacheRound> & Pick<CacheRound, 'index'>): CacheRound {
+  return {
+    status: 'completed', startedAt: '2026-10-12T00:00:00Z', requestId: null, tokens: null,
+    responseModel: 'test-model', serviceTier: null, firstTextMs: 5, durationMs: 7,
+    error: null, httpStatus: 200, bill: null, billingState: 'pending', ...overrides
+  }
+}
+function historyRun(id: string, rounds: CacheRound[]): CacheTestRun {
+  return {
+    version: 1, id, startedAt: '2026-10-12T00:00:00Z', finishedAt: '2026-10-12T00:01:00Z',
+    status: 'failed', groupId: 7, groupName: 'History group', keyId: 10, keyName: 'Old key',
+    settings: { ...DEFAULT_CACHE_SETTINGS, model: 'test-model' }, rounds
+  }
+}
 async function configure() {
   await flushPromises()
   await wrapper.get('[data-testid="cache-group"]').setValue(7)
@@ -128,6 +145,44 @@ describe('GroupCacheTestView', () => {
     expect(wrapper.text()).toContain('admin.groupCacheTest.billing.pending')
     expect(wrapper.text()).not.toContain('$0.000000')
     await wrapper.get('[data-testid="cache-reconcile"]').trigger('click'); await flushPromises()
+    expect(mocks.reconcile).toHaveBeenCalledTimes(1)
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.getKey).not.toHaveBeenCalled()
+  })
+  it('marks uncorrelated rounds unavailable and disables meaningless reconciliation', async () => {
+    saveCacheHistory(1, [historyRun('uncorrelated', [
+      round({ index: 1, requestId: null, billingState: 'unavailable' }),
+      round({ index: 2, status: 'failed', requestId: null, billingState: 'unavailable', error: 'network', httpStatus: null })
+    ])])
+    wrapper = mountView(); await flushPromises()
+    await wrapper.get('li button').trigger('click')
+
+    expect(wrapper.text()).toContain('admin.groupCacheTest.billing.unavailable')
+    expect(wrapper.text()).not.toContain('admin.groupCacheTest.billing.pending')
+    expect(wrapper.text()).not.toContain('admin.groupCacheTest.pendingHint')
+    expect(wrapper.find('[data-testid="cache-unavailable-hint"]').exists()).toBe(true)
+
+    const button = wrapper.get('[data-testid="cache-reconcile"]')
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click'); await flushPromises()
+    await button.trigger('click'); await flushPromises()
+    expect(mocks.reconcile).not.toHaveBeenCalled()
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.getKey).not.toHaveBeenCalled()
+  })
+  it('keeps failed rounds with a correlation ID retryable and reports uncorrelated ones separately', async () => {
+    saveCacheHistory(1, [historyRun('mixed', [
+      round({ index: 1, requestId: null, billingState: 'unavailable' }),
+      round({ index: 2, status: 'failed', requestId: 'client:retry', billingState: 'error', error: 'http', httpStatus: 502 })
+    ])])
+    wrapper = mountView(); await flushPromises()
+    await wrapper.get('li button').trigger('click')
+
+    expect(wrapper.find('[data-testid="cache-unavailable-hint"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('admin.groupCacheTest.pendingHint')
+    const button = wrapper.get('[data-testid="cache-reconcile"]')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click'); await flushPromises()
     expect(mocks.reconcile).toHaveBeenCalledTimes(1)
     expect(mocks.execute).not.toHaveBeenCalled()
     expect(mocks.getKey).not.toHaveBeenCalled()

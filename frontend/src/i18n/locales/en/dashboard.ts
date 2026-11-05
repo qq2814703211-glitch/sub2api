@@ -177,6 +177,7 @@ export default {
       preset30d: 'Last 30 days',
       range: '{start} to {end} (timezone {timezone})',
       today: 'Today',
+      noTodayRecord: 'No usage recorded today',
       rangeTotal: 'Selected range',
       requests: 'requests',
       tokens: 'tokens',
