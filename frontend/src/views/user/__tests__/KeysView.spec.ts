@@ -597,6 +597,22 @@ describe('user KeysView column settings', () => {
     expect(wrapper.get('[data-test="usage-1"]').text()).not.toContain('$0.0000')
   })
 
+  it('submits the edited fallback order with its matching primary group', async () => {
+    const key: ApiKey = { ...createApiKey(), group_id: 1, group_ids: [1, 2, 3] }
+    listKeys.mockResolvedValueOnce({ items: [key], total: 1, pages: 1 })
+    updateKey.mockResolvedValue({ ...key, group_id: 3, group_ids: [3, 1, 2] })
+    const wrapper = await mountView()
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    const editor = wrapper.findComponent({ name: 'OrderedGroupRoutesEditor' })
+    expect(editor.props('modelValue')).toEqual([1, 2, 3])
+    editor.vm.$emit('update:modelValue', [3, 1, 2])
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ group_id: 3, group_ids: [3, 1, 2] }))
+    wrapper.unmount()
+  })
+
   it('uses cached public settings from the app store for endpoints', async () => {
     fetchPublicSettings.mockResolvedValue({ api_base_url: 'https://cached.example.test', custom_endpoints: [] })
     const wrapper = await mountView()

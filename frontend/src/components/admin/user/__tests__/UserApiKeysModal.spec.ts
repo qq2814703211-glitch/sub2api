@@ -3,15 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import UserApiKeysModal from '../UserApiKeysModal.vue'
 import type { AdminUser } from '@/types'
 
-const { getKeys } = vi.hoisted(() => ({ getKeys: vi.fn() }))
+const { getKeys, updateRoutes, getGroups } = vi.hoisted(() => ({ getKeys: vi.fn(), updateRoutes: vi.fn(), getGroups: vi.fn() }))
 vi.mock('@/api/admin', () => ({ adminAPI: {
-  users: { getUserApiKeys: getKeys }, groups: { getAll: vi.fn().mockResolvedValue([]) },
+  users: { getUserApiKeys: getKeys }, groups: { getAll: getGroups }, apiKeys: { updateApiKeyRoutes: updateRoutes },
 } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
 vi.mock('@/utils/format', () => ({ formatDateTime: (value: string) => value }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
-beforeEach(() => { getKeys.mockReset(); vi.spyOn(console, 'error').mockImplementation(() => {}) })
+beforeEach(() => { getKeys.mockReset(); updateRoutes.mockReset(); getGroups.mockResolvedValue([]); vi.spyOn(console, 'error').mockImplementation(() => {}) })
 afterEach(() => vi.restoreAllMocks())
 function deferred() {
   let resolve!: (value: unknown) => void
@@ -76,5 +76,31 @@ describe('user API key loading', () => {
     expect(getKeys).toHaveBeenLastCalledWith(2)
     expect(wrapper.text()).toContain('second-user-key')
     expect(wrapper.text()).not.toContain('first-user-key')
+  })
+  it('saves ordered fallback groups and preserves the primary contract', async () => {
+    getKeys.mockResolvedValueOnce(keys(1, 'route-key'))
+    updateRoutes.mockResolvedValue({ api_key: { ...keys(1, 'route-key').items[0], group_id: 3, group_ids: [3, 2] } })
+    const wrapper = await open(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'keys.routes.edit')!.trigger('click')
+    wrapper.findComponent({ name: 'OrderedGroupRoutesEditor' }).vm.$emit('update:modelValue', [3, 2])
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'common.save')!.trigger('click')
+    await flushPromises()
+    expect(updateRoutes).toHaveBeenCalledWith(1, [3, 2])
+    expect(wrapper.findComponent({ name: 'OrderedGroupRoutesEditor' }).exists()).toBe(false)
+  })
+  it('shows save errors and ignores results after changing user', async () => {
+    getKeys.mockResolvedValue(keys(1, 'route-key'))
+    updateRoutes.mockRejectedValueOnce(new Error('routes rejected'))
+    const wrapper = await open(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'keys.routes.edit')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === 'common.save')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('routes rejected')
+    const late = deferred(); updateRoutes.mockReturnValueOnce(late.promise)
+    await wrapper.findAll('button').find(button => button.text() === 'common.save')!.trigger('click')
+    await switchUser(wrapper); await flushPromises()
+    late.resolve({ api_key: { ...keys(1, 'stale-edited-key').items[0], group_ids: [9] } }); await flushPromises()
+    expect(wrapper.text()).not.toContain('stale-edited-key')
   })
 })
