@@ -175,12 +175,16 @@ func (f *videoDBFixture) assertBill(t *testing.T, expected float64) {
 // A separate OS process reloads SQL only, starts the real lifecycle worker and
 // completes the task without any client poll or the original pricing service.
 func TestVideoDBRestartNoClientPoll(t *testing.T) {
+	if os.Getenv("VIDEO_BILLING_RESTART_FIXTURE") != "" {
+		runVideoDBRestartChild(t)
+		return
+	}
 	f := newVideoDBFixture(t, "seedance")
 	svc, in, _ := f.service(t, "")
 	j := f.begin(t, svc, in, "seedance:restart-task")
 	// Persisted price is $2.5/M; the restarted process has a conflicting $99/M card.
 	values := fmt.Sprintf("%d,%d,%d,%d", f.user, f.key, f.account, f.group)
-	command := exec.Command(os.Args[0], "-test.run=^TestVideoDBRestartChild$", "-test.v")
+	command := exec.Command(os.Args[0], "-test.run=^TestVideoDBRestartNoClientPoll$", "-test.v")
 	command.Env = append(os.Environ(), "VIDEO_BILLING_RESTART_FIXTURE="+values)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -193,11 +197,9 @@ func TestVideoDBRestartNoClientPoll(t *testing.T) {
 	require.NoError(t, svc.ObserveVideoBilling(context.Background(), j, &service.OpenAIForwardResult{VideoStatus: "succeeded", VideoUsageKnown: true, Usage: service.OpenAIUsage{OutputTokens: 12345}}))
 	f.assertBill(t, 0.0308625)
 }
-func TestVideoDBRestartChild(t *testing.T) {
+func runVideoDBRestartChild(t *testing.T) {
 	values := os.Getenv("VIDEO_BILLING_RESTART_FIXTURE")
-	if values == "" {
-		return
-	}
+	require.NotEmpty(t, values)
 	f := &videoDBFixture{db: videoDB(t), provider: "seedance", model: "seedance-test"}
 	_, err := fmt.Sscanf(values, "%d,%d,%d,%d", &f.user, &f.key, &f.account, &f.group)
 	require.NoError(t, err)
