@@ -76,9 +76,16 @@
               class="mt-1 font-mono text-xl font-semibold tabular-nums text-gray-900 dark:text-white"
               data-testid="key-usage-today-cost"
             >
-              {{ formatUsd(todayPoint?.actual_cost) }}
+              {{ todayCost ?? '—' }}
             </div>
-            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p
+              v-if="!todayPoint"
+              class="mt-1 text-xs text-gray-500 dark:text-gray-400"
+              data-testid="key-usage-today-empty"
+            >
+              {{ t('keys.usageDialog.noTodayRecord') }}
+            </p>
+            <div v-else class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ formatNumber(todayPoint?.requests) }} {{ t('keys.usageDialog.requests') }} ·
               {{ formatNumber(todayPoint?.total_tokens) }} {{ t('keys.usageDialog.tokens') }}
             </div>
@@ -211,6 +218,12 @@ const totals = computed(() =>
 // range instead of the browser's possibly different local date.
 const todayPoint = computed(
   () => (data.value?.items ?? []).find((row) => row.date === data.value?.end_date) ?? null
+)
+
+// No row for today is not the same as a real zero charge. Only a present row with
+// an actual_cost of 0 may render "$0.0000"; a missing row renders a dash instead.
+const todayCost = computed(() =>
+  todayPoint.value?.actual_cost == null ? null : formatUsd(todayPoint.value.actual_cost)
 )
 
 const rangeText = computed(() =>

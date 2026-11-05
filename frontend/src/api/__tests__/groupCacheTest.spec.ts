@@ -1,7 +1,7 @@
 // Adapted from ranxi2001/sub2api @ 9620d315, licensed under LGPL-3.0-or-later.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { executeCacheRun, newCacheRound, parseCacheUsage, probeCacheRound, reconcileCacheBills } from '../groupCacheTest'
-import { DEFAULT_CACHE_SETTINGS, aggregateCacheTokens, billFromUsage, buildCachePrefix, buildCacheRequest, cacheHitRate, exportCacheRun, loadCacheHistory, saveCacheHistory, type CacheProtocol, type CacheTestRun } from '@/utils/groupCacheTest'
+import { DEFAULT_CACHE_SETTINGS, aggregateCacheTokens, billFromUsage, buildCachePrefix, buildCacheRequest, cacheHitRate, exportCacheRun, loadCacheHistory, saveCacheHistory, type CacheProtocol, type CacheRound, type CacheTestRun } from '@/utils/groupCacheTest'
 import type { AdminUsageLog } from '@/types'
 
 const { listUsage } = vi.hoisted(() => ({ listUsage: vi.fn() }))
@@ -165,6 +165,19 @@ describe('streamed probes', () => {
     expect(round.tokens).toBeNull()
     expect(round.billingState).toBe('unavailable')
   })
+  it('marks a failed round without a correlation ID unavailable and never resends it', async () => {
+    fetchMock.mockResolvedValue(new Response('SECRET', { status: 502 }))
+    const test = run()
+    await executeCacheRun(test, 'TEST_KEY', signal(), vi.fn())
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(test.rounds).toHaveLength(1)
+    expect(test.rounds[0].status).toBe('failed')
+    expect(test.rounds[0].error).toBe('http')
+    expect(test.rounds[0].httpStatus).toBe(502)
+    expect(test.rounds[0].requestId).toBeNull()
+    expect(test.rounds[0].billingState).toBe('unavailable')
+    expect(exportCacheRun(test)).not.toContain('SECRET')
+  })
   it('cancels during a stream without launching subsequent rounds', async () => {
     let streamCanceled = false
     fetchMock.mockResolvedValue(new Response(new ReadableStream({ cancel() { streamCanceled = true } }), { headers: { 'Content-Type': 'text/event-stream' } }))
@@ -244,6 +257,44 @@ describe('billing and history', () => {
     await vi.runAllTimersAsync(); await retry
     expect(test.rounds[0].billingState).toBe('error')
     expect(test.rounds[0].bill).toBeNull()
+  })
+  it('queries only pending or failed rounds that still have a correlation ID', async () => {
+    vi.useFakeTimers()
+    const test = run()
+    const matched = { ...newCacheRound(1), status: 'completed' as const, requestId: 'client:matched', billingState: 'matched' as const, bill: billFromUsage(usageLog()) }
+    const uncorrelated = { ...newCacheRound(2), status: 'completed' as const, requestId: null, billingState: 'unavailable' as const }
+    const failedWithId = { ...newCacheRound(3), status: 'failed' as const, requestId: 'client:retry', billingState: 'error' as const, error: 'http' as const }
+    test.rounds = [matched, uncorrelated, failedWithId]
+    listUsage.mockResolvedValue({ items: [] })
+    const pending = reconcileCacheBills(test, 1, signal(), vi.fn())
+    await vi.runAllTimersAsync(); await pending
+    expect(listUsage).toHaveBeenCalledTimes(4)
+    expect(listUsage.mock.calls.every(call => (call[0] as { request_id?: string }).request_id === 'client:retry')).toBe(true)
+    expect(matched.billingState).toBe('matched')
+    expect(uncorrelated.billingState).toBe('unavailable')
+    expect(failedWithId.billingState).toBe('pending')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+  it('never queries or resends rounds that never received a correlation ID', async () => {
+    vi.useFakeTimers()
+    const test = run()
+    test.rounds = [
+      { ...newCacheRound(1), status: 'completed' as const, requestId: null, billingState: 'pending' as const },
+      { ...newCacheRound(2), status: 'failed' as const, requestId: null, billingState: 'unavailable' as const, error: 'network' as const }
+    ]
+    const changed = vi.fn()
+    let pending = reconcileCacheBills(test, 1, signal(), changed)
+    await vi.runAllTimersAsync(); await pending
+    expect(listUsage).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(test.rounds.map((round: CacheRound) => round.billingState)).toEqual(['unavailable', 'unavailable'])
+    expect(changed).toHaveBeenCalled()
+
+    // Reconciliation is repeatable without cost: a second pass still reads nothing.
+    pending = reconcileCacheBills(test, 1, signal(), changed)
+    await vi.runAllTimersAsync(); await pending
+    expect(listUsage).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
   it('never writes secrets or nested usage objects and scopes history to a user', () => {
     const test = run()
