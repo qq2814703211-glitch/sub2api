@@ -746,8 +746,7 @@ func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, 
 }
 
 func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
-	key := apiKeySlotKey(apiKeyID)
-	return c.rdb.ZRem(ctx, key, requestID).Err()
+	return releaseFencedAPIKeySlotScript.Run(ctx, c.rdb, []string{apiKeySlotKey(apiKeyID), apiKeyWaitClosedKey(apiKeyID)}, requestID, c.slotTTLSeconds).Err()
 }
 
 func (c *concurrencyCache) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {

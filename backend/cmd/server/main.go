@@ -190,6 +190,9 @@ func runMainServer() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	if app.Concurrency != nil {
+		app.Concurrency.StopAPIKeyQueue()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

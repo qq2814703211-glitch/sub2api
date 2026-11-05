@@ -173,6 +173,9 @@ func (u *normalForwardHandlerUpstream) snapshot() []normalForwardHandlerAttempt 
 }
 
 func newNormalForwardHandlerFixture(t *testing.T, postOutput bool) (*gin.Engine, *normalForwardHandlerUpstream, *normalHandlerBillingSink, *normalHandlerUsageSink, *normalForwardHandlerAccounts) {
+	return newNormalForwardHandlerFixtureWithAdmission(t, postOutput, nil)
+}
+func newNormalForwardHandlerFixtureWithAdmission(t *testing.T, postOutput bool, concurrency *service.ConcurrencyService) (*gin.Engine, *normalForwardHandlerUpstream, *normalHandlerBillingSink, *normalHandlerUsageSink, *normalForwardHandlerAccounts) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{RunMode: config.RunModeStandard}
@@ -194,10 +197,19 @@ func newNormalForwardHandlerFixture(t *testing.T, postOutput bool) (*gin.Engine,
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(repo, usage, ledger, ledger, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(&normalForwardHandlerSlots{}), billing, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
+	if concurrency != nil {
+		h.concurrencyHelper = NewConcurrencyHelper(concurrency, SSEPingFormatNone, 0)
+	}
 	key := &service.APIKey{ID: 902, GroupID: &groupID, User: &service.User{ID: 903, Status: service.StatusActive, Balance: 100}, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1}}
 	require.NoError(t, gateway.BindOpenAIHTTPResponseOwner(context.Background(), groupID, "resp_normal_handler_previous", key.User.ID, key.ID))
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		if concurrency != nil {
+			ctx, cancel := service.WithAPIKeyAdmissionOwner(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(ctx)
+			key.ConcurrencyLimit = 1
+		}
 		c.Set(string(middleware.ContextKeyAPIKey), key)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: key.User.ID, Concurrency: 1})
 		upstream.ingressSessionHash = gateway.GenerateSessionHash(c, nil)
