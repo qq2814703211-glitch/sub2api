@@ -696,7 +696,7 @@ type GatewayFailureReason string
 // source-compatible and preserves their legacy retry-next-account behavior.
 type UpstreamFailoverError struct {
 	StatusCode               int
-	CreateRequestRejected bool // definite upstream rejection; async create was not accepted
+	CreateRequestRejected    bool          // definite upstream rejection; async create was not accepted
 	ResponseBody             []byte        // 上游响应体，用于错误透传规则匹配
 	ResponseHeaders          http.Header   // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
 	ForceCacheBilling        bool          // Antigravity 粘性会话切换时设为 true
