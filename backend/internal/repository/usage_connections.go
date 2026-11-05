@@ -6,63 +6,78 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
 
-// RecordConnectionTrace never blocks the response on database I/O. The queue,
-// payload, retries and retention cleanup are bounded and diagnostics-only.
+// RecordConnectionTrace performs no database I/O on the business goroutine.
 func (r *usageLogRepository) RecordConnectionTrace(record service.ConnectionTrace) {
 	if r.db == nil || !r.connectionEnabled.Load() {
 		return
 	}
-	r.startConnectionWriter()
-	select {
-	case <-r.connectionDone:
+	r.connectionMu.Lock()
+	defer r.connectionMu.Unlock()
+	if !r.connectionEnabled.Load() {
 		return
+	}
+	if r.connectionCancel == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		r.connectionCancel = cancel
+		r.connectionQueue = make(chan service.ConnectionTrace, 256)
+		r.connectionDone = make(chan struct{})
+		go r.runConnectionWriter(ctx, r.connectionQueue, r.connectionDone)
+	}
+	select {
 	case r.connectionQueue <- record:
 	default:
-		logger.LegacyPrintf("connection_diagnostics", "queue full; trace dropped")
+		r.connectionDropped.Add(1)
 	}
 }
 
-func (r *usageLogRepository) startConnectionWriter() {
-	r.connectionOnce.Do(func() {
-		r.connectionQueue = make(chan service.ConnectionTrace, 256)
-		r.connectionDone = make(chan struct{})
-		go r.runConnectionWriter()
-	})
-}
-
-func (r *usageLogRepository) runConnectionWriter() {
+func (r *usageLogRepository) runConnectionWriter(ctx context.Context, queue <-chan service.ConnectionTrace, done chan<- struct{}) {
+	defer close(done)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
+	r.cleanupConnectionTraces(ctx)
 	for {
-		select {
-		case <-r.connectionDone:
+		if ctx.Err() != nil {
+			r.connectionDropped.Add(uint64(len(queue)))
 			return
-		case record := <-r.connectionQueue:
-			for attempt := 0; attempt < 3; attempt++ {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				err := r.writeConnectionTrace(ctx, record)
+		}
+		select {
+		case <-ctx.Done():
+			r.connectionDropped.Add(uint64(len(queue)))
+			return
+		case record := <-queue:
+			if ctx.Err() != nil {
+				r.connectionDropped.Add(uint64(len(queue) + 1))
+				return
+			}
+			var err error
+			for attempt := 0; attempt < 3 && ctx.Err() == nil; attempt++ {
+				writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				err = r.writeConnectionTrace(writeCtx, record)
 				cancel()
 				if err == nil {
 					break
 				}
-				if attempt == 2 {
-					logger.LegacyPrintf("connection_diagnostics", "trace persistence failed")
-				}
+			}
+			if err != nil {
+				r.connectionWriteFailures.Add(1)
 			}
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
-    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '30 days' LIMIT 10000)`)
-			cancel()
-			if err != nil {
-				logger.LegacyPrintf("connection_diagnostics", "retention failed")
-			}
+			r.cleanupConnectionTraces(ctx)
 		}
+	}
+}
+
+func (r *usageLogRepository) cleanupConnectionTraces(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
+ (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '30 days' LIMIT 10000)`)
+	if err != nil && ctx.Err() == nil {
+		r.connectionRetentionFailures.Add(1)
 	}
 }
 
@@ -259,12 +274,24 @@ func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records 
 	return tx.Commit()
 }
 
-func (r *usageLogRepository) StopConnectionDiagnostics() {
-	r.connectionEnabled.Store(false)
-	if r.connectionDone == nil { return }
-	r.connectionStop.Do(func() { close(r.connectionDone) })
+func (r *usageLogRepository) StopConnectionDiagnostics() { r.SetConnectionDiagnosticsEnabled(false) }
+
+// Disable cancels in-flight SQL and joins the diagnostics worker before returning.
+func (r *usageLogRepository) SetConnectionDiagnosticsEnabled(enabled bool) {
+	r.connectionMu.Lock()
+	defer r.connectionMu.Unlock()
+	r.connectionEnabled.Store(enabled)
+	if !enabled && r.connectionCancel != nil {
+		r.connectionCancel()
+		<-r.connectionDone
+		r.connectionCancel = nil
+		r.connectionQueue = nil
+		r.connectionDone = nil
+	}
 }
 
-func (r *usageLogRepository) SetConnectionDiagnosticsEnabled(enabled bool) {
-	r.connectionEnabled.Store(enabled)
+func (r *usageLogRepository) ConnectionDiagnosticsStats() service.ConnectionDiagnosticsStats {
+	r.connectionMu.Lock()
+	defer r.connectionMu.Unlock()
+	return service.ConnectionDiagnosticsStats{Dropped: r.connectionDropped.Load(), WriteFailures: r.connectionWriteFailures.Load(), RetentionFailures: r.connectionRetentionFailures.Load(), WorkerRunning: r.connectionCancel != nil, QueueDepth: len(r.connectionQueue)}
 }
