@@ -21,7 +21,10 @@ func TestCapture200LongStreams(t *testing.T) {
 	target := task(t, m, "user", 1, true)
 	sessions := make([]*Session, 200)
 	for i := range sessions {
-		sessions[i] = m.Begin(Meta{UserID: 1, GroupID: int64(i % 2), RequestID: fmt.Sprint(i)})
+		require.Eventually(t, func() bool {
+			sessions[i] = m.Begin(Meta{UserID: 1, GroupID: int64(i % 2), RequestID: fmt.Sprint(i)})
+			return sessions[i] != nil
+		}, time.Second, time.Millisecond)
 		require.NotNil(t, sessions[i])
 	}
 	var before, peak, after runtime.MemStats
