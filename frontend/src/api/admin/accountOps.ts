@@ -75,6 +75,8 @@ export interface AccountOpsConfig {
     balance_low: boolean;
     weekly_quota: boolean;
     cooldown_minutes: number;
+    groups_initialized?: boolean;
+    ungrouped_account_ids?: number[];
     webhooks?: AccountOpsWebhook[];
     groups?: Array<{
         id: string;
@@ -182,10 +184,10 @@ export async function getAccountOpsThresholdAccounts(signal?: AbortSignal): Prom
     }>('/admin/account-ops/threshold-accounts', { signal });
     return data.items ?? [];
 }
-export async function getAccountOpsThresholdGroups(): Promise<AccountOpsGroup[]> {
+export async function getAccountOpsThresholdGroups(signal?: AbortSignal): Promise<AccountOpsGroup[]> {
     const { data } = await apiClient.get<{
         groups: AccountOpsGroup[];
-    }>('/admin/account-ops/groups');
+    }>('/admin/account-ops/groups', { signal });
     return (data.groups ?? []).map(group => ({
         ...group,
         account_ids: Array.isArray(group.account_ids) ? [...group.account_ids] : [],
