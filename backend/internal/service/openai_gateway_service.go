@@ -509,12 +509,10 @@ type OpenAIGatewayService struct {
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
 	openAIModelsCache                   openAIModelsCache
-	// openaiCompatSessionResponses / openaiCompatAnthropicDigestSessions
-	// 只在命中时惰性删除。写入计数器每 256 次真实写入清扫一次已过期的废弃项，
-	// 见 openai_compat_retention.go。不改变条目自身的 sticky TTL。
-	openaiCompatSessionResponses        sync.Map
+	// Bounded cache retains the existing sticky TTL and refresh-safe deletion.
+	openaiCompatSessionResponses        sessionMemoryCache
+	openaiCompatAnthropicDigestSessions sessionMemoryCache
 	openaiCompatSessionResponseWrites   atomic.Uint64
-	openaiCompatAnthropicDigestSessions sync.Map
 	openaiCompatDigestSessionWrites     atomic.Uint64
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，
 	// 记录最近一次向该会话下发 x-codex-turn-state 的铸造账号，供出站守卫
@@ -714,10 +712,15 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 	}
 }
 
-// CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
+// CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池、后台 worker 和会话缓存清理 timer。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
-	if s != nil && s.openaiWSPool != nil {
+	if s == nil {
+		return
+	}
+	s.openaiCompatSessionResponses.Close()
+	s.openaiCompatAnthropicDigestSessions.Close()
+	if s.openaiWSPool != nil {
 		s.openaiWSPool.Close()
 	}
 }

@@ -11,7 +11,35 @@ import (
 	"time"
 )
 
-func retainedEntries(m *sync.Map) int {
+func storeCompatRetentionFixture(c *sessionMemoryCache, key string, value any) {
+	v, ok := value.(sessionMemoryValue)
+	if !ok {
+		c.Store(key, value)
+		return
+	}
+	expires := v.sessionExpiresAt()
+	if expires.IsZero() || expires.After(time.Now()) {
+		c.Store(key, value)
+		return
+	}
+	switch b := v.(type) {
+	case openAICompatSessionResponseBinding:
+		b.ExpiresAt = time.Now().Add(time.Hour)
+		c.Store(key, b)
+	case openAICompatAnthropicDigestBinding:
+		b.ExpiresAt = time.Now().Add(time.Hour)
+		c.Store(key, b)
+	}
+	c.mu.Lock()
+	if element := c.entries[key]; element != nil {
+		entry := element.Value.(*sessionMemoryEntry)
+		entry.value = v
+		entry.expiresAt = expires
+	}
+	c.mu.Unlock()
+}
+
+func retainedEntries(m *sessionMemoryCache) int {
 	n := 0
 	m.Range(func(_, _ any) bool {
 		n++
@@ -25,8 +53,8 @@ func TestCompatAbandonedSessionsExpireOnNewTraffic(t *testing.T) {
 	account := &Account{ID: 1}
 	expired := time.Now().Add(-time.Hour)
 	for i := 0; i < 1024; i++ {
-		s.openaiCompatSessionResponses.Store(fmt.Sprintf("abandoned-%d", i), openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
-		s.openaiCompatAnthropicDigestSessions.Store(fmt.Sprintf("abandoned-%d", i), openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: expired})
+		storeCompatRetentionFixture(&s.openaiCompatSessionResponses, fmt.Sprintf("abandoned-%d", i), openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
+		storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, fmt.Sprintf("abandoned-%d", i), openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: expired})
 	}
 	for i := 0; i < 512; i++ {
 		s.bindOpenAICompatSessionResponseID(context.Background(), nil, account, "active", "response")
@@ -43,14 +71,14 @@ func TestCompatAbandonedSessionsExpireOnNewTraffic(t *testing.T) {
 func TestCompatRetentionSweepKeepsLiveAndZeroExpiry(t *testing.T) {
 	s := &OpenAIGatewayService{}
 	now := time.Now()
-	s.openaiCompatSessionResponses.Store("expired", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: now.Add(-time.Second)})
-	s.openaiCompatSessionResponses.Store("live", openAICompatSessionResponseBinding{ResponseID: "keep", ExpiresAt: now.Add(time.Hour)})
-	s.openaiCompatSessionResponses.Store("forever", openAICompatSessionResponseBinding{ResponseID: "zero"})
-	s.openaiCompatSessionResponses.Store("bad", "not-a-binding")
-	s.openaiCompatAnthropicDigestSessions.Store("expired", openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: now.Add(-time.Second)})
-	s.openaiCompatAnthropicDigestSessions.Store("live", openAICompatAnthropicDigestBinding{PromptCacheKey: "keep", ExpiresAt: now.Add(time.Hour)})
-	s.openaiCompatAnthropicDigestSessions.Store("forever", openAICompatAnthropicDigestBinding{PromptCacheKey: "zero"})
-	s.openaiCompatAnthropicDigestSessions.Store("bad", 42)
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "expired", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: now.Add(-time.Second)})
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "live", openAICompatSessionResponseBinding{ResponseID: "keep", ExpiresAt: now.Add(time.Hour)})
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "forever", openAICompatSessionResponseBinding{ResponseID: "zero"})
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "bad", "not-a-binding")
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, "expired", openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: now.Add(-time.Second)})
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, "live", openAICompatAnthropicDigestBinding{PromptCacheKey: "keep", ExpiresAt: now.Add(time.Hour)})
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, "forever", openAICompatAnthropicDigestBinding{PromptCacheKey: "zero"})
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, "bad", 42)
 
 	s.sweepOpenAICompatSessionResponses()
 	s.sweepOpenAICompatDigestSessions()
@@ -85,17 +113,17 @@ func TestCompatRetentionCadenceAndStickyTTL(t *testing.T) {
 	s := &OpenAIGatewayService{}
 	account := &Account{ID: 1}
 	expired := time.Now().Add(-time.Hour)
-	s.openaiCompatSessionResponses.Store("abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
-	s.openaiCompatAnthropicDigestSessions.Store("abandoned", openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: expired})
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, "abandoned", openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: expired})
 
 	for i := 0; i < int(openAICompatRetentionSweepEvery-1); i++ {
 		s.bindOpenAICompatSessionResponseID(context.Background(), nil, account, "active", "response")
 		s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, 0, "active", "prompt", "")
 	}
-	if _, ok := s.openaiCompatSessionResponses.Load("abandoned"); !ok {
+	if s.openaiCompatSessionResponses.ItemCount() != 2 {
 		t.Fatal("response sweep ran before the 256th write")
 	}
-	if _, ok := s.openaiCompatAnthropicDigestSessions.Load("abandoned"); !ok {
+	if s.openaiCompatAnthropicDigestSessions.ItemCount() != 2 {
 		t.Fatal("digest sweep ran before the 256th write")
 	}
 
@@ -135,7 +163,7 @@ func TestCompatRetentionOtherResponseWritesSweep(t *testing.T) {
 
 	t.Run("disable", func(t *testing.T) {
 		s := &OpenAIGatewayService{}
-		s.openaiCompatSessionResponses.Store("abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
+		storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
 		s.openaiCompatSessionResponseWrites.Store(openAICompatRetentionSweepEvery - 1)
 		s.disableOpenAICompatSessionContinuation(ctx, nil, account, "active")
 		if _, ok := s.openaiCompatSessionResponses.Load("abandoned"); ok {
@@ -150,7 +178,7 @@ func TestCompatRetentionOtherResponseWritesSweep(t *testing.T) {
 			ResponseID: "resp",
 			ExpiresAt:  time.Now().Add(time.Hour),
 		})
-		s.openaiCompatSessionResponses.Store("abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
+		storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
 		s.openaiCompatSessionResponseWrites.Store(openAICompatRetentionSweepEvery - 1)
 		s.deleteOpenAICompatSessionResponseID(ctx, nil, account, "active")
 		if _, ok := s.openaiCompatSessionResponses.Load("abandoned"); ok {
@@ -160,7 +188,7 @@ func TestCompatRetentionOtherResponseWritesSweep(t *testing.T) {
 
 	t.Run("turn-state", func(t *testing.T) {
 		s := &OpenAIGatewayService{}
-		s.openaiCompatSessionResponses.Store("abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
+		storeCompatRetentionFixture(&s.openaiCompatSessionResponses, "abandoned", openAICompatSessionResponseBinding{ResponseID: "old", ExpiresAt: expired})
 		s.openaiCompatSessionResponseWrites.Store(openAICompatRetentionSweepEvery - 1)
 		s.bindOpenAICompatSessionTurnState(ctx, nil, account, "active", "blob")
 		if _, ok := s.openaiCompatSessionResponses.Load("abandoned"); ok {
@@ -179,25 +207,25 @@ func TestCompatRetentionCompareDeleteKeepsRefresh(t *testing.T) {
 	responseKey := openAICompatSessionResponseKey(nil, account, "active")
 	stale := openAICompatSessionResponseBinding{ResponseID: "stale", ExpiresAt: time.Now().Add(-time.Hour)}
 	fresh := openAICompatSessionResponseBinding{ResponseID: "fresh", TurnState: "kept", ExpiresAt: time.Now().Add(2 * time.Hour)}
-	s.openaiCompatSessionResponses.Store(responseKey, stale)
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, responseKey, stale)
 
 	digestKey := openAICompatAnthropicDigestNamespace(account, 0) + "chain"
 	staleDigest := openAICompatAnthropicDigestBinding{PromptCacheKey: "old", ExpiresAt: time.Now().Add(-time.Hour)}
 	freshDigest := openAICompatAnthropicDigestBinding{PromptCacheKey: "new", ExpiresAt: time.Now().Add(2 * time.Hour)}
-	s.openaiCompatAnthropicDigestSessions.Store(digestKey, staleDigest)
+	storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, digestKey, staleDigest)
 
-	hook := openAICompatRetentionDeleteHook(func(m *sync.Map, key, observed any) {
+	hook := openAICompatRetentionDeleteHook(func(m *sessionMemoryCache, key, observed any) {
 		switch {
 		case m == &s.openaiCompatSessionResponses && key == responseKey:
 			if observed != (any)(stale) {
 				t.Errorf("response sweep observed %+v", observed)
 			}
-			m.Store(key, fresh)
+			m.Store(key.(string), fresh)
 		case m == &s.openaiCompatAnthropicDigestSessions && key == digestKey:
 			if observed != (any)(staleDigest) {
 				t.Errorf("digest sweep observed %+v", observed)
 			}
-			m.Store(key, freshDigest)
+			m.Store(key.(string), freshDigest)
 		}
 	})
 	openAICompatRetentionBeforeCompareDelete.Store(&hook)
@@ -222,12 +250,12 @@ func TestCompatRetentionCompareDeleteKeepsRefresh(t *testing.T) {
 	}
 
 	openAICompatRetentionBeforeCompareDelete.Store(nil)
-	readHook := openAICompatRetentionDeleteHook(func(m *sync.Map, key, _ any) {
+	readHook := openAICompatRetentionDeleteHook(func(m *sessionMemoryCache, key, _ any) {
 		if m == &s.openaiCompatSessionResponses && key == responseKey {
-			m.Store(key, fresh)
+			m.Store(key.(string), fresh)
 		}
 	})
-	s.openaiCompatSessionResponses.Store(responseKey, stale)
+	storeCompatRetentionFixture(&s.openaiCompatSessionResponses, responseKey, openAICompatSessionResponseBinding{ExpiresAt: time.Now().Add(time.Hour)})
 	openAICompatRetentionBeforeCompareDelete.Store(&readHook)
 	if id := s.getOpenAICompatSessionResponseID(context.Background(), nil, account, "active"); id != "" {
 		t.Fatalf("stale read returned %q", id)
@@ -252,8 +280,8 @@ func TestCompatRetentionConcurrentRefreshSurvivesSweep(t *testing.T) {
 			for n := 0; n < iters; n++ {
 				stale := openAICompatSessionResponseBinding{ResponseID: "stale", ExpiresAt: time.Now().Add(-time.Minute)}
 				fresh := openAICompatSessionResponseBinding{ResponseID: fmt.Sprintf("fresh-%d", n), ExpiresAt: time.Now().Add(time.Hour)}
-				s.openaiCompatSessionResponses.Store(key, stale)
-				s.openaiCompatSessionResponses.Store(key, fresh)
+				storeCompatRetentionFixture(&s.openaiCompatSessionResponses, key, stale)
+				storeCompatRetentionFixture(&s.openaiCompatSessionResponses, key, fresh)
 				s.sweepOpenAICompatSessionResponses()
 				raw, ok := s.openaiCompatSessionResponses.Load(key)
 				if !ok {
@@ -272,8 +300,8 @@ func TestCompatRetentionConcurrentRefreshSurvivesSweep(t *testing.T) {
 			for n := 0; n < iters; n++ {
 				stale := openAICompatAnthropicDigestBinding{PromptCacheKey: "stale", ExpiresAt: time.Now().Add(-time.Minute)}
 				fresh := openAICompatAnthropicDigestBinding{PromptCacheKey: fmt.Sprintf("fresh-%d", n), ExpiresAt: time.Now().Add(time.Hour)}
-				s.openaiCompatAnthropicDigestSessions.Store(key, stale)
-				s.openaiCompatAnthropicDigestSessions.Store(key, fresh)
+				storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, key, stale)
+				storeCompatRetentionFixture(&s.openaiCompatAnthropicDigestSessions, key, fresh)
 				s.sweepOpenAICompatDigestSessions()
 				raw, ok := s.openaiCompatAnthropicDigestSessions.Load(key)
 				if !ok {
@@ -294,7 +322,7 @@ func TestCompatRetentionConcurrentRefreshSurvivesSweep(t *testing.T) {
 	}
 }
 
-func TestCompatRetentionLifecycleHasNoBackgroundTimer(t *testing.T) {
+func TestCompatRetentionLifecycleCloseStopsCache(t *testing.T) {
 	before := runtime.NumGoroutine()
 	s := &OpenAIGatewayService{}
 	account := &Account{ID: 1}
@@ -304,12 +332,12 @@ func TestCompatRetentionLifecycleHasNoBackgroundTimer(t *testing.T) {
 	}
 	s.CloseOpenAIWSPool()
 	s.bindOpenAICompatSessionResponseID(context.Background(), nil, account, "after-close", "response")
-	if _, ok := s.openaiCompatSessionResponses.Load(openAICompatSessionResponseKey(nil, account, "after-close")); !ok {
-		t.Fatal("response bind failed after gateway close")
+	if _, ok := s.openaiCompatSessionResponses.Load(openAICompatSessionResponseKey(nil, account, "after-close")); ok {
+		t.Fatal("response cache accepted write after gateway close")
 	}
 	s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, 0, "after-close", "prompt", "")
-	if _, ok := s.openaiCompatAnthropicDigestSessions.Load(openAICompatAnthropicDigestNamespace(account, 0) + "after-close"); !ok {
-		t.Fatal("digest bind failed after gateway close")
+	if _, ok := s.openaiCompatAnthropicDigestSessions.Load(openAICompatAnthropicDigestNamespace(account, 0) + "after-close"); ok {
+		t.Fatal("digest cache accepted write after gateway close")
 	}
 	after := runtime.NumGoroutine()
 	if after > before+5 {
