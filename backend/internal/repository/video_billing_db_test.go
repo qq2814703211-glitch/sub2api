@@ -360,3 +360,18 @@ func TestVideoDBUnknownCreateNeverResentAndUpgradePreservesData(t *testing.T) {
 func repoListVideoTest(db *sql.DB) ([]*service.VideoBillingJob, error) {
 	return NewVideoBillingJobRepository(db).List(context.Background(), "", "", 50)
 }
+
+func TestVideoDBRejectedCreateCannotSubmitOrCharge(t *testing.T) {
+	f := newVideoDBFixture(t, "grok")
+	r := &videoBillingJobRepository{db:f.db}
+	j := &service.VideoBillingJob{ID:uuid.NewString(),UserID:f.user,APIKeyID:f.key,AccountID:f.account,GroupID:f.group,Provider:"grok"}
+	require.NoError(t,r.Create(context.Background(),j))
+	require.NoError(t,r.RejectCreate(context.Background(),j.ID))
+	require.ErrorIs(t,r.Submit(context.Background(),j.ID,"must-not-publish"),service.ErrVideoJobLeaseLost)
+	var state string
+	require.NoError(t,f.db.QueryRow(`SELECT state FROM video_billing_jobs WHERE id=$1`,j.ID).Scan(&state))
+	require.Equal(t,"failed",state)
+	var balance float64
+	require.NoError(t,f.db.QueryRow(`SELECT balance FROM users WHERE id=$1`,f.user).Scan(&balance))
+	require.Equal(t,100.0,balance)
+}
