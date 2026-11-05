@@ -402,6 +402,14 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 	if !ok {
 		return
 	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		geminiCachedContentConcurrencyError(c, keyErr, "API key")
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	svc := h.geminiCachedContentService
 	body, ok := readGeminiCachedContentBody(c)
 	if !ok {
@@ -524,6 +532,14 @@ func (h *GatewayHandler) GeminiCachedContentsDelete(c *gin.Context) {
 	apiKey, _, reqLog, ok := h.geminiCachedContentsPreamble(c, "handler.gemini_v1beta.cached_contents.delete")
 	if !ok {
 		return
+	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		geminiCachedContentConcurrencyError(c, keyErr, "API key")
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
 	}
 	svc := h.geminiCachedContentService
 	record, ok := h.resolveGeminiCachedContentOrWrite(c, reqLog, apiKey, c.Param("cacheID"))

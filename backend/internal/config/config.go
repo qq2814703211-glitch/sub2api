@@ -987,7 +987,13 @@ const (
 )
 
 // GatewayConfig API网关相关配置
+type APIKeyQueueConfig struct {
+	MaxWaiting     int `mapstructure:"max_waiting"`
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
+}
+
 type GatewayConfig struct {
+	APIKeyQueue APIKeyQueueConfig `mapstructure:"api_key_queue"`
 	// MinOutputTokens is the minimum max_output_tokens used when
 	// converting Chat Completions or Anthropic requests to Responses.
 	MinOutputTokens int `mapstructure:"min_output_tokens"`
@@ -2444,6 +2450,8 @@ func setDefaults() {
 	viper.SetDefault("idempotency.cleanup_batch_size", 500)
 
 	// Gateway
+	viper.SetDefault("gateway.api_key_queue.max_waiting", 0)
+	viper.SetDefault("gateway.api_key_queue.timeout_seconds", 30)
 	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
 	viper.SetDefault("gateway.grok_response_header_timeout", 120)
@@ -2733,6 +2741,9 @@ func setEnvReachableDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.Gateway.APIKeyQueue.MaxWaiting < 0 || c.Gateway.APIKeyQueue.MaxWaiting > 10000 || c.Gateway.APIKeyQueue.TimeoutSeconds < 0 || c.Gateway.APIKeyQueue.TimeoutSeconds > 3600 {
+		return fmt.Errorf("gateway.api_key_queue requires 0..10000 waiters and 0..3600 timeout seconds")
+	}
 	if c.Gateway.MinOutputTokens < 16 {
 		return fmt.Errorf("gateway.min_output_tokens must be at least 16")
 	}
