@@ -73,6 +73,7 @@
                 <p class="mt-3 cache-hint">{{ t('admin.groupCacheTest.billingHint') }}</p>
               </div>
               <p v-if="hasPendingBills" class="mt-4 text-sm text-amber-700 dark:text-amber-300">{{ t('admin.groupCacheTest.pendingHint') }}</p>
+              <p v-if="hasUnavailableBills" class="mt-2 text-sm text-amber-700 dark:text-amber-300" data-testid="cache-unavailable-hint">{{ t('admin.groupCacheTest.unavailableHint') }}</p>
             </template>
           </section>
           <section class="cache-panel" aria-labelledby="cache-history-title">
@@ -96,7 +97,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAuthStore } from '@/stores/auth'
 import * as groupsAPI from '@/api/admin/groups'
 import * as keysAPI from '@/api/keys'
-import { executeCacheRun, reconcileCacheBills } from '@/api/groupCacheTest'
+import { executeCacheRun, reconcileCacheBills, retryableBillRounds, uncorrelatedBillRounds } from '@/api/groupCacheTest'
 import { CACHE_ENDPOINTS, DEFAULT_CACHE_SETTINGS, aggregateCacheTokens, buildCachePrefix, cacheHitRate, createCacheTestId, exportCacheRun, loadCacheHistory, saveCacheHistory, validCacheSettings, type CacheTestRun } from '@/utils/groupCacheTest'
 import type { AdminGroup, ApiKey } from '@/types'
 
@@ -115,7 +116,10 @@ const repeatTokens = computed(() => aggregateCacheTokens(selected.value?.rounds.
 const comparableRounds = computed(() => selected.value?.rounds.slice(1).filter(r => r.status === 'completed' && cacheHitRate(r.tokens) !== null).length ?? 0)
 const matchedBills = computed(() => selected.value?.rounds.filter(r => r.bill?.actualCost != null).length ?? 0)
 const knownCost = computed(() => matchedBills.value ? selected.value!.rounds.reduce((sum, r) => sum + (r.bill?.actualCost ?? 0), 0) : null)
-const hasPendingBills = computed(() => selected.value?.rounds.some(r => !r.bill) ?? false)
+// Reconciliation is only possible for settled rounds that kept their correlation ID.
+// Uncorrelated rounds are reported separately and never counted as pending.
+const hasPendingBills = computed(() => retryableBillRounds(selected.value).length > 0)
+const hasUnavailableBills = computed(() => uncorrelatedBillRounds(selected.value).length > 0)
 const number = (n: number | null | undefined) => n == null ? '—' : n.toLocaleString()
 const percent = (n: number | null) => n == null ? '—' : (n * 100).toFixed(1) + '%'
 const money = (n: number | null | undefined) => n == null ? '—' : '$' + n.toFixed(6)
@@ -203,7 +207,7 @@ async function start() {
 }
 function stop() { stopping.value = true; runController?.abort() }
 async function refreshBills() {
-  if (busy.value || !selected.value || !auth.user) return
+  if (busy.value || !selected.value || !auth.user || !hasPendingBills.value) return
   const run = selected.value, userId = auth.user.id, controller = new AbortController(); runController = controller
   busy.value = true; reconciling.value = true; stopping.value = false
   try { await reconcileCacheBills(run, userId, controller.signal, () => persist(run, userId)) }
