@@ -38,7 +38,7 @@ func openAIWSUserSlotAcquireError(err error) *service.OpenAIWSClientCloseError {
 	if errors.As(err, &limitErr) && limitErr.SlotType == "API key" {
 		return apiKeyWSCloseError(coderws.StatusTryAgainLater, "API key concurrency limit reached; please retry later", err)
 	}
-	return apiKeyWSCloseError(coderws.StatusInternalError, "failed to acquire concurrency slot", err)
+	return apiKeyWSCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
 }
 
 // openAIWSQueueAuthRejectedClose keeps the WS close code aligned with the
