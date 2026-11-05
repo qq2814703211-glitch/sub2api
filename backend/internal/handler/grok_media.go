@@ -494,6 +494,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					zap.String("request_id", result.ResponseID),
 					zap.Error(err),
 				)
+				h.errorResponse(c, http.StatusServiceUnavailable, "billing_state_unavailable", "Could not safely persist the async video owner binding")
+				return
 			}
 			// Defer billing until status polling observes video.url. Persist create-time
 			// model/duration/resolution so status can still price if upstream omits them.
@@ -509,23 +511,27 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
 			}
-			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
+			pendingStoreErr := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending)
+			if pendingStoreErr != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
 					zap.Int64("account_id", account.ID),
 					zap.String("request_id", result.ResponseID),
-					zap.Error(err),
+					zap.Error(pendingStoreErr),
 				)
 				if err2 := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err2 != nil {
-					// Response body may already be committed; completion path will fail-closed
-					// when pending is still missing and status cannot price duration.
 					reqLog.Error("grok_media.store_video_pending_billing_failed",
 						zap.Int64("account_id", account.ID),
 						zap.String("request_id", result.ResponseID),
 						zap.Error(err2),
 					)
+					h.errorResponse(c, http.StatusServiceUnavailable, "billing_state_unavailable", "Could not safely persist the async video billing snapshot")
+					return
 				}
 			}
 		}
+		// Every successful create must expose its response, including Grok relays
+		// that return an immediate artifact without a task ID.
+		h.gatewayService.CommitDeferredMediaCreateResponse(c, result)
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.CompatibleVideoEndpointStatus {
@@ -663,12 +669,12 @@ func prepareGrokVideoCompletionBilling(
 			zap.String("note", "resolution falls back to default 480p; investigate pending store failures"),
 		)
 	}
-	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
+	owner, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", taskRequestID), zap.Error(err))
 		return nil
 	}
-	if !claimed {
+	if owner == "" {
 		reqLog.Debug("grok_media.video_billing_already_claimed", zap.String("request_id", taskRequestID))
 		return nil
 	}
@@ -706,6 +712,7 @@ func prepareGrokVideoCompletionBilling(
 	// context-local request ids (do not prefer empty-only fill).
 	merged.RequestID = service.StableGrokVideoBillingRequestID(firstNonEmptyString(merged.ResponseID, taskRequestID))
 	merged.ResponseID = firstNonEmptyString(merged.ResponseID, taskRequestID)
+	merged.BillingClaimOwner = owner
 	merged.VideoCount = 1
 	// Pure video: do not keep legacy ImageCount (avoids image-path heuristics).
 	merged.ImageCount = 0
@@ -795,8 +802,8 @@ func recordGrokMediaUsage(
 			SessionID:          sessionID,
 			ChannelUsageFields: channelUsageFields,
 		}); err != nil {
-			if videoTaskID != "" {
-				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {
+			if videoTaskID != "" && result != nil && strings.TrimSpace(result.BillingClaimOwner) != "" {
+				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID, result.BillingClaimOwner); releaseErr != nil {
 					reqLog.Warn("grok_media.video_billing_claim_release_failed",
 						zap.String("request_id", videoTaskID),
 						zap.Error(releaseErr),

@@ -158,7 +158,7 @@ func (s *grokMediaSlotBindings) DeleteSessionAccountID(context.Context, int64, s
 	return nil
 }
 
-func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key string, _ time.Duration) (bool, error) {
+func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key, _ string, _ time.Duration) (bool, error) {
 	if s.billed == nil {
 		s.billed = make(map[string]bool)
 	}

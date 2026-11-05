@@ -60,12 +60,13 @@ func prepareCompatibleVideoCompletionBilling(ctx context.Context, h *OpenAIGatew
 		}
 		merged.VideoCount = 0
 	}
-	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskID, subject.UserID, key.ID)
-	if err != nil || !claimed {
+	owner, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskID, subject.UserID, key.ID)
+	if err != nil || owner == "" {
 		return nil
 	}
 	merged.RequestID = service.StableGrokVideoBillingRequestID(taskID)
 	merged.ResponseID = taskID
+	merged.BillingClaimOwner = owner
 	merged.Duration = service.GrokVideoE2EDuration(pending.CreatedAt, time.Now())
 	merged.VideoResolution = merged.MediaUsage.Resolution
 	merged.VideoDurationSeconds = int(merged.MediaUsage.DurationSeconds)
