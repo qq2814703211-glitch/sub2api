@@ -18,13 +18,23 @@ func (h *UsageHandler) RecordConnectionTrace(record service.ConnectionTrace) {
 }
 
 func (h *UsageHandler) ConnectionDiagnosticsSettings(c *gin.Context) {
+	h.connectionSettingsMu.Lock()
+	defer h.connectionSettingsMu.Unlock()
 	if c.Request.Method == "PUT" {
-		var body struct { Enabled *bool `json:"enabled" binding:"required"` }
-		if err := c.ShouldBindJSON(&body); err != nil || body.Enabled == nil { response.BadRequest(c, "enabled is required"); return }
-		middleware.SetConnectionDiagnosticsEnabled(*body.Enabled)
+		var body struct {
+			Enabled *bool `json:"enabled" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.Enabled == nil {
+			response.BadRequest(c, "enabled is required")
+			return
+		}
+		if !*body.Enabled {
+			middleware.SetConnectionDiagnosticsEnabled(false)
+		}
 		h.usageService.SetConnectionDiagnosticsEnabled(*body.Enabled)
+		middleware.SetConnectionDiagnosticsEnabled(*body.Enabled)
 	}
-	response.Success(c, gin.H{"enabled": middleware.ConnectionDiagnosticsEnabled(), "retention_days": 30, "body_capture": false})
+	response.Success(c, gin.H{"enabled": middleware.ConnectionDiagnosticsEnabled(), "retention_days": 30, "body_capture": false, "stats": h.usageService.ConnectionDiagnosticsStats()})
 }
 
 // Connections is administrator-only. It reads diagnostic traces, not billing
@@ -121,5 +131,6 @@ func (h *UsageHandler) Connections(c *gin.Context) {
 }
 
 func (h *UsageHandler) StopOperationalDiagnostics() {
+	middleware.SetConnectionDiagnosticsEnabled(false)
 	h.usageService.StopConnectionDiagnostics()
 }

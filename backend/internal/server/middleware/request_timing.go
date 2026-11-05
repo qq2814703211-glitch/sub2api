@@ -28,8 +28,8 @@ var connectionDiagnosticsEnabled atomic.Bool
 func SetConnectionDiagnosticsEnabled(enabled bool) { connectionDiagnosticsEnabled.Store(enabled) }
 func ConnectionDiagnosticsEnabled() bool           { return connectionDiagnosticsEnabled.Load() }
 
-// RequestTiming runs before authentication and body pre-read. WebSocket turns
-// have a different lifetime and must not be labelled as an HTTP request trace.
+// RequestTiming runs before authentication and body pre-read. WS upgrade traces
+// describe ingress; the WS forwarding service publishes independent turn traces.
 func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !connectionDiagnosticsEnabled.Load() {
@@ -37,7 +37,9 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 			return
 		}
 		path := strings.TrimRight(c.Request.URL.Path, "/")
-		if c.Request.Method != http.MethodPost || (!strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/responses/compact") && !strings.HasSuffix(path, "/messages") && !strings.HasSuffix(path, "/chat/completions")) {
+		modelPath := strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/responses/compact") || strings.HasSuffix(path, "/messages") || strings.HasSuffix(path, "/chat/completions")
+		wsUpgrade := c.Request.Method == http.MethodGet && strings.EqualFold(c.GetHeader("Upgrade"), "websocket") && strings.Contains(strings.ToLower(c.GetHeader("Connection")), "upgrade")
+		if (!wsUpgrade && c.Request.Method != http.MethodPost) || !modelPath {
 			c.Next()
 			return
 		}

@@ -21,6 +21,19 @@ type Trace struct {
 	index int
 }
 
+// StartHandshake observes a real WS dial, never pooled reuse or background work.
+func StartHandshake(ctx context.Context, accountID int64) (context.Context, func(int, error)) {
+	if From(ctx) == nil {
+		return ctx, func(int, error) {}
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://diagnostic.invalid/responses", nil)
+	req, trace := startAttempt(req, accountID, 0, "websocket_handshake", 0)
+	trace.update(func(a *Attempt) { a.Route.Downstream = "websocket"; a.Route.Upstream = "websocket" })
+	return req.Context(), func(status int, err error) {
+		trace.Response(&http.Response{StatusCode: status, Header: http.Header{}}, err)
+	}
+}
+
 func StartAttempt(req *http.Request, accountID, proxyID int64) (*http.Request, *Trace) {
 	return startAttempt(req, accountID, proxyID, "egress", 0)
 }

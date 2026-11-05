@@ -15,7 +15,10 @@ func (r *usageLogRepository) RecordConnectionTrace(record service.ConnectionTrac
 	if r.db == nil || !r.connectionEnabled.Load() {
 		return
 	}
-	r.connectionMu.Lock()
+	if !r.connectionMu.TryLock() {
+		r.connectionDropped.Add(1)
+		return
+	}
 	defer r.connectionMu.Unlock()
 	if !r.connectionEnabled.Load() {
 		return
@@ -72,11 +75,12 @@ func (r *usageLogRepository) runConnectionWriter(ctx context.Context, queue <-ch
 }
 
 func (r *usageLogRepository) cleanupConnectionTraces(ctx context.Context) {
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	_, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
  (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '30 days' LIMIT 10000)`)
-	if err != nil && ctx.Err() == nil {
+	if err != nil && parent.Err() == nil {
 		r.connectionRetentionFailures.Add(1)
 	}
 }
@@ -111,6 +115,9 @@ const connectionStateSQL = `CASE
  ELSE 'unknown' END`
 
 func connectionTraceQuery(f service.ConnectionTraceFilter) (string, []any) {
+	if minimum := time.Now().Add(-30 * 24 * time.Hour); f.Start.Before(minimum) {
+		f.Start = minimum
+	}
 	args := []any{f.Start, f.End}
 	// Apply indexed time ranges in both arms. Legacy traces are not backfilled;
 	// each real trace is returned once even if billing retries share a usage row.
@@ -275,6 +282,8 @@ func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records 
 }
 
 func (r *usageLogRepository) StopConnectionDiagnostics() { r.SetConnectionDiagnosticsEnabled(false) }
+
+func (r *usageLogRepository) ConnectionDiagnosticsEnabled() bool { return r.connectionEnabled.Load() }
 
 // Disable cancels in-flight SQL and joins the diagnostics worker before returning.
 func (r *usageLogRepository) SetConnectionDiagnosticsEnabled(enabled bool) {

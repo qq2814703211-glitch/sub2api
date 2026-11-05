@@ -208,9 +208,10 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return nil, err
 	}
 	profile := service.HTTPUpstreamProfileDefault
+	var egressTrace *requesttiming.Trace
 	if req != nil {
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
-		req, _ = requesttiming.StartAttempt(req, accountID, 0)
+		req, egressTrace = requesttiming.StartAttempt(req, accountID, 0)
 	}
 
 	// 获取或创建对应的客户端，并标记请求占用
@@ -223,6 +224,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req)
+	egressTrace.Response(resp, err)
 	if err != nil {
 		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
@@ -257,9 +259,10 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 	applyGrokCLIProxyHeaders(req)
 	upstreamProfile := service.HTTPUpstreamProfileDefault
+	var egressTrace *requesttiming.Trace
 	if req != nil {
 		upstreamProfile = service.HTTPUpstreamProfileFromContext(req.Context())
-		req, _ = requesttiming.StartAttempt(req, accountID, 0)
+		req, egressTrace = requesttiming.StartAttempt(req, accountID, 0)
 	}
 
 	targetHost := ""
@@ -285,6 +288,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req)
+	egressTrace.Response(resp, err)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -306,7 +310,9 @@ func doUpstreamRequest(client *http.Client, req *http.Request) (*http.Response, 
 	req, trace := requesttiming.StartTransport(req)
 	ctx, cancel := context.WithCancel(req.Context())
 	resp, err := servertiming.Do(client, req.WithContext(ctx))
-	if trace != nil { trace.Response(resp, err) }
+	if trace != nil {
+		trace.Response(resp, err)
+	}
 	if err != nil {
 		cancel()
 		return resp, err

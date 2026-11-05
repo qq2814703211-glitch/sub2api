@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/poison"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -129,4 +130,29 @@ func TestConnectionDiagnosticsWriterPreservesFailureAndUnwrap(t *testing.T) {
 	col.Finish(200, false)
 	require.True(t, snap.DownstreamError)
 	require.Zero(t, snap.DownstreamBytes)
+}
+
+func TestConnectionDiagnosticsWebSocketTurnIsIndependentFromHandshakeStatus(t *testing.T) {
+	SetConnectionDiagnosticsEnabled(true)
+	defer SetConnectionDiagnosticsEnabled(false)
+	sink := &traceRecorder{}
+	engine := gin.New()
+	engine.Use(RequestTiming(sink))
+	engine.GET("/v1/responses", func(c *gin.Context) {
+		finish := requesttiming.StartWSAttempt(c.Request.Context(), 42, transportdiag.Route{
+			Downstream: "websocket", Upstream: "websocket", Mode: "ingress", Endpoint: "responses",
+		}, "websocket_turn")
+		finish(http.StatusBadGateway, "failed", errors.New("upstream turn failed"))
+		c.Status(http.StatusSwitchingProtocols)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	rr := httptest.NewRecorder()
+	engine.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusSwitchingProtocols, rr.Code)
+	require.Len(t, sink.records, 1)
+	require.Len(t, sink.records[0].Detail.Attempts, 1)
+	require.Equal(t, "failed", sink.records[0].Detail.Attempts[0].Terminal)
+	require.Equal(t, http.StatusBadGateway, sink.records[0].Detail.Attempts[0].Status)
 }
