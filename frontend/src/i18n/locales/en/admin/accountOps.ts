@@ -164,6 +164,32 @@ export default {
       "unsupported": "Unsupported",
       "monitorLoadError": "Could not load monitor",
       "samplingFailed": "Sampling failed",
-      "acknowledgeError": "Could not acknowledge alert"
+      "acknowledgeError": "Could not acknowledge alert",
+      history: {
+          title: "History, trends and anomaly rules",
+          days: "Days",
+          unit: "Unit",
+          refreshTrend: "Refresh trend",
+          estimateNote: "Estimates declines within each account and currency. Top-ups, shared wallets and observation gaps affect results. This is not exact usage or profit. Days use UTC+08:00.",
+          loading: "Loading…",
+          estimatedDecline: "Estimated decline",
+          noTrend: "No trend data",
+          accountHistory: "Account history and anomaly rules (current page)",
+          selectAccount: "Select account",
+          loadingHistory: "Loading history…",
+          balance: "Balance",
+          noHistory: "No history points",
+          ruleNote: "These rules create dashboard anomalies; configure external notifications and recovery in Account operations.",
+          lowBalance: "Low balance",
+          rateMove: "Rate move %",
+          quotaLeft: "Quota left %",
+          expiryDays: "Expiry days",
+          saveRule: "Save rule",
+          deleteRule: "Delete rule",
+          loadFailed: "Load failed",
+          historyLoadFailed: "History load failed",
+          saveFailed: "Save failed",
+          deleteFailed: "Delete failed"
+      }
   }
 }
