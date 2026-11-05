@@ -71,7 +71,7 @@ func TestMediaRuntimeAPIKeyImagesToActualCost(t *testing.T) {
 				requestBody = b.Bytes()
 				contentType = w.FormDataContentType()
 			}
-			responseBody := `{"data":[{"url":"https://example.test/a","size":"1024x1024","z_index":0},{"error":{"code":"Failed"}},{"url":"https://example.test/b","size":"2048x1024","z_index":1}]}`
+			responseBody := `{"usage":{"input_images":3},"data":[{"url":"https://example.test/a","size":"1024x1024","z_index":0},{"error":{"code":"Failed"}},{"url":"https://example.test/b","size":"2048x1024","z_index":1}]}`
 			responseType := "application/json"
 			if tc.stream {
 				responseType = "text/event-stream"
@@ -82,6 +82,9 @@ func TestMediaRuntimeAPIKeyImagesToActualCost(t *testing.T) {
 				if tc.stream {
 					responseBody = "data: {\"type\":\"image_generation.partial_failed\",\"image_index\":0,\"error\":{\"code\":\"Failed\"}}\n\ndata: {\"type\":\"image_generation.completed\",\"usage\":{\"generated_images\":0}}\n\n"
 				}
+			}
+			if tc.stream && !tc.failed {
+				responseBody = strings.Replace(responseBody, `"generated_images":2`, `"generated_images":2,"input_images":3`, 1)
 			}
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{responseType}}, Body: io.NopCloser(strings.NewReader(responseBody))}}
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
@@ -107,12 +110,12 @@ func TestMediaRuntimeAPIKeyImagesToActualCost(t *testing.T) {
 			require.Equal(t, wantCount, result.ImageCount)
 			require.Equal(t, wantCount, result.MediaUsage.Count)
 			group := &Group{ID: 3, RateMultiplier: 2, ImageRateMultiplier: 1.5, ImageRateIndependent: true, ImageCountBilling: true, ImagePrice1K: ptrFloat(0.001),
-				ModelPricing: []ChannelModelPricing{{Models: []string{model}, BillingMode: BillingModeImage, MediaPricing: &MediaPricing{Rules: []MediaPricingRule{
+				ModelPricing: []ChannelModelPricing{{Models: []string{model}, BillingMode: BillingModeImage, MediaPricing: &MediaPricing{ExtraInputImagePrice: ptrFloat(0.02), FreeInputImages: mediaReferenceCount(1), Rules: []MediaPricingRule{
 					{Name: "small layer", Unit: "image", Conditions: MediaPricingConditions{MaxPixels: mediaRuntimeInt(2000000)}, Price: ptrFloat(0.2)},
 					{Name: "large layer", Unit: "image", Conditions: MediaPricingConditions{MinPixels: mediaRuntimeInt(2000001)}, Price: ptrFloat(0.4)},
 				}}}}}
 			statsPricing := ChannelModelPricing{Models: []string{model}, BillingMode: BillingModeImage,
-				MediaPricing: &MediaPricing{Rules: []MediaPricingRule{{Name: "upstream count", Unit: "image", Price: ptrFloat(0.1)}}}}
+				MediaPricing: &MediaPricing{ExtraInputImagePrice: ptrFloat(0.01), FreeInputImages: mediaReferenceCount(1), Rules: []MediaPricingRule{{Name: "upstream count", Unit: "image", Price: ptrFloat(0.1)}}}}
 			statsRule := AccountStatsPricingRule{GroupIDs: []int64{3}, Pricing: []ChannelModelPricing{statsPricing}}
 			svc.channelService = newTestChannelServiceForStats(t, &Channel{ID: 99, Status: StatusActive, AccountStatsPricingRules: []AccountStatsPricingRule{statsRule}}, 3, PlatformOpenAI)
 			user := &User{ID: 1}
@@ -123,13 +126,17 @@ func TestMediaRuntimeAPIKeyImagesToActualCost(t *testing.T) {
 			if tc.failed {
 				require.Zero(t, usageRepo.lastLog.ActualCost)
 			} else {
-				require.InDelta(t, 0.6, usageRepo.lastLog.TotalCost, 1e-12, "first image is charged")
-				require.InDelta(t, 0.9, usageRepo.lastLog.ActualCost, 1e-12, "separate image multiplier exactly once")
+				require.Equal(t, mediaReferenceCount(3), result.MediaUsage.InputImageCount)
+				require.InDelta(t, 0.04, usageRepo.lastLog.ImageInputCost, 1e-12, "input surcharge once, not per output")
+				require.InDelta(t, 0.64, usageRepo.lastLog.TotalCost, 1e-12, "first image is charged")
+				require.InDelta(t, 0.96, usageRepo.lastLog.ActualCost, 1e-12, "separate image multiplier exactly once")
+				require.InDelta(t, 0.96, billingRepo.lastCmd.BalanceCost, 1e-12)
 				require.NotNil(t, usageRepo.lastLog.AccountStatsCost)
-				require.InDelta(t, 0.2, *usageRepo.lastLog.AccountStatsCost, 1e-12)
+				require.InDelta(t, 0.22, *usageRepo.lastLog.AccountStatsCost, 1e-12)
 			}
 		})
 	}
 }
+func mediaReferenceCount(v int) *int { return &v }
 func mediaRuntimeBool(v bool) *bool  { return &v }
 func mediaRuntimeInt(v int64) *int64 { return &v }

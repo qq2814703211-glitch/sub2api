@@ -2,25 +2,25 @@ package service
 
 import "github.com/tidwall/gjson"
 
-// Compatible usage is preserved from the native provider by the documented
-// formatter. Prefer explicit output seconds to aggregate input+output seconds.
+// Keep pure output duration separate from aggregate input+output seconds.
+// Native task.usage is accepted when a relay preserves the native envelope.
 func extractCompatibleVideoResponseUsage(body []byte) *MediaUsage {
-	usage := gjson.GetBytes(body, "usage")
-	u := extractMediaDimensions(usage)
-	if resolution := usage.Get("SR"); u.Resolution == "" && resolution.Type == gjson.String {
-		u.Resolution = resolution.String()
-	}
-	for _, key := range []string{"output_video_duration", "output_seconds"} {
-		if seconds := mediaPositiveNumber(usage.Get(key)); seconds > 0 {
-			u.DurationSeconds = seconds
-			return u
+	root := gjson.ParseBytes(body)
+	u := extractMediaReferenceResponse(root)
+	for _, path := range []string{"usage", "task.usage"} {
+		usage := root.Get(path)
+		u = MergeMediaUsage(u, extractMediaDimensions(usage))
+		if resolution := usage.Get("SR"); resolution.Type == gjson.String {
+			u.Resolution = resolution.String()
+		}
+		for _, key := range []string{"output_video_duration", "output_seconds"} {
+			if seconds := mediaPositiveNumber(usage.Get(key)); seconds > 0 {
+				u.DurationSeconds = seconds
+			}
 		}
 	}
-	if total := mediaPositiveNumber(usage.Get("total_seconds")); total > 0 {
-		input := mediaPositiveNumber(usage.Get("input_seconds"))
-		if total > input {
-			u.DurationSeconds = total - input
-		}
+	if u.DurationSeconds == 0 && u.TotalDurationSeconds != nil && u.InputDurationSeconds != nil && *u.TotalDurationSeconds > *u.InputDurationSeconds {
+		u.DurationSeconds = *u.TotalDurationSeconds - *u.InputDurationSeconds
 	}
 	return u
 }

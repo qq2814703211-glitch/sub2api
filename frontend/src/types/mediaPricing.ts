@@ -31,4 +31,9 @@ export interface MediaPricingRule {
 
 export interface MediaPricing {
   rules: MediaPricingRule[]
+  /** Per-request input allowance; never an output discount. */
+  extra_input_image_price?: number | null
+  free_input_images?: number | null
+  /** Defaults to output. Total includes reference-video seconds once. */
+  duration_source?: 'output' | 'total'
 }

@@ -14,7 +14,18 @@ import (
 // A nil configuration leaves the legacy pricing path unchanged.
 type MediaPricing struct {
 	Rules []MediaPricingRule `json:"rules"`
+	// Input allowances and surcharges apply once per successful request.
+	ExtraInputImagePrice *float64             `json:"extra_input_image_price,omitempty"`
+	FreeInputImages      *int                 `json:"free_input_images,omitempty"`
+	BillingDuration      MediaBillingDuration `json:"duration_source,omitempty"`
 }
+
+type MediaBillingDuration string
+
+const (
+	MediaBillingDurationOutput MediaBillingDuration = "output"
+	MediaBillingDurationTotal  MediaBillingDuration = "total"
+)
 
 type MediaPricingRule struct {
 	Name             string                 `json:"name"`
@@ -48,20 +59,24 @@ type MediaPricingConditions struct {
 // Images, when present, contains one entry per successful output. Scalar zero
 // dimensions/duration/FPS mean unknown; booleans distinguish unknown and false.
 type MediaUsage struct {
-	Resolution      string       `json:"resolution,omitempty"`
-	Mode            string       `json:"mode,omitempty"`
-	InputType       string       `json:"input_type,omitempty"`
-	Audio           *bool        `json:"audio,omitempty"`
-	ReferenceVideo  *bool        `json:"reference_video,omitempty"`
-	Layer           *bool        `json:"layer,omitempty"`
-	Width           int64        `json:"width,omitempty"`
-	Height          int64        `json:"height,omitempty"`
-	Pixels          int64        `json:"pixels,omitempty"`
-	DurationSeconds float64      `json:"duration_seconds,omitempty"`
-	FPS             float64      `json:"fps,omitempty"`
-	Frames          int64        `json:"frames,omitempty"`
-	Count           int          `json:"count"`
-	Images          []MediaUsage `json:"images,omitempty"`
+	Resolution      string  `json:"resolution,omitempty"`
+	Mode            string  `json:"mode,omitempty"`
+	InputType       string  `json:"input_type,omitempty"`
+	Audio           *bool   `json:"audio,omitempty"`
+	ReferenceVideo  *bool   `json:"reference_video,omitempty"`
+	Layer           *bool   `json:"layer,omitempty"`
+	Width           int64   `json:"width,omitempty"`
+	Height          int64   `json:"height,omitempty"`
+	Pixels          int64   `json:"pixels,omitempty"`
+	DurationSeconds float64 `json:"duration_seconds,omitempty"`
+	// nil means unknown; explicit zero survives snapshots and authoritative merges.
+	InputImageCount      *int         `json:"input_image_count,omitempty"`
+	InputDurationSeconds *float64     `json:"input_duration_seconds,omitempty"`
+	TotalDurationSeconds *float64     `json:"total_duration_seconds,omitempty"`
+	FPS                  float64      `json:"fps,omitempty"`
+	Frames               int64        `json:"frames,omitempty"`
+	Count                int          `json:"count"`
+	Images               []MediaUsage `json:"images,omitempty"`
 }
 
 var (
@@ -82,7 +97,11 @@ func (p *MediaPricing) Clone() *MediaPricing {
 	if p == nil {
 		return nil
 	}
-	cp := &MediaPricing{}
+	cp := &MediaPricing{
+		ExtraInputImagePrice: mediaCopyPtr(p.ExtraInputImagePrice),
+		FreeInputImages:      mediaCopyPtr(p.FreeInputImages),
+		BillingDuration:      p.BillingDuration,
+	}
 	if p.Rules != nil {
 		cp.Rules = append([]MediaPricingRule{}, p.Rules...)
 	}
@@ -121,9 +140,21 @@ func ValidateMediaPricing(p *MediaPricing) error {
 	if len(p.Rules) == 0 {
 		return fmt.Errorf("media_pricing.rules must not be empty; use null to disable")
 	}
+	if p.ExtraInputImagePrice != nil && (!mediaFinite(*p.ExtraInputImagePrice) || *p.ExtraInputImagePrice < 0) {
+		return fmt.Errorf("media_pricing.extra_input_image_price must be finite and >= 0")
+	}
+	if p.FreeInputImages != nil && *p.FreeInputImages < 0 {
+		return fmt.Errorf("media_pricing.free_input_images must be >= 0")
+	}
+	if p.BillingDuration != "" && p.BillingDuration != MediaBillingDurationOutput && p.BillingDuration != MediaBillingDurationTotal {
+		return fmt.Errorf("media_pricing.duration_source must be output or total")
+	}
 	for i := range p.Rules {
 		r := &p.Rules[i]
 		prefix := fmt.Sprintf("media_pricing.rules[%d] (%q)", i, r.Name)
+		if p.BillingDuration == MediaBillingDurationTotal && r.Unit != "second" {
+			return fmt.Errorf("%s: duration_source total requires unit second", prefix)
+		}
 		switch r.Unit {
 		case "image", "second", "frame", "request":
 			if r.Price == nil {
@@ -264,6 +295,14 @@ func selectMediaPricingRule(p *MediaPricing, u MediaUsage) (int, error) {
 }
 
 func normalizeMediaPricingUsage(u MediaUsage) (MediaUsage, error) {
+	if u.InputImageCount != nil && *u.InputImageCount < 0 {
+		return u, fmt.Errorf("invalid media usage: input_image_count must be non-negative")
+	}
+	for _, duration := range []*float64{u.InputDurationSeconds, u.TotalDurationSeconds} {
+		if duration != nil && (!mediaFinite(*duration) || *duration < 0) {
+			return u, fmt.Errorf("invalid media usage: input/total duration must be finite and non-negative")
+		}
+	}
 	if u.Width < 0 || u.Height < 0 || u.Pixels < 0 || u.Frames < 0 || u.Count < 0 || !mediaFinite(u.DurationSeconds) || u.DurationSeconds < 0 || !mediaFinite(u.FPS) || u.FPS < 0 {
 		return u, fmt.Errorf("invalid media usage: dimensions, duration, fps, frames and count must be finite and non-negative")
 	}
@@ -361,7 +400,29 @@ func CalculateMediaPricingCost(pricing *MediaPricing, usage *MediaUsage, tokens 
 			}
 		}
 	}
+	var totalSeconds float64
+	if pricing.BillingDuration == MediaBillingDurationTotal {
+		if base.TotalDurationSeconds != nil {
+			// This is already the request total; never add reference seconds again.
+			totalSeconds = *base.TotalDurationSeconds
+		} else {
+			if base.InputDurationSeconds == nil {
+				return nil, fmt.Errorf("%w: total duration requires exact input_duration_seconds", ErrMediaUsageIncomplete)
+			}
+			totalSeconds = *base.InputDurationSeconds
+			for _, output := range outputs {
+				if output.DurationSeconds <= 0 {
+					return nil, fmt.Errorf("%w: total duration requires output duration_seconds", ErrMediaUsageIncomplete)
+				}
+				totalSeconds += output.DurationSeconds * float64(output.Count)
+			}
+		}
+		if totalSeconds <= 0 || !mediaFinite(totalSeconds) {
+			return nil, fmt.Errorf("%w: positive finite total duration required", ErrMediaUsageIncomplete)
+		}
+	}
 	var prompt *float64
+	selectedTotal := -1
 	selectedAggregate := -1
 	for i, u := range outputs {
 		index, err := selectMediaPricingRule(pricing, u)
@@ -414,10 +475,22 @@ func CalculateMediaPricingCost(pricing *MediaPricing, usage *MediaUsage, tokens 
 			}
 			units := count
 			if r.Unit == "second" {
-				if u.DurationSeconds <= 0 {
-					return nil, fmt.Errorf("%w: rule %q requires duration_seconds", ErrMediaUsageIncomplete, r.Name)
+				if pricing.BillingDuration == MediaBillingDurationTotal {
+					// A request total cannot be allocated across different tariffs.
+					if selectedTotal >= 0 {
+						if selectedTotal != index {
+							return nil, fmt.Errorf("%w: mixed rules cannot allocate total duration", ErrMediaUsageIncomplete)
+						}
+						continue
+					}
+					selectedTotal = index
+					units = totalSeconds
+				} else {
+					if u.DurationSeconds <= 0 {
+						return nil, fmt.Errorf("%w: rule %q requires duration_seconds", ErrMediaUsageIncomplete, r.Name)
+					}
+					units *= u.DurationSeconds
 				}
-				units *= u.DurationSeconds
 			}
 			if r.Unit == "frame" {
 				frames := float64(u.Frames)
@@ -444,6 +517,16 @@ func CalculateMediaPricingCost(pricing *MediaPricing, usage *MediaUsage, tokens 
 	}
 	if prompt != nil {
 		bd.InputCost += *prompt
+	}
+	if pricing.ExtraInputImagePrice != nil {
+		if base.InputImageCount == nil {
+			return nil, fmt.Errorf("%w: input_image_count is required for extra input image pricing", ErrMediaUsageIncomplete)
+		}
+		free := 0
+		if pricing.FreeInputImages != nil {
+			free = *pricing.FreeInputImages
+		}
+		bd.ImageInputCost += float64(max(*base.InputImageCount-free, 0)) * *pricing.ExtraInputImagePrice
 	}
 	bd.TotalCost = bd.InputCost + bd.ImageInputCost + bd.OutputCost + bd.ImageOutputCost + bd.CacheCreationCost + bd.CacheReadCost
 	bd.ActualCost = bd.TotalCost * multiplier

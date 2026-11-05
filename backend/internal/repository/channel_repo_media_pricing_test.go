@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const mediaPricingFixtureJSON = `{"rules":[{"name":"fixture","unit":"image","conditions":{"resolution":"2K","mode":"standard","input_type":"text","audio":false,"reference_video":true,"layer":false,"min_pixels":0,"max_pixels":4194304,"min_duration":0,"max_duration":10,"fps":24,"min_fps":20,"max_fps":30},"price":0,"prompt_price":0.03}]}`
+const mediaPricingFixtureJSON = `{"extra_input_image_price":0,"free_input_images":0,"duration_source":"output","rules":[{"name":"fixture","unit":"image","conditions":{"resolution":"2K","mode":"standard","input_type":"text","audio":false,"reference_video":true,"layer":false,"min_pixels":0,"max_pixels":4194304,"min_duration":0,"max_duration":10,"fps":24,"min_fps":20,"max_fps":30},"price":0,"prompt_price":0.03}]}`
 
 func mediaPricingRow(value any) *sqlmock.Rows {
 	return sqlmock.NewRows(channelModelPricingTimePricingColumns).AddRow(int64(11), int64(7), "openai", `["fixture"]`, service.BillingModeImage, nil, nil, nil, nil, nil, nil, nil, "{}", nil, nil, nil, nil, value, time.Time{}, time.Time{})

@@ -12,7 +12,7 @@ import (
 )
 
 func TestMediaPricingAdminChannelAndAccountStatsRoundTrip(t *testing.T) {
-	const raw = `{"platform":"openai","models":["fixture-video"],"billing_mode":"video","media_pricing":{"rules":[{"name":"silent-reference","unit":"second","conditions":{"resolution":"1080p","mode":"pro","input_type":"image","audio":false,"reference_video":true,"layer":false,"min_pixels":0,"max_pixels":2073600,"min_duration":0,"max_duration":10,"fps":24,"min_fps":24,"max_fps":24},"price":0,"prompt_price":0.03}]}}`
+	const raw = `{"platform":"openai","models":["fixture-video"],"billing_mode":"video","media_pricing":{"extra_input_image_price":0.2,"free_input_images":5,"duration_source":"total","rules":[{"name":"silent-reference","unit":"second","conditions":{"resolution":"1080p","mode":"pro","input_type":"image","audio":false,"reference_video":true,"layer":false,"min_pixels":0,"max_pixels":2073600,"min_duration":0,"max_duration":10,"fps":24,"min_fps":24,"max_fps":24},"price":0,"prompt_price":0.03}]}}`
 	for _, allowMultipliers := range []bool{true, false} {
 		var request channelModelPricingRequest
 		require.NoError(t, json.Unmarshal([]byte(raw), &request))
