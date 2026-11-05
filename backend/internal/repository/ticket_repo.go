@@ -13,7 +13,6 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/google/uuid"
 )
 
 const (
@@ -378,13 +377,26 @@ func (r *ticketRepository) Create(ctx context.Context, actor service.TicketActor
 // CreateForUser starts a conversation on behalf of a user. Unlike the reference
 // implementation there is no daily uniqueness constraint, so every proactive
 // contact creates its own ticket instead of appending to "today's" thread.
-func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.TicketActor, targetUserID int64, subject, content string) (int64, error) {
+func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.TicketActor, targetUserID int64, subject, content, clientID, hash string) (int64, error) {
 	var id int64
 	err := r.transaction(ctx, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `INSERT INTO support_tickets
 			(user_id, subject, contact, category, priority, status, client_id, request_hash)
-			VALUES ($1, $2, '', 'other', 'normal', 'waiting_user', $3, '') RETURNING id`,
-			targetUserID, subject, uuid.New().String()).Scan(&id)
+			VALUES ($1, $2, '', 'other', 'normal', 'waiting_user', $3, $4)
+			ON CONFLICT (user_id, client_id) DO NOTHING
+			RETURNING id`, targetUserID, subject, clientID, hash).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			var originalHash string
+			if err := tx.QueryRowContext(ctx,
+				"SELECT id, request_hash FROM support_tickets WHERE user_id = $1 AND client_id = $2",
+				targetUserID, clientID).Scan(&id, &originalHash); err != nil {
+				return err
+			}
+			if originalHash != hash {
+				return service.ErrTicketClientConflict
+			}
+			return nil
+		}
 		if err != nil {
 			return err
 		}
