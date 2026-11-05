@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -59,6 +60,7 @@ func newOpenAIWSDownstreamWriteContext(controlCtx context.Context, hooks *OpenAI
 	if writeParent == nil {
 		writeParent = context.Background()
 	}
+	writeParent = requestcapture.WithSession(writeParent, requestcapture.FromContext(controlCtx))
 	return context.WithTimeout(writeParent, timeout)
 }
 
@@ -456,7 +458,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
 			if eventBytes != nil {
 				writeCtx, cancel := newOpenAIWSDownstreamWriteContext(ctx, hooks, s.openAIWSWriteTimeout())
-				_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+				_ = WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, eventBytes)
 				cancel()
 			}
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
@@ -487,7 +489,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		writeCtx, cancel := newOpenAIWSDownstreamWriteContext(ctx, hooks, s.openAIWSWriteTimeout())
 		defer cancel()
 		message = restoreCodexToolNamesFromContext(c, message)
-		return clientConn.Write(writeCtx, coderws.MessageText, message)
+		return WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, message)
 	}
 
 	readClientMessage := func() ([]byte, error) {
