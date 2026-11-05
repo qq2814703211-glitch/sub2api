@@ -56,7 +56,7 @@ func (r *ticketHandlerRepo) Create(_ context.Context, actor service.TicketActor,
 	return r.ticket.ID, nil
 }
 
-func (r *ticketHandlerRepo) CreateForUser(context.Context, service.TicketActor, int64, string, string) (int64, error) {
+func (r *ticketHandlerRepo) CreateForUser(context.Context, service.TicketActor, int64, string, string, string, string) (int64, error) {
 	return r.ticket.ID, nil
 }
 
