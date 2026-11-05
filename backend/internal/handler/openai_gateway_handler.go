@@ -306,6 +306,9 @@ func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponse
 }
 
 func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKey) bool {
+	if apiKey != nil && apiKey.HasMultipleRoutes() {
+		return true
+	}
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
@@ -533,6 +536,23 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			subject.UserID,
 			apiKey.ID,
 		)
+		if apiKey.HasMultipleRoutes() {
+			for _, gid := range apiKey.CandidateGroupIDs() {
+				match, e := h.gatewayService.ValidateOpenAIHTTPResponseOwner(c.Request.Context(), gid, previousResponseID, subject.UserID, apiKey.ID)
+				if e != nil || !match {
+					continue
+				}
+				routed, e := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
+				if e != nil {
+					continue
+				}
+				apiKey = routed
+				owned = true
+				ownershipErr = nil
+				c.Request = c.Request.WithContext(service.ContextWithPinnedAPIKeyRoute(service.ContextWithAPIKeyRoute(c.Request.Context(), routed), gid))
+				break
+			}
+		}
 		if ownershipErr != nil {
 			reqLog.Warn("openai.previous_response_owner_lookup_failed", zap.Error(ownershipErr))
 		}
@@ -556,7 +576,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Codex 在所有请求中被动声明 image_gen namespace，宽泛检测会导致禁了生图的
 	// 分组中所有 Codex 请求被 403（#4447），并误占生图并发槽位。
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !apiKey.HasMultipleRoutes() && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -595,6 +615,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
@@ -683,20 +705,23 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			forwardModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			requiredCapability,
-			requireCompact,
-			false,
-			!imageIntent,
-			requestPlatform,
-		)
+		selection, scheduleDecision, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, previousResponseID, sessionHash, service.APIKeyRouteRequestModel(apiKey, reqModel, forwardModel), failedAccountIDs, service.OpenAIUpstreamTransportAny, requiredCapability, requireCompact, false, !imageIntent, requestPlatform)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				body = routeState.body
+			}
+			if apiKey.HasMultipleRoutes() {
+				forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+			}
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai.account_select_aborted_client_disconnected", zap.Error(err))
@@ -1264,6 +1289,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
@@ -1316,7 +1343,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	effectiveMappedModel := preferredMappedModel
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
-	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(service.WithOpenAIMessagesKeyRoute(c.Request.Context()), apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
 
 	for {
@@ -1328,20 +1355,23 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			currentRoutingModel = effectiveMappedModel
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"", // no previous_response_id
-			sessionHash,
-			currentRoutingModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportAny,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			true,
-			requestPlatform,
-		)
+		selection, scheduleDecision, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, "", sessionHash, service.APIKeyRouteRequestModel(apiKey, reqModel, currentRoutingModel), failedAccountIDs, service.OpenAIUpstreamTransportAny, service.OpenAIEndpointCapabilityChatCompletions, false, false, true, requestPlatform)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMappingMsg, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				body = routeState.body
+			}
+			if apiKey.HasMultipleRoutes() {
+				mappedBodyForMessages = newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
+				effectiveMappedModel = strings.TrimSpace(apiKey.Group.ResolveMessagesDispatchModel(reqModel))
+			}
+		}
 		if err != nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_messages.account_select_aborted_client_disconnected", zap.Error(err))
@@ -2181,7 +2211,7 @@ type openAIWSTurnBillingAPIKeys struct {
 // 返回换入该分组的上下文供本 turn 的利润门使用。
 func (k *openAIWSTurnBillingAPIKeys) begin(ctx context.Context, apiKeyService *service.APIKeyService, turn int, conn *service.APIKey) context.Context {
 	turnKey := conn
-	if turn > 1 && apiKeyService != nil {
+	if turn > 1 && apiKeyService != nil && !conn.HasMultipleRoutes() {
 		turnKey = refreshOpenAIWSTurnBillingAPIKey(ctx, apiKeyService, conn)
 	}
 	k.set(turn, turnKey)
@@ -2540,6 +2570,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
+	if apiKey.HasMultipleRoutes() {
+		ctx = service.ContextWithAPIKeyRouteModels(ctx, requestmodel.FromBodyCandidates("", "application/json", firstMessage))
+		c.Request = c.Request.WithContext(ctx)
+	}
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
@@ -2548,7 +2582,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 必须在合成路由解析和上游模型映射之前执行。
 	// 与 HTTP 准入一致：帧内重复 model 键/大小写变体可能被上游按末值绑定，
 	// 全部候选值逐一校验，任一未命中即拒绝。
-	if blocked := blockedModelAllowlistCandidate(apiKey.Group, requestmodel.FromBodyCandidates("", "application/json", firstMessage)); blocked != "" {
+	if blocked := blockedModelAllowlistCandidate(apiKey.Group, requestmodel.FromBodyCandidates("", "application/json", firstMessage)); !apiKey.HasMultipleRoutes() && blocked != "" {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 		middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, fmt.Sprintf("Model %q is not available for this group", blocked))
@@ -2606,7 +2640,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)
-	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+	if imageIntent && !apiKey.HasMultipleRoutes() && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
 		return
 	}
@@ -2688,6 +2722,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
+	ctx = c.Request.Context()
 	requestPlatform := openAICompatibleRequestPlatform(ctx, apiKey)
 	requiredTransport := service.OpenAIUpstreamTransportResponsesWebsocketV2Ingress
 	if requestPlatform == service.PlatformGrok {
@@ -2821,20 +2858,23 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return
 		}
 		reqLog.Debug("openai.websocket_account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			ctx,
-			apiKey.GroupID,
-			previousResponseID,
-			sessionHash,
-			wsForwardModel,
-			failedAccountIDs,
-			requiredTransport,
-			requiredCapability,
-			false,
-			previousResponseCanMove,
-			!imageIntent,
-			requestPlatform,
-		)
+		selection, scheduleDecision, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(ctx, apiKey, previousResponseID, sessionHash, service.APIKeyRouteRequestModel(apiKey, wsRouteModel, wsForwardModel), failedAccountIDs, requiredTransport, requiredCapability, false, previousResponseCanMove, !imageIntent, requestPlatform)
+		if err == nil {
+			c.Request = c.Request.WithContext(ctx)
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMappingWS, wsRouteModel, firstMessage); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, bindErr.Error())
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				firstMessage = routeState.body
+			}
+			if apiKey.HasMultipleRoutes() {
+				ctx = c.Request.Context()
+				wsForwardModel = openAIChannelForwardModel(channelMappingWS, wsRouteModel)
+			}
+		}
 		if err != nil {
 			reqLog.Warn("openai.websocket_account_select_failed",
 				zap.Error(openAICompatibleSelectionErrorForLog(err, requestPlatform)),
@@ -3073,6 +3113,27 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 当前账号，越线即要求客户端重连重选（连接绑定单一上游账号，
 				// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
 				turnBillingCtx := turnBillingAPIKeys.begin(ctx, h.apiKeyService, turn, apiKey)
+				if apiKey.HasMultipleRoutes() {
+					latest, err := h.apiKeyService.GetByKey(ctx, apiKey.Key)
+					if err != nil || latest == nil || !latest.IsActive() {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "API key no longer available", err)
+					}
+					allowed := false
+					for _, gid := range latest.CandidateGroupIDs() {
+						if gid == *apiKey.GroupID {
+							allowed = true
+						}
+					}
+					if !allowed {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "API key route removed", nil)
+					}
+					refreshed, err := h.gatewayService.RevalidateAPIKeyRoute(ctx, apiKey)
+					if err != nil {
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "API key route no longer authorized", err)
+					}
+					turnBillingAPIKeys.set(turn, refreshed)
+					turnBillingCtx = service.ContextWithAPIKeyRoute(turnBillingCtx, refreshed)
+				}
 				turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
 				if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
 					reqLog.Info("openai.websocket_turn_profit_vetoed",

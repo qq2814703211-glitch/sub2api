@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -135,6 +136,10 @@ func stampForwardRequestedReasoningEffort(result *service.ForwardResult, request
 
 func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
 	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	if apiKey.HasMultipleRoutes() {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), keyRouteOriginalBodyContextKey{}, append([]byte(nil), body...)))
+		return body, false, nil
+	}
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
 	if !ok {
 		return body, false, nil
@@ -151,6 +156,10 @@ func respondOpenAIReasoningEffortPolicyError(c *gin.Context, err error, write fu
 }
 
 func applyAnthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
+	if apiKey.HasMultipleRoutes() {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), keyRouteOriginalBodyContextKey{}, append([]byte(nil), body...)))
+		return body, false, nil
+	}
 	maxEffort, mappings, overLimit, ok := anthropicReasoningEffortPolicyForRequest(c, apiKey)
 	if !ok {
 		return body, false, nil

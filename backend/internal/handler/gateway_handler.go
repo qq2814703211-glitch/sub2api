@@ -251,6 +251,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 
 	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
@@ -351,7 +353,20 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		c.Request = c.Request.WithContext(h.gatewayService.WithSingleAntigravityAccountGroupProbe(c.Request.Context(), apiKey.GroupID))
 
 		for {
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
+			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), platform)
+			if err == nil {
+				if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					status, code, message, _ := billingErrorDetails(bindErr)
+					h.errorResponse(c, status, code, message)
+					return
+				}
+				apiKey = routedKey
+				if apiKey.HasMultipleRoutes() {
+					body = routeState.body
+				}
+
+			} // Gemini 不使用会话限制
 			if err != nil {
 				if failoverClientGone(c) {
 					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
@@ -684,7 +699,24 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				zap.Bool("has_bound_session", hasBoundSession),
 				zap.Int("failed_account_count", len(fs.FailedAccountIDs)),
 			)
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
+			selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), currentAPIKey, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID, platform)
+			if err == nil {
+				if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, currentAPIKey, routedKey, &currentSubscription, &channelMapping, reqModel, body); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					status, code, message, _ := billingErrorDetails(bindErr)
+					h.errorResponse(c, status, code, message)
+					return
+				}
+				currentAPIKey = routedKey
+				if currentAPIKey.HasMultipleRoutes() {
+					body = routeState.body
+					if err := attemptParsedReq.ReplaceBody(body); err != nil {
+						releaseRejectedKeyRouteSelection(selection)
+						h.errorResponse(c, 400, "invalid_request_error", "Failed to parse selected route policy")
+						return
+					}
+				}
+			}
 			if err != nil {
 				if failoverClientGone(c) {
 					reqLog.Info("gateway.account_select_aborted_client_disconnected", zap.Error(err))
@@ -2216,6 +2248,8 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 
 	// 校验 billing eligibility（订阅/余额）
 	// 【注意】不计算并发，但需要校验订阅/余额
