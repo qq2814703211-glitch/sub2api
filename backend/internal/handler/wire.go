@@ -52,7 +52,9 @@ func ProvideAdminHandlers(
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	claudeResetCredits *service.ClaudeResetCreditService,
+	openAIGateway *service.OpenAIGatewayService,
 ) *AdminHandlers {
+	opsHandler.SetVideoBillingService(openAIGateway)
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
@@ -138,7 +140,11 @@ func ProvideOpenAIGatewayHandler(
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
 	compositeResolver *service.CompositeRouteResolver,
+	videoJobs service.VideoBillingJobRepository,
 ) *OpenAIGatewayHandler {
+	gatewayService.SetVideoBillingJobs(videoJobs)
+	gatewayService.SetVideoBillingAuthCache(apiKeyService)
+	gatewayService.StartVideoBillingWorker()
 	gatewayService.SetPluginManager(pluginManager)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
