@@ -62,6 +62,13 @@ type modelPlazaTimePricing struct {
 	Periods      []modelPlazaTimePricingPeriod `json:"periods"`
 }
 
+// modelPlazaMediaRateOption discloses the rate selected by the actual request endpoint.
+// A pricing card alone does not identify the endpoint, including request/token rules.
+type modelPlazaMediaRateOption struct {
+	RequestType string  `json:"request_type"`
+	Multiplier  float64 `json:"multiplier"`
+}
+
 // modelPlazaModel 广场模型条目：实收口径展示定价（白名单形态）+ 官方参考价。
 type modelPlazaModel struct {
 	Name            string                     `json:"name"`
@@ -71,7 +78,8 @@ type modelPlazaModel struct {
 	// LongContextBasis 多档时的计价基准："whole_request"（整单按档）| "marginal"（仅超出部分）。
 	LongContextBasis string `json:"long_context_basis,omitempty"`
 	// TimePricing 分时倍率时段，落在时段内的请求整单乘倍率；无分时省略。
-	TimePricing *modelPlazaTimePricing `json:"time_pricing,omitempty"`
+	TimePricing      *modelPlazaTimePricing      `json:"time_pricing,omitempty"`
+	MediaRateOptions []modelPlazaMediaRateOption `json:"media_rate_options,omitempty"`
 }
 
 // modelPlazaGroup 广场分组条目（白名单字段）。
@@ -208,6 +216,7 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 			OfficialPricing:  toModelPlazaOfficialPricing(m.OfficialPricing),
 			LongContextBasis: string(m.LongContextBasis),
 			TimePricing:      toModelPlazaTimePricing(m.TimePricing),
+			MediaRateOptions: toModelPlazaMediaRateOptions(m.Pricing, g, userRates),
 		})
 	}
 	dto := modelPlazaGroup{
@@ -233,6 +242,36 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 		dto.UserRateMultiplier = &rate
 	}
 	return dto
+}
+
+// Keep these options endpoint-scoped: billing_mode and rule units do not identify
+// whether a non-token media card is called from an image or video endpoint.
+func toModelPlazaMediaRateOptions(pricing *service.ChannelModelPricing, g *service.PlazaGroup, userRates map[int64]float64) []modelPlazaMediaRateOption {
+	if pricing == nil || pricing.MediaPricing == nil {
+		return nil
+	}
+	rate := g.RateMultiplier
+	if userRate, ok := userRates[g.ID]; ok {
+		rate = userRate
+	}
+	if pricing.BillingMode == "" || pricing.BillingMode == service.BillingModeToken {
+		return []modelPlazaMediaRateOption{{RequestType: "all", Multiplier: rate}}
+	}
+	imageRate, videoRate := rate, rate
+	if g.ImageRateIndependent {
+		imageRate = max(0, g.ImageRateMultiplier)
+	}
+	if g.VideoRateIndependent {
+		videoRate = max(0, g.VideoRateMultiplier)
+	}
+	if imageRate == rate && videoRate == rate {
+		return []modelPlazaMediaRateOption{{RequestType: "all", Multiplier: rate}}
+	}
+	return []modelPlazaMediaRateOption{
+		{RequestType: "general", Multiplier: rate},
+		{RequestType: "image", Multiplier: imageRate},
+		{RequestType: "video", Multiplier: videoRate},
+	}
 }
 
 // toModelPlazaTimePricing 转换分时倍率；nil 透传（JSON 省略）。

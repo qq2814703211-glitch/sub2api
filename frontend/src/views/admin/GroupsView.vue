@@ -5957,14 +5957,13 @@ const validateGroupReasoningMultipliers = (pricing: PricingFormEntry[]): boolean
   return true;
 };
 
-// 分组价卡同样能带分时倍率；后端 TIME_PRICING_UNSUPPORTED_MODE 只允许 token 模式，
-// 这里先在界面上拦下，否则按次计费的卡填了时段会在保存时直接 400。
+// 与后端一致：token 卡及启用媒体规则的价卡都允许分时倍率。
 const validateGroupTimePricing = (pricing: PricingFormEntry[]): boolean => {
   for (const entry of pricing) {
     if (!entry.time_pricing?.periods?.length) continue;
     const modelLabel =
       entry.models.join(", ") || t("admin.channels.form.unnamed");
-    if (entry.billing_mode && entry.billing_mode !== "token") {
+    if (entry.billing_mode && entry.billing_mode !== "token" && !formMediaPricingToAPI(entry.media_pricing)) {
       appStore.showError(
         t("admin.groups.modelPricing.timePricingTokenOnly", {
           models: modelLabel,

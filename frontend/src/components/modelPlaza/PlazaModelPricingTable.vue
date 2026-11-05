@@ -117,7 +117,8 @@
 
           <!-- token 计费:输入 / 输出 / 缓存(写/读),有阶梯时每档一行;档位标签只放输入列,其余列按行对齐 -->
           <td v-if="m.pricing?.media_pricing?.rules?.length" colspan="3" class="pz-cell px-3 py-2.5 align-middle">
-            <MediaPricingRules :pricing="m.pricing.media_pricing" :multiplier="mediaRuleRate(m, period)" />
+            <MediaPricingRules :pricing="m.pricing.media_pricing" :rate-options="mediaRateOptions(m, period)" />
+            <p v-if="peakWindow" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('mediaPricing.peakRateHint') }}</p>
           </td>
           <template v-else-if="billingMode(m) === BILLING_MODE_TOKEN">
             <td class="pz-cell px-3 py-2.5 align-middle font-mono font-semibold text-gray-900 dark:text-gray-50">
@@ -289,8 +290,14 @@
           <td
             class="border-l border-gray-100 py-2.5 pl-3 pr-5 text-right align-middle font-mono text-xs dark:border-dark-700/60"
           >
+            <template v-if="m.pricing?.media_pricing?.rules?.length">
+              <div v-for="option in mediaRateOptions(m, period)" :key="option.label" class="mb-1">
+                <span v-if="option.label" class="mr-1 font-sans">{{ option.label }}</span>
+                <span class="font-semibold">{{ Number(option.multiplier.toPrecision(12)) }}x</span>
+              </div>
+            </template>
             <span
-              v-if="period"
+              v-else-if="period"
               class="font-semibold text-primary-700 dark:text-primary-400"
               :title="t('modelPlaza.table.timePricingRateHint', { rate: effectiveRate, multiplier: period.multiplier })"
               >{{ periodRate(period) }}x</span
@@ -461,8 +468,21 @@ function paidRequestPrice(m: PlazaModel, value: number | null | undefined): stri
   return formatScaled(value * requestRate(m), 1, MIN_DECIMALS)
 }
 
-function mediaRuleRate(m: PlazaModel, period: PlazaTimePricingPeriod | null): number {
-  return requestRate(m) * (period?.multiplier ?? 1)
+function mediaRateOptions(m: PlazaModel, period: PlazaTimePricingPeriod | null) {
+  // Older servers have no options. Never assume per_request means a generic endpoint.
+  const generic = effectiveRate.value
+  const image = props.imageRateIndependent ? (props.imageRateMultiplier ?? 1) : generic
+  const video = props.videoRateIndependent ? (props.videoRateMultiplier ?? 1) : generic
+  const fallback = billingMode(m) === BILLING_MODE_TOKEN
+    ? [{ request_type: 'all', multiplier: generic }]
+    : (image !== generic || video !== generic)
+      ? [{ request_type: 'general', multiplier: generic }, { request_type: 'image', multiplier: image }, { request_type: 'video', multiplier: video }]
+      : [{ request_type: 'all', multiplier: requestRate(m) }]
+  const labels: Record<string, string> = { all: '', general: t('mediaPricing.rateGeneral'), image: t('mediaPricing.rateImage'), video: t('mediaPricing.rateVideo') }
+  return (m.media_rate_options?.length ? m.media_rate_options : fallback).map(option => ({
+    label: labels[option.request_type] ?? '',
+    multiplier: option.multiplier * (period?.multiplier ?? 1)
+  }))
 }
 
 /** 官方参考价不乘倍率。 */
@@ -500,7 +520,9 @@ function timePricingRowHint(m: PlazaModel): string {
     ? 'modelPlaza.table.timePricingRowHintWeekdays'
     : 'modelPlaza.table.timePricingRowHint'
   let hint = t(key, { timezone: m.time_pricing?.timezone })
-  if (props.peakWindow) {
+  if (props.peakWindow && m.pricing?.media_pricing?.rules?.length) {
+    hint += t('mediaPricing.peakRateHint')
+  } else if (props.peakWindow) {
     hint += t('modelPlaza.table.timePricingRowHintPeak', {
       window: props.peakWindow,
       multiplier: props.peakRateMultiplier ?? 1

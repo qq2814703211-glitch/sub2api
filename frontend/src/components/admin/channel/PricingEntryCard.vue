@@ -91,7 +91,6 @@
                 ...entry,
                 billing_mode: $event as BillingMode,
                 intervals: [],
-                time_pricing: { ...entry.time_pricing, periods: [] },
               })"
               :options="billingModeOptions"
               class="mt-1"
@@ -180,12 +179,6 @@
               />
             </div>
           </div>
-
-          <TimePricingSection
-            v-if="enableTimePricing"
-            :model-value="entry.time_pricing"
-            @update:model-value="emit('update', { ...entry, time_pricing: $event })"
-          />
         </div>
 
         <!-- Per-request mode -->
@@ -256,6 +249,12 @@
             />
           </div>
         </div>
+
+        <TimePricingSection
+          v-if="enableTimePricing && (entry.billing_mode === 'token' || hasMediaPricing || entry.time_pricing?.periods?.length)"
+          :model-value="entry.time_pricing"
+          @update:model-value="emit('update', { ...entry, time_pricing: $event })"
+        />
 
         <MediaPricingEditor
           :model-value="entry.media_pricing"
@@ -352,6 +351,10 @@ const billingModeLabel = computed(() => {
   const opt = billingModeOptions.value.find(o => o.value === props.entry.billing_mode)
   return opt ? opt.label : props.entry.billing_mode
 })
+
+const hasMediaPricing = computed(() =>
+  !validateMediaPricing(props.entry.media_pricing, t) && !!formMediaPricingToAPI(props.entry.media_pricing)
+)
 
 const reasoningEffortMultiplierError = computed(() =>
   validateReasoningEffortMultipliers(props.entry.reasoning_effort_multipliers, t)
