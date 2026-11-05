@@ -679,7 +679,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	if err := s.updateSnapshot(ctx, account, snapshot, syncRate); err != nil {
 		return nil, err
 	}
-	if syncRate != nil && previousRate != *syncRate {
+	if syncRate != nil {
 		// 写回是后台任务的裸 SQL，不经过管理端路由，因此不会产生 audit_logs 行。
 		// old_rate_multiplier 是本次探测开始时读到的值（写回的 CAS 不比对该列）。
 		slog.Info("upstream_billing_rate_sync_applied",
@@ -832,6 +832,13 @@ func (s *UpstreamBillingProbeService) persistProbeFailure(
 	retryAfterDuration time.Duration,
 ) (*UpstreamBillingProbeSnapshot, error) {
 	snapshot := upstreamBillingProbeFailureSnapshot(account, intervalMinutes, now, statusCode, reason, retryAfterDuration)
+	if snapshot.Balance != nil && s.accountOps != nil && s.accountOps.needsBalanceProbe(ctx, account.ID) {
+		b := *snapshot.Balance
+		b.Status = UpstreamBillingProbeStatusFailed
+		b.LastAttemptAt = now
+		b.LastError = reason
+		snapshot.Balance = &b
+	}
 	if err := s.updateSnapshot(ctx, account, snapshot, nil); err != nil {
 		return nil, err
 	}

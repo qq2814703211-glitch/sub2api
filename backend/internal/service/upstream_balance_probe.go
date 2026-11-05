@@ -131,7 +131,7 @@ func upstreamBalanceSnapshotFromResult(
 			reason = "http_error"
 		default:
 			data, err := parseUpstreamBalanceResponse(result.body)
-			if err == nil {
+			if valid, ok := data["is_valid"].(bool); err == nil && ok && valid {
 				return &UpstreamBalanceSnapshot{
 					Status:        UpstreamBillingProbeStatusOK,
 					Data:          data,

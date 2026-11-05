@@ -82,7 +82,6 @@ func (s *AccountOpsService) SaveGroups(ctx context.Context, groups []AccountOpsG
 				}
 			}
 			c.UngroupedAccountIDs = ungrouped
-			normalizeAccountOpsGroupRules(c, byID)
 		}
 		return nil
 	})
