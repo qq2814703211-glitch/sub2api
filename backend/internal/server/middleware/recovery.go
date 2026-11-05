@@ -17,7 +17,7 @@ import (
 // It preserves Gin's broken-pipe handling by not attempting to write a response
 // when the client connection is already gone.
 func Recovery() gin.HandlerFunc {
-	return gin.CustomRecoveryWithWriter(gin.DefaultErrorWriter, func(c *gin.Context, recovered any) {
+	recoverRequest := gin.CustomRecoveryWithWriter(gin.DefaultErrorWriter, func(c *gin.Context, recovered any) {
 		recoveredErr, _ := recovered.(error)
 
 		if isBrokenPipe(recoveredErr) {
@@ -42,6 +42,11 @@ func Recovery() gin.HandlerFunc {
 		)
 		c.Abort()
 	})
+	return func(c *gin.Context) {
+		c.Set(recoveryActiveKey, true)
+		defer finishTimingAfterRecovery(c)
+		recoverRequest(c)
+	}
 }
 
 func isBrokenPipe(err error) bool {

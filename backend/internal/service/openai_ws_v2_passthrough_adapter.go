@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
@@ -22,6 +23,7 @@ import (
 
 type openAIWSClientFrameConn struct {
 	conn                 *coderws.Conn
+	diagnostics          *wsConnectionDiagnostics
 	controlCtx           context.Context
 	interTurnIdleTimeout time.Duration
 	interTurnStarted     chan struct{}
@@ -426,6 +428,9 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context)
 	for {
 		select {
 		case result := <-readResultCh:
+			if col := requesttiming.From(ctx); col != nil {
+				col.WSFrame(false, len(result.payload), openAIWSPassthroughStartsSemanticOutput(result.payload), result.err)
+			}
 			if result.err == nil {
 				c.observeUpstreamActivity(result.msgType, result.payload)
 			}
@@ -465,7 +470,11 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context
 	if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
 		generation = c.armDeadline(payload)
 	}
-	if err := c.inner.WriteFrame(ctx, msgType, payload); err != nil {
+	err := c.inner.WriteFrame(ctx, msgType, payload)
+	if col := requesttiming.From(ctx); col != nil {
+		col.WSFrame(true, len(payload), false, err)
+	}
+	if err != nil {
 		c.disarmDeadline(generation)
 		return err
 	}
@@ -652,7 +661,11 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	return WriteCapturedWSClient(requestcapture.WithSession(ctx, requestcapture.FromContext(c.controlCtx)), c.conn, msgType, payload)
+	if c.diagnostics != nil {
+		ctx = requesttiming.WithSource(context.WithValue(ctx, wsDiagnosticsKey{}, c.diagnostics), c.diagnostics)
+	}
+	ctx = requestcapture.WithSession(ctx, requestcapture.FromContext(c.controlCtx))
+	return writeDiagnosticWSClient(ctx, c.conn, msgType, payload)
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -878,8 +891,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
 		finishCapture := captureOpenAIWSHandshake(ctx, account.ID, wsURL)
+		dialCtx, finishDiagnosticHandshake := requesttiming.StartHandshake(dialCtx, account.ID)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		finishCapture(statusCode, handshakeHeaders, err)
+		if err == nil {
+			finishDiagnosticHandshake(http.StatusSwitchingProtocols, nil)
+		} else {
+			finishDiagnosticHandshake(statusCode, err)
+		}
 		cancelDial()
 		if err == nil {
 			break
@@ -961,6 +980,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
 	clientFrameConn := &openAIWSClientFrameConn{
 		conn:                 clientConn,
+		diagnostics:          wsDiagnostics(ctx),
 		controlCtx:           ctx,
 		interTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout(),
 		interTurnStarted:     make(chan struct{}, 1),
