@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import type { MediaPricing } from '@/types/mediaPricing'
 import type { BillingMode } from '@/constants/channel'
 
 export interface UserAvailableGroup {
@@ -39,6 +40,7 @@ export interface UserPricingInterval {
 }
 
 export interface UserSupportedModelPricing {
+  media_pricing?: MediaPricing | null
   billing_mode: BillingMode
   input_price: number | null
   output_price: number | null

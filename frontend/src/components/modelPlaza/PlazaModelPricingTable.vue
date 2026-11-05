@@ -24,7 +24,7 @@
           <th colspan="3" class="pz-bg pt-2 text-center">
             <div class="pz-title border-b pb-2 font-semibold">
               {{ t('modelPlaza.table.paidPrice') }}
-              <span class="pz-unit ml-1 normal-case font-normal">{{ t('modelPlaza.table.unitPerMillion') }}</span>
+              <span class="pz-unit ml-1 normal-case font-normal">{{ t(hasOnlyMediaRules ? 'mediaPricing.unitsPerRule' : hasMediaRules ? 'mediaPricing.mixedUnits' : 'modelPlaza.table.unitPerMillion') }}</span>
             </div>
           </th>
           <th
@@ -46,9 +46,12 @@
         <tr
           class="border-b border-gray-200 text-left text-[11px] font-medium uppercase leading-4 tracking-wide text-gray-500 dark:border-dark-700 dark:text-dark-400"
         >
-          <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.input') }}</th>
-          <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.output') }}</th>
-          <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.cache') }}</th>
+          <th v-if="hasOnlyMediaRules" colspan="3" class="pz-bg px-3 py-2 font-medium">{{ t('mediaPricing.displayTitle') }}</th>
+          <template v-else>
+            <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.input') }}</th>
+            <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.output') }}</th>
+            <th class="pz-bg px-3 py-2 font-medium">{{ t('modelPlaza.table.cache') }}</th>
+          </template>
           <th class="border-l border-gray-100 px-3 py-2 font-medium dark:border-dark-700/60">
             {{ t('modelPlaza.table.input') }}
           </th>
@@ -66,6 +69,7 @@
           <td class="border-r border-gray-100 py-2.5 pl-5 pr-4 align-middle dark:border-dark-700/60">
             <div class="flex flex-wrap items-center gap-1.5">
               <span class="font-medium text-gray-900 dark:text-white">{{ m.name }}</span>
+              <span v-if="m.pricing?.media_pricing?.rules?.length" class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-dark-700/70 dark:text-dark-300">{{ t('mediaPricing.badge') }}</span>
               <!-- 时段徽章紧跟模型名,其余徽章排在后面,空间不足时先换行的是它们 -->
               <span
                 v-if="period"
@@ -87,7 +91,7 @@
                 {{ platformLabel(m.platform) }}
               </span>
               <span
-                v-if="billingMode(m) !== BILLING_MODE_TOKEN"
+                v-if="billingMode(m) !== BILLING_MODE_TOKEN && !m.pricing?.media_pricing?.rules?.length"
                 class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-dark-700/70 dark:text-dark-300"
               >
                 {{ billingModeLabel(m) }}
@@ -112,7 +116,10 @@
           </td>
 
           <!-- token 计费:输入 / 输出 / 缓存(写/读),有阶梯时每档一行;档位标签只放输入列,其余列按行对齐 -->
-          <template v-if="billingMode(m) === BILLING_MODE_TOKEN">
+          <td v-if="m.pricing?.media_pricing?.rules?.length" colspan="3" class="pz-cell px-3 py-2.5 align-middle">
+            <MediaPricingRules :pricing="m.pricing.media_pricing" :multiplier="mediaRuleRate(m, period)" />
+          </td>
+          <template v-else-if="billingMode(m) === BILLING_MODE_TOKEN">
             <td class="pz-cell px-3 py-2.5 align-middle font-mono font-semibold text-gray-900 dark:text-gray-50">
               <template v-if="tokenIntervals(m).length">
                 <div
@@ -307,6 +314,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import MediaPricingRules from '@/components/channels/MediaPricingRules.vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import { platformAccentColor, platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
@@ -380,6 +388,8 @@ const sortedModels = computed(() => {
   })
 })
 
+const hasMediaRules = computed(() => props.models.some(m => !!m.pricing?.media_pricing?.rules?.length))
+const hasOnlyMediaRules = computed(() => props.models.length > 0 && props.models.every(m => !!m.pricing?.media_pricing?.rules?.length))
 const effectiveRate = computed(() => props.userRateMultiplier ?? props.rateMultiplier)
 const hasCustomRate = computed(
   () => props.userRateMultiplier != null && props.userRateMultiplier !== props.rateMultiplier
@@ -449,6 +459,10 @@ function requestRate(m: PlazaModel): number {
 function paidRequestPrice(m: PlazaModel, value: number | null | undefined): string {
   if (value == null) return '-'
   return formatScaled(value * requestRate(m), 1, MIN_DECIMALS)
+}
+
+function mediaRuleRate(m: PlazaModel, period: PlazaTimePricingPeriod | null): number {
+  return requestRate(m) * (period?.multiplier ?? 1)
 }
 
 /** 官方参考价不乘倍率。 */
