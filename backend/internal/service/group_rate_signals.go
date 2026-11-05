@@ -110,7 +110,8 @@ func ComputeGroupSignals(group *Group, history []GroupRateChange, opts GroupSign
 
 	if !group.CreatedAt.IsZero() {
 		age := now.Sub(group.CreatedAt)
-		if age >= 0 && age < GroupNewWindow {
+		// 允许应用与数据库之间的正常时钟偏差；只有明显未来的脏数据才隐藏 NEW。
+		if age >= -groupSignalFutureSkew && age < GroupNewWindow {
 			out.IsNew = true
 			out.LaunchedAt = group.CreatedAt
 			if !opts.PersonalRate && !opts.HistoryUnavailable {
