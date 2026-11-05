@@ -594,8 +594,38 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
-	if result != nil && strings.HasPrefix(result.ResponseID, "compat-video:") && s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey) == nil {
-		return nil, fmt.Errorf("compatible video requires configured pricing for %s", billingModel)
+	if result != nil && strings.HasPrefix(result.ResponseID, "compat-video:") {
+		resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey)
+		if resolved == nil {
+			return nil, fmt.Errorf("compatible video requires configured pricing for %s", billingModel)
+		}
+		if resolved.Mode == BillingModeToken && tokens.OutputTokens <= 0 {
+			return nil, fmt.Errorf("compatible video completion is missing token usage for %s", billingModel)
+		}
+		// This new protocol has no Grok default tier or eight-second fallback.
+		// Preserve exact usage even for an existing scalar configured card.
+		if resolved.channelPricing == nil || resolved.channelPricing.MediaPricing == nil {
+			if result.MediaUsage == nil {
+				return nil, fmt.Errorf("compatible video completion is missing media usage")
+			}
+			media := result.MediaUsage
+			units := float64(media.Count)
+			mediaMultiplier := videoMultiplier
+			if resolved.Mode == BillingModeVideo {
+				if media.DurationSeconds <= 0 {
+					return nil, fmt.Errorf("compatible video completion is missing duration")
+				}
+				units *= media.DurationSeconds
+			}
+			if resolved.Mode == BillingModeToken {
+				mediaMultiplier = multiplier
+			}
+			return s.billingService.CalculateCostUnified(CostInput{
+				Ctx: ctx, Model: billingModel, GroupID: apiKey.GroupID, Group: apiKey.Group,
+				Tokens: tokens, MediaUsage: media, RequestCount: media.Count, UsageUnits: units, SizeTier: media.Resolution,
+				RateMultiplier: mediaMultiplier, PricingAt: pricingAt, Resolver: s.resolver, Resolved: resolved,
+			})
+		}
 	}
 	// Explicit multidimensional cards must reach the unified engine before
 	// scalar image/video shortcuts. Missing dimensions must return its error,

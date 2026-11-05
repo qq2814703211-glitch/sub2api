@@ -58,6 +58,18 @@ func TestMediaRuntimeCompatibleVideoSelectorsAndBilling(t *testing.T) {
 }
 func mediaRuntimeFloat(v float64) *float64 { return &v }
 
+func TestMediaRuntimeCompatibleScalarDoesNotInventDuration(t *testing.T) {
+	svc, key := newVideoBillingTestService()
+	key.Group.ModelPricing = []ChannelModelPricing{{Models: []string{"video-fixture"}, BillingMode: BillingModeVideo, PerRequestPrice: ptrFloat(0.2)}}
+	result := &OpenAIForwardResult{Model: "video-fixture", ResponseID: "compat-video:task", VideoCount: 1, MediaUsage: &MediaUsage{Count: 1, Resolution: "4k", DurationSeconds: 4.5}}
+	cost, err := svc.calculateOpenAIRecordUsageCost(context.Background(), result, key, []string{result.Model}, 9, 8, 2, 1, UsageTokens{}, "", nil, false, time.Time{})
+	require.NoError(t, err)
+	require.InDelta(t, 1.8, cost.ActualCost, 1e-12)
+	result.MediaUsage.DurationSeconds = 0
+	_, err = svc.calculateOpenAIRecordUsageCost(context.Background(), result, key, []string{result.Model}, 9, 8, 2, 1, UsageTokens{}, "", nil, false, time.Time{})
+	require.ErrorContains(t, err, "missing duration")
+}
+
 func TestMediaRuntimeGrokActualDurationPreservesUnnormalizedRequest(t *testing.T) {
 	info := ParseGrokMediaRequest("application/json", []byte(`{"model":"grok-imagine-video","resolution":"4k","duration":12,"generate_audio":false,"mode":"pro","fps":60,"image":{"url":"https://example.test/input.png"}}`))
 	pending := &GrokVideoPendingBilling{Model: info.Model, VideoResolution: info.Resolution, VideoDurationSeconds: info.DurationSeconds, MediaUsage: info.MediaUsage}
