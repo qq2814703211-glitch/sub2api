@@ -163,6 +163,9 @@ export default {
 
   // Navigation
   nav: {
+    opsCenter: 'Operations center',
+    accountOps: 'Account operations',
+    upstreamMonitor: 'Upstream monitor',
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
