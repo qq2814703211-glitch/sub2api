@@ -641,8 +641,21 @@ export interface Group {
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   require_oauth_only: boolean
   require_privacy_set: boolean
+  /** 查看者专属展示提示，仅由 GET /groups/available 返回；不参与计价。 */
+  recent_rate_change?: GroupRecentRateChange | null
+  is_new?: boolean
+  launched_at?: string | null
+  launch_rate?: number | null
   created_at: string
   updated_at: string
+}
+
+/** 分组最近一次基础倍率调整；delta 为绝对值，direction 表达方向。 */
+export interface GroupRecentRateChange {
+  direction: 'up' | 'down'
+  delta: number
+  previous_rate: number
+  changed_at: string
 }
 
 export interface AdminGroup extends Group {
