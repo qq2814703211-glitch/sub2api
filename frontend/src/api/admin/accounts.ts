@@ -1026,8 +1026,8 @@ export async function createSparkShadow(parentId: number, payload: SparkShadowCr
   return data
 }
 
-export async function getUpstreamBillingProbeSettings(): Promise<UpstreamBillingProbeSettings> {
-  const { data } = await apiClient.get<UpstreamBillingProbeSettings>('/admin/accounts/upstream-billing-probe/settings')
+export async function getUpstreamBillingProbeSettings(signal?: AbortSignal): Promise<UpstreamBillingProbeSettings> {
+  const { data } = await apiClient.get<UpstreamBillingProbeSettings>('/admin/accounts/upstream-billing-probe/settings', { signal })
   return data
 }
 
