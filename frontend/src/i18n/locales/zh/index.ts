@@ -8,6 +8,7 @@ import batchImage from './batchImage'
 import imagegen from './imagegen'
 import admin from './admin'
 import misc from './misc'
+import tickets from './tickets'
 
 export default {
   adminAccessKeys,
@@ -20,4 +21,5 @@ export default {
   ...imagegen,
   admin,
   ...misc,
+  ...tickets,
 }
