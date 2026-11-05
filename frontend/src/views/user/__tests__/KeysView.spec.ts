@@ -637,7 +637,7 @@ describe('user KeysView column settings', () => {
     await nextTick()
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
-    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ group_id: 3, group_ids: [3, 1, 2] }))
+    expect(updateKey).toHaveBeenCalledWith(key.id, expect.objectContaining({ group_id: 3, group_ids: [3, 1, 2], concurrency_limit: 0 }), { signal: expect.any(AbortSignal) })
     wrapper.unmount()
   })
 
