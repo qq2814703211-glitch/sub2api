@@ -9,8 +9,10 @@ import batchImage from './batchImage'
 import imagegen from './imagegen'
 import admin from './admin'
 import misc from './misc'
+import mediaPricing from './mediaPricing'
 
 export default {
+  mediaPricing,
   adminAccessKeys,
   mcp,
   ...landing,

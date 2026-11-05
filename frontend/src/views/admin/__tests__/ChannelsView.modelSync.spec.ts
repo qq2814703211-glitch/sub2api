@@ -44,6 +44,7 @@ function mountView() {
           template: '<section v-if="show"><slot /><slot name="footer" /></section>'
         }),
         PricingEntryCard: defineComponent({
+          name: 'PricingEntryCard',
           props: ['entry'],
           template: '<div class="pricing-entry">{{ entry.models.join(", ") }}</div>'
         }),
@@ -148,6 +149,7 @@ describe('ChannelsView pricing model sync', () => {
     await flushPromises()
     expect(wrapper.findAll('.pricing-entry')).toHaveLength(1)
     expect(wrapper.get('.pricing-entry').text()).toBe('gpt-latest')
+    expect(wrapper.findComponent({ name: 'PricingEntryCard' }).props('entry').media_pricing).toBeNull()
     expect(visibleSyncButtons(wrapper)[0].attributes('disabled')).toBeUndefined()
     expect(showError).not.toHaveBeenCalled()
     wrapper.unmount()

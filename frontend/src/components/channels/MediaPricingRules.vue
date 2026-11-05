@@ -1,0 +1,22 @@
+<template>
+  <div v-if="pricing?.rules?.length" data-testid="media-pricing-rules" class="space-y-2 text-xs">
+    <p class="font-medium">{{ t('mediaPricing.displayTitle') }}</p>
+    <p class="text-gray-500 dark:text-gray-400">{{ t('mediaPricing.displayHint') }}</p>
+    <div v-for="(rule, index) in pricing.rules" :key="index" class="border-t border-gray-200 pt-2 dark:border-dark-600">
+      <div class="font-medium">{{ rule.name || t('mediaPricing.unnamedRule', { index: index + 1 }) }}</div>
+      <div class="flex flex-wrap gap-x-2 text-gray-500 dark:text-gray-400">
+        <span v-for="(condition, conditionIndex) in mediaConditionLabels(rule.conditions, t)" :key="conditionIndex" class="break-words">{{ condition }}</span>
+        <span v-if="!mediaConditionLabels(rule.conditions, t).length">{{ t('mediaPricing.allConditions') }}</span>
+      </div>
+      <div v-for="(label, priceIndex) in mediaPriceLabels(rule, multiplier, t)" :key="priceIndex" class="break-words font-mono">{{ label }}</div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import type { MediaPricing } from '@/types/mediaPricing'
+import { mediaConditionLabels, mediaPriceLabels } from '@/utils/mediaPricing'
+withDefaults(defineProps<{ pricing?: MediaPricing | null; multiplier?: number }>(), { multiplier: 1 })
+const { t } = useI18n()
+</script>

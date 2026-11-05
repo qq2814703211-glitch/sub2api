@@ -257,6 +257,11 @@
           </div>
         </div>
 
+        <MediaPricingEditor
+          :model-value="entry.media_pricing"
+          @update:model-value="emit('update', { ...entry, media_pricing: $event })"
+        />
+
         <div class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-600" data-testid="reasoning-effort-multipliers">
           <div class="flex items-center justify-between gap-2">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -306,6 +311,8 @@ import Icon from '@/components/icons/Icon.vue'
 import IntervalRow from './IntervalRow.vue'
 import ModelTagInput from './ModelTagInput.vue'
 import TimePricingSection from './TimePricingSection.vue'
+import MediaPricingEditor from './MediaPricingEditor.vue'
+import { formMediaPricingToAPI, validateMediaPricing } from '@/utils/mediaPricing'
 import type { PricingFormEntry, IntervalFormEntry } from './types'
 import { perTokenToMTok, getPlatformTagClass, isValidPositiveMultiplier, validateReasoningEffortMultipliers } from './types'
 import { REASONING_EFFORT_LEVELS, type ReasoningEffortLevel } from '@/constants/channel'
@@ -421,7 +428,7 @@ async function onModelsUpdate(newModels: string[]) {
   const e = props.entry
   const hasPrice = e.input_price != null || e.output_price != null ||
                    e.cache_write_price != null || e.cache_write_1h_price != null || e.cache_read_price != null
-  if (hasPrice) return
+  if (hasPrice || validateMediaPricing(e.media_pricing, t) || formMediaPricingToAPI(e.media_pricing)?.rules.length) return
 
   // 查询第一个新增模型的默认价格
   try {

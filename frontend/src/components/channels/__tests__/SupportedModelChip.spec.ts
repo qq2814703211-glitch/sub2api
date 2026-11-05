@@ -12,6 +12,39 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('SupportedModelChip', () => {
+  it('displays media rules and allows moving into the scrollable tooltip', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SupportedModelChip, {
+      attachTo: document.body,
+      props: { model: { name: 'media-example', platform: '', pricing: {
+        billing_mode: 'image', input_price: null, output_price: null, cache_write_price: null,
+        cache_read_price: null, image_input_price: null, image_output_price: null, per_request_price: 999, intervals: [],
+        media_pricing: { rules: [{ name: 'layered image', unit: 'image', price: 0.12, prompt_price: 0.01, conditions: { layer: true, max_pixels: 4194304 } }] },
+      } } },
+    })
+    try {
+      const trigger = wrapper.get('[tabindex="0"]')
+      await trigger.trigger('mouseenter')
+      await nextTick()
+      const tooltip = document.body.querySelector<HTMLElement>('[role="tooltip"]')!
+      expect(tooltip.textContent).toContain('layered image')
+      expect(tooltip.textContent).toContain('0.12 / mediaPricing.units.image')
+      expect(tooltip.textContent).not.toContain('$999')
+      expect(trigger.text()).toContain('mediaPricing.badge')
+      await trigger.trigger('mouseleave')
+      tooltip.dispatchEvent(new MouseEvent('mouseenter'))
+      await vi.advanceTimersByTimeAsync(200)
+      expect(tooltip.style.display).not.toBe('none')
+      tooltip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await nextTick()
+      expect(tooltip.style.display).toBe('none')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+
   it.each(['availableChannels.pricing', 'admin.availableChannels.pricing'])(
     'shows video prices per second using %s translations',
     async (pricingKeyPrefix) => {
