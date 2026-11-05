@@ -99,6 +99,14 @@ export default {
       failureHint: '以下密钥更新失败，可修改设置后重试。再次提交只会更新失败的密钥。'
     },
     deleteKey: '删除密钥',
+    bulkDelete: {
+      button: '删除选中',
+      title: '批量删除密钥',
+      confirmMessage: '确定要删除选中的 {count} 个密钥吗？此操作无法撤销。',
+      deleting: '正在删除 {count} 个密钥…',
+      success: '已删除 {count} 个密钥',
+      partialFailure: '已删除 {success} 个密钥，{failed} 个删除失败，失败项已恢复选中'
+    },
     deleteConfirmMessage: "确定要删除 '{name}' 吗？此操作无法撤销。",
     id: 'ID',
     apiKey: 'API 密钥',
