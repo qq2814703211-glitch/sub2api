@@ -88,6 +88,8 @@ type postUsageBillingParams struct {
 	// path that records only API-key 5h/1d/7d window usage. It must not trigger
 	// balance, subscription, account, platform, or lifetime-key-quota effects.
 	SimpleModeKeyRateLimitOnly bool
+	// Durable replay invalidates authoritative snapshots instead of optimistic subtraction.
+	SkipBalanceCache bool
 }
 
 var ErrSimpleModeKeyRateLimitBillingUnavailable = errors.New("simple mode api key rate-limit billing unavailable")
@@ -416,7 +418,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
 			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
-	} else if p.Cost.ActualCost > 0 && p.User != nil {
+	} else if !p.SkipBalanceCache && p.Cost.ActualCost > 0 && p.User != nil {
 		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
 	}
 
@@ -867,6 +869,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
 	}
 
+	if s.capturePreparedCachedContentCharge(ctx, usageLog, input, cost, accountRateMultiplier, isSubscriptionBilling) {
+		return nil
+	}
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
