@@ -290,15 +290,8 @@ func (s *AccountOpsService) refreshConfig(ctx context.Context, reconcileGroups b
 		s.failures.Add(1)
 		return false
 	}
-	if reconcileGroups && c.Enabled && s.accounts != nil {
-		if reconciled, reconcileErr := s.ensureManualAccountOpsGroups(query); reconcileErr != nil {
-			s.failures.Add(1)
-			return false
-		} else {
-			c = reconciled
-		}
-	}
-	if !c.Enabled {
+
+	if s.repo == nil {
 		return false
 	}
 	if err = s.repo.SuppressDisabled(query, c); err != nil {
@@ -308,7 +301,7 @@ func (s *AccountOpsService) refreshConfig(ctx context.Context, reconcileGroups b
 	return c.Enabled
 }
 func (s *AccountOpsService) deliver(ctx context.Context) {
-	if !s.currentConfig().hasDestination() {
+	if !s.currentConfig().Enabled || !s.currentConfig().hasDestination() {
 		return
 	}
 	for i := 0; i < 10 && ctx.Err() == nil; i++ {

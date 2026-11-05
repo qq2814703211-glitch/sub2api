@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -151,6 +150,11 @@ func TestAccountOpsProducerDatabaseDeliveryRecovery(t *testing.T) {
 	defer upstream.Close()
 	account := &service.Account{Name: "synthetic-account", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-synthetic", "base_url": upstream.URL}, Extra: map[string]any{service.UpstreamBillingProbeEnabledExtraKey: true}}
 	require.NoError(t, accounts.Create(ctx, account))
+	require.NoError(t, repository.ApplyMigrations(ctx, db))
+	preserved, e := accounts.GetByID(ctx, account.ID)
+	require.NoError(t, e)
+	require.Equal(t, account.Name, preserved.Name)
+	require.Equal(t, "sk-synthetic", preserved.GetCredential("api_key"))
 	repo := repository.NewAccountOpsRepository(db)
 	ops := service.NewAccountOpsService(settings, repo, service.NewEmailService(settings, nil))
 	ops.SetNotificationDependencies(accounts, enc, true, "UTC")
@@ -350,7 +354,13 @@ func TestAccountOpsProducerDatabaseDeliveryRecovery(t *testing.T) {
 	_, e = probe.ProbeAccount(ctx, second.ID)
 	require.NoError(t, e)
 	require.EqualValues(t, 1, upstreamCalls.Load()-calls, "existing rate request remains but module adds no balance call")
+	require.NoError(t, off.RunOnce(ctx))
+	history, e = repo.List(ctx, 0, 50)
+	require.NoError(t, e)
+	for _, event := range history {
+		require.NotContains(t, []string{"pending", "sending"}, event.State)
+	}
+	require.EqualValues(t, 2, smtp.messages.Load())
 	require.NoError(t, ops.RunOnce(ctx))
 	require.EqualValues(t, 2, smtp.messages.Load())
-	_ = io.EOF
 }
