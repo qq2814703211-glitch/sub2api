@@ -273,7 +273,8 @@ func applyAccountStatsCost(
 	totalCost float64,
 	pricingAt time.Time,
 	longContextPricingEnabled bool,
-) {
+	mediaUsage ...*MediaUsage,
+) error {
 	model := upstreamModel
 	if model == "" {
 		model = requestedModel
@@ -290,9 +291,20 @@ func applyAccountStatsCost(
 	if usageLog != nil && usageLog.ReasoningEffort != nil {
 		reasoningEffort = *usageLog.ReasoningEffort
 	}
+	var media *MediaUsage
+	if len(mediaUsage) > 0 {
+		media = mediaUsage[0]
+	}
+	if cost, owned, err := resolveMediaAccountStatsCost(ctx, cs, accountID, groupID, model, media, tokens, reasoningEffort); err != nil {
+		return err
+	} else if owned {
+		usageLog.AccountStatsCost = cost
+		return nil
+	}
 	usageLog.AccountStatsCost = resolveAccountStatsCost(
 		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt, longContextPricingEnabled, reasoningEffort,
 	)
+	return nil
 }
 
 // accountStatsLongContextPricingEnabled 判断账号统计成本是否计入长上下文阶梯。

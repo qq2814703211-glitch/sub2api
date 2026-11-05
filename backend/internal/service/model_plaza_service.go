@@ -303,8 +303,8 @@ func pruneToGroupCards(pg *PlazaGroup, g *Group) {
 //
 // 口径（重要）：广场展示的是「这个分组对外提供哪些模型」，不是「这个分组
 // 允许请求哪些模型」。二者语义不同：
-//   * model_pricing 的 models 是本分组真正对外售卖的模型清单 —— 唯一依据；
-//   * model_allowlist 只是请求许可（gate），历史上被塞进大量跨分组的
+//   - model_pricing 的 models 是本分组真正对外售卖的模型清单 —— 唯一依据；
+//   - model_allowlist 只是请求许可（gate），历史上被塞进大量跨分组的
 //     「全家桶」条目（例如 Image / 视频分组的白名单里混着一百多个 gpt/
 //     claude/grok 文本模型，国产之光的白名单里混着 grok-4.5/4.6/4.7），
 //     若把白名单也当作模型清单，广场就会把别的分组的模型显示到这个分组下。
@@ -398,9 +398,12 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		m.Pricing = groupPricing
 		// 分组模型级固定价就是实收价，不能再被分组图片兜底档位覆盖。
 		// 否则模型广场会显示 image_price_1k/2k/4k，而实际按 model_pricing 扣费。
-		if groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest {
+		if groupPricing.MediaPricing != nil || groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest {
 			return
 		}
+	}
+	if m.Pricing != nil && m.Pricing.MediaPricing != nil {
+		return
 	}
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
@@ -428,6 +431,7 @@ func plazaPricingFromSchedule(raw *ChannelModelPricing, sched *ContextPricingSch
 		out.ImageInputPrice = raw.ImageInputPrice
 		out.ImageOutputPrice = raw.ImageOutputPrice
 		out.PerRequestPrice = raw.PerRequestPrice
+		out.MediaPricing = raw.MediaPricing.Clone()
 		out.ReasoningEffortMultipliers = reasoningEffortMultipliersFromPricing(raw)
 	}
 	first := sched.Tiers[0]
@@ -465,7 +469,7 @@ func plazaIntervalsFromTiers(tiers []ContextPricingTier) []PricingInterval {
 // 分组未配任何图片价、或定价非图片模式时原样返回。返回克隆，不修改入参
 // （渠道定价指针指向缓存共享数据）。
 func plazaImageDisplayPricing(p *ChannelModelPricing, g *Group) *ChannelModelPricing {
-	if p == nil || g == nil || p.BillingMode != BillingModeImage {
+	if p == nil || g == nil || p.MediaPricing != nil || p.BillingMode != BillingModeImage {
 		return p
 	}
 	if g.ImagePrice1K == nil && g.ImagePrice2K == nil && g.ImagePrice4K == nil {

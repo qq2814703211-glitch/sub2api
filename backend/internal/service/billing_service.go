@@ -1547,9 +1547,10 @@ type CostInput struct {
 	GroupID                   *int64 // 用于渠道定价查找
 	Group                     *Group
 	Tokens                    UsageTokens
-	RequestCount              int     // 按次计费时使用
-	UsageUnits                float64 // 音频等连续计量单位（分钟/小时/百万字符）
-	SizeTier                  string  // 按次/图片模式的层级标签（"1K","2K","4K","HD" 等）
+	MediaUsage                *MediaUsage `json:"media_usage,omitempty"`
+	RequestCount              int         // 按次计费时使用
+	UsageUnits                float64     // 音频等连续计量单位（分钟/小时/百万字符）
+	SizeTier                  string      // 按次/图片模式的层级标签（"1K","2K","4K","HD" 等）
 	RateMultiplier            float64
 	PricingAt                 time.Time             // 渠道分时定价使用的计费时刻
 	ServiceTier               string                // "priority","flex","" 等
@@ -1564,7 +1565,7 @@ type CostInput struct {
 // CalculateCostUnified 统一计费入口，支持三种计费模式。
 // 使用 ModelPricingResolver 解析定价，然后根据 BillingMode 分发计算。
 func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, error) {
-	if input.Resolver == nil {
+	if input.Resolver == nil && !(input.Resolved != nil && input.Resolved.channelPricing != nil && input.Resolved.channelPricing.MediaPricing != nil) {
 		// 无 Resolver，回退到旧路径
 		applyLongContextBilling := true
 		if input.LongContextBillingEnabled != nil {
@@ -1596,14 +1597,25 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 
 	var breakdown *CostBreakdown
 	var err error
-	switch resolved.Mode {
-	case BillingModePerRequest, BillingModeImage, BillingModeVideo:
-		breakdown, err = s.calculatePerRequestCost(resolved, input)
-		if err == nil && resolved.channelPricing != nil {
+	if resolved.channelPricing != nil && resolved.channelPricing.MediaPricing != nil {
+		breakdown, err = CalculateMediaPricingCost(resolved.channelPricing.MediaPricing, input.MediaUsage, input.Tokens, input.RateMultiplier)
+		if err == nil {
+			applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
 			applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, resolved.channelPricing.ReasoningEffortMultipliers))
+			if !mediaFinite(breakdown.TotalCost) || !mediaFinite(breakdown.ActualCost) {
+				return nil, fmt.Errorf("media cost overflow after pricing multipliers")
+			}
 		}
-	default: // BillingModeToken
-		breakdown, err = s.calculateTokenCost(resolved, input)
+	} else {
+		switch resolved.Mode {
+		case BillingModePerRequest, BillingModeImage, BillingModeVideo:
+			breakdown, err = s.calculatePerRequestCost(resolved, input)
+			if err == nil && resolved.channelPricing != nil {
+				applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, resolved.channelPricing.ReasoningEffortMultipliers))
+			}
+		default: // BillingModeToken
+			breakdown, err = s.calculateTokenCost(resolved, input)
+		}
 	}
 	if err == nil && breakdown != nil {
 		breakdown.BillingMode = string(resolved.Mode)
