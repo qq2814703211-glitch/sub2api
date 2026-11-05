@@ -15,7 +15,7 @@ import (
 )
 
 // The billed turn result of a WS passthrough image generation must carry the
-// image input tokens and the tool_usage.image_gen backfill, as HTTP does.
+// independent base and hosted-tool totals, as HTTP does.
 func TestOpenAIWSPassthroughTurnResultCarriesImageUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -33,7 +33,7 @@ func TestOpenAIWSPassthroughTurnResultCarriesImageUsage(t *testing.T) {
 
 	upstreamConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.completed","response":{"id":"resp_ws_image","model":"gpt-5.4","output":[{"id":"ig_ws_1","type":"image_generation_call","status":"completed","result":"final-image"}],"usage":{"input_tokens":120,"output_tokens":70,"input_tokens_details":{"image_tokens":40}},"tool_usage":{"image_gen":{"input_tokens_details":{"image_tokens":900},"output_tokens_details":{"image_tokens":55}}}}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ws_image","model":"gpt-5.4","output":[{"id":"ig_ws_1","type":"image_generation_call","status":"completed","result":"final-image"}],"usage":{"input_tokens":120,"output_tokens":70,"input_tokens_details":{"image_tokens":40}},"tool_usage":{"image_gen":{"input_tokens":919,"output_tokens":55,"input_tokens_details":{"image_tokens":900,"text_tokens":19},"output_tokens_details":{"image_tokens":55},"cached_tokens":12,"cached_tokens_details":{"cached_image_tokens":10,"cached_text_tokens":2}}}}}`),
 		},
 	}
 	svc := &OpenAIGatewayService{
@@ -94,9 +94,12 @@ func TestOpenAIWSPassthroughTurnResultCarriesImageUsage(t *testing.T) {
 
 	select {
 	case result := <-resultCh:
-		require.Equal(t, 120, result.Usage.InputTokens)
-		require.Equal(t, 40, result.Usage.ImageInputTokens, "usage image input wins over the hosted tool breakdown")
-		require.Equal(t, 55, result.Usage.ImageOutputTokens, "tool_usage.image_gen fills the missing image output counter")
+		require.Equal(t, 1039, result.Usage.InputTokens)
+		require.Equal(t, 940, result.Usage.ImageInputTokens, "base and tool images are independent")
+		require.Equal(t, 55, result.Usage.ImageOutputTokens)
+		require.Equal(t, 125, result.Usage.OutputTokens)
+		require.Equal(t, 12, result.Usage.CacheReadInputTokens)
+		require.Equal(t, 10, result.Usage.ImageCacheReadTokens)
 	case <-time.After(5 * time.Second):
 		t.Fatal("passthrough turn result was not reported")
 	}

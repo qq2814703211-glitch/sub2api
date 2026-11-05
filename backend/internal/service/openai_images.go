@@ -1380,21 +1380,7 @@ func mergeOpenAIUsage(dst *OpenAIUsage, body []byte) {
 		return
 	}
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(body); ok {
-		if parsed.InputTokens > 0 {
-			dst.InputTokens = parsed.InputTokens
-		}
-		if parsed.OutputTokens > 0 {
-			dst.OutputTokens = parsed.OutputTokens
-		}
-		if parsed.CacheReadInputTokens > 0 {
-			dst.CacheReadInputTokens = parsed.CacheReadInputTokens
-		}
-		if parsed.ImageInputTokens > 0 {
-			dst.ImageInputTokens = parsed.ImageInputTokens
-		}
-		if parsed.ImageOutputTokens > 0 {
-			dst.ImageOutputTokens = parsed.ImageOutputTokens
-		}
+		mergeOpenAIUsageNonZero(dst, parsed)
 	}
 }
 
