@@ -298,6 +298,8 @@ type OpenAIForwardResult struct {
 	SearchCount int
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
+	// MediaUsage is protocol-derived metadata, including successful outputs only.
+	MediaUsage *MediaUsage `json:"media_usage,omitempty"`
 
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool
