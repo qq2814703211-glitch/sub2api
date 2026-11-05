@@ -595,7 +595,7 @@ func detachUpstreamContext(ctx context.Context, drainTimeout ...time.Duration) (
 	if ctx == nil {
 		return context.Background(), func() {}
 	}
-	return detachAPIKeyUpstreamContext(ctx, drainTimeout...)
+	return pkghttputil.DetachUpstreamContext(ctx, drainTimeout...), func() {}
 }
 
 // billingDeps 扣费逻辑依赖的服务（由各 gateway service 提供）
