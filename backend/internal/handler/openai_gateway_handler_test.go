@@ -1931,6 +1931,9 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
+	keyConcurrencyService  *service.ConcurrencyService
+	keyConcurrencyLimit    int
+	keyRevalidator         service.APIKeyQueueAuthRevalidator
 	simpleModeRejectAtRead int64
 	compositeResolver      *service.CompositeRouteResolver
 	accountPlatform        string
@@ -3053,10 +3056,14 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
 
+	if tc.keyConcurrencyService != nil {
+		h.concurrencyHelper = NewConcurrencyHelper(tc.keyConcurrencyService, SSEPingFormatNone, time.Second)
+	}
 	apiKey := &service.APIKey{
-		ID:      1801,
-		GroupID: &groupID,
-		User:    &service.User{ID: 1701, Status: service.StatusActive},
+		ID:               1801,
+		ConcurrencyLimit: tc.keyConcurrencyLimit,
+		GroupID:          &groupID,
+		User:             &service.User{ID: 1701, Status: service.StatusActive},
 	}
 	if tc.apiKeyService != nil {
 		h.apiKeyService = tc.apiKeyService
@@ -3072,6 +3079,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		if tc.keyRevalidator != nil {
+			ctx, cancel := service.WithAPIKeyAdmissionOwner(c.Request.Context())
+			defer cancel()
+			ctx = service.WithAPIKeyQueueAuthRevalidator(ctx, tc.keyRevalidator)
+			c.Request = c.Request.WithContext(ctx)
+		}
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		if tc.apiKeyService != nil && apiKey.Group != nil {
@@ -3172,8 +3185,12 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			}
 			require.Contains(t, closeErr.Reason, reason)
 			require.Len(t, upstreamPayloadCh, turnCount-1, "rejected turn must not reach upstream")
+			payloads := make([][]byte, 0, len(upstreamPayloadCh))
+			for len(upstreamPayloadCh) > 0 {
+				payloads = append(payloads, <-upstreamPayloadCh)
+			}
 			_ = clientConn.CloseNow()
-			return openAIResponsesWSUsageLogResult{}
+			return openAIResponsesWSUsageLogResult{upstreamPayloads: payloads}
 		}
 		readCompleted()
 	}

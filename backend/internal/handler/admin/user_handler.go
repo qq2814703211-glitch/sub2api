@@ -456,6 +456,9 @@ func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
 		return
 	}
 
+	if h.concurrencyService != nil {
+		h.concurrencyService.FillAPIKeyQueueStats(c.Request.Context(), keys)
+	}
 	out := make([]dto.APIKey, 0, len(keys))
 	for i := range keys {
 		out = append(out, *dto.APIKeyFromService(&keys[i]))
