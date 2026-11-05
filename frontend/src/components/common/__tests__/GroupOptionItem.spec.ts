@@ -41,4 +41,33 @@ describe('GroupOptionItem description layout', () => {
     expect(descriptionElement?.classes()).toContain('line-clamp-3')
     expect(wrapper.find('[title]').attributes('title')).toBe(description)
   })
+
+  it('renders passive rate-change badges when the available group carries signals', () => {
+    const wrapper = mount(GroupOptionItem, {
+      props: {
+        name: 'Example group',
+        platform: 'openai',
+        rateMultiplier: 0.08,
+        signals: {
+          recent_rate_change: {
+            direction: 'up',
+            delta: 0.02,
+            previous_rate: 0.06,
+            changed_at: '2026-11-04T10:30:00Z',
+          },
+        },
+      },
+      global: {
+        stubs: {
+          GroupBadge: true,
+        },
+      },
+    })
+
+    const badge = wrapper.get('[data-testid="group-rate-signal-rate"]')
+    expect(badge.element.tagName).toBe('SPAN')
+    expect(badge.attributes('role')).toBe('img')
+    expect(badge.text()).toBe('0.02')
+    expect(wrapper.find('button[data-testid="group-rate-signal-rate"]').exists()).toBe(false)
+  })
 })
