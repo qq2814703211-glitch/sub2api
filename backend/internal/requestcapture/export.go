@@ -81,6 +81,9 @@ func (m *Manager) Export(ctx context.Context, w io.Writer, taskID, recordID stri
 	if err != nil {
 		return err
 	}
+	if m.taskRetentionExpired(t) {
+		return ErrNotFound
+	}
 	if t.Status == "running" && recordID == "" {
 		return ErrFinalizing
 	}

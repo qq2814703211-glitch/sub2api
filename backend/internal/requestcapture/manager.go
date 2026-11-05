@@ -491,6 +491,12 @@ func (m *Manager) run() {
 	defer close(m.closed)
 	defer m.unlockOwner()
 	lastCleanup := time.Time{}
+	timer := time.NewTimer(time.Second)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
+	var tick <-chan time.Time
 	for {
 		m.mu.Lock()
 		active := m.config.Enabled || len(m.sessions) > 0
@@ -501,11 +507,18 @@ func (m *Manager) run() {
 			}
 		}
 		m.mu.Unlock()
-		var timer *time.Timer
-		var tick <-chan time.Time
-		if active {
-			timer = time.NewTimer(time.Second)
+		if active && tick == nil {
+			timer.Reset(time.Second)
 			tick = timer.C
+		}
+		if !active && tick != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			tick = nil
 		}
 		select {
 		case e := <-m.queue:
@@ -513,11 +526,9 @@ func (m *Manager) run() {
 		case <-m.wake:
 			m.maintenance()
 		case <-tick:
+			tick = nil
 			m.maintenance()
 		case <-m.done:
-			if timer != nil {
-				timer.Stop()
-			}
 			for {
 				select {
 				case e := <-m.queue:
@@ -532,9 +543,6 @@ func (m *Manager) run() {
 					return
 				}
 			}
-		}
-		if timer != nil {
-			timer.Stop()
 		}
 		if m.enabled.Load() && time.Since(lastCleanup) >= time.Minute {
 			m.cleanExpired()
