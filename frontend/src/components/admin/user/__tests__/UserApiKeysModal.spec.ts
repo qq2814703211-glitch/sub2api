@@ -4,9 +4,12 @@ import UserApiKeysModal from '../UserApiKeysModal.vue'
 import type { AdminUser } from '@/types'
 
 const { getKeys, updateRoutes, getGroups } = vi.hoisted(() => ({ getKeys: vi.fn(), updateRoutes: vi.fn(), getGroups: vi.fn() }))
+vi.mock('@/api/admin/apiKeys',()=>({updateConcurrency:vi.fn()}))
 vi.mock('@/api/admin', () => ({ adminAPI: {
   users: { getUserApiKeys: getKeys }, groups: { getAll: getGroups }, apiKeys: { updateApiKeyRoutes: updateRoutes },
 } }))
+vi.mock('@/api/keyQueue',()=>({getKeyQueue:vi.fn().mockResolvedValue([])}))
+vi.mock('@/api/admin/keyQueue',()=>({getAdminUserKeyQueue:vi.fn().mockResolvedValue([])}))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
 vi.mock('@/utils/format', () => ({ formatDateTime: (value: string) => value }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -26,7 +29,7 @@ async function open() {
     props: { show: false, user: user(1) },
     global: { stubs: {
       BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
-      GroupBadge: true, GroupOptionItem: true,
+      GroupBadge: true, GroupOptionItem: true, KeyConcurrencyEditor: true,
     } },
   })
   await wrapper.setProps({ show: true })

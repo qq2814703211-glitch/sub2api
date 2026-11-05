@@ -1,0 +1,2 @@
+Single API-key concurrency and queue admission is adapted from ranxi2001/sub2api (9620d315), via kai2537/sub2api-kiss-kedaya at cdf13f1991c369dbc5a4585ad197c103f0772451.
+The adapted code is licensed under LGPL-3.0-or-later; original attribution comments are preserved.

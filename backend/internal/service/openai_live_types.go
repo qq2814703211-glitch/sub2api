@@ -15,11 +15,14 @@ const (
 )
 
 var (
-	ErrLiveUnavailable       = errors.New("live is unavailable")
-	ErrLiveConcurrencyFull   = errors.New("live concurrency is full")
-	ErrLiveCallNotFound      = errors.New("live call not found")
-	ErrLiveIdentityMismatch  = errors.New("live call identity mismatch")
-	ErrLiveControllerChanged = errors.New("live controller changed")
+	ErrLiveLeaseSourceLost        = errors.New("live source reservation lost before transfer")
+	ErrLiveLeaseTransferUncertain = errors.New("live lease transfer result is unknown")
+	ErrLiveLeaseTransferFenced    = errors.New("live lease transfer was already fenced")
+	ErrLiveUnavailable            = errors.New("live is unavailable")
+	ErrLiveConcurrencyFull        = errors.New("live concurrency is full")
+	ErrLiveCallNotFound           = errors.New("live call not found")
+	ErrLiveIdentityMismatch       = errors.New("live call identity mismatch")
+	ErrLiveControllerChanged      = errors.New("live controller changed")
 )
 
 type LiveAttestationUnavailableError struct {
@@ -40,13 +43,16 @@ type LiveCallRequest struct {
 }
 
 type LiveCallIdentity struct {
-	APIKeyID        int64
-	UserID          int64
-	GroupID         *int64
-	SubscriptionID  *int64
-	UserAgent       string
-	IPAddress       string
-	InboundEndpoint string
+	APIKeyConcurrencyLimit int
+	KeyReservation         *APIKeySlotReservation
+	UserRequestID          string
+	APIKeyID               int64
+	UserID                 int64
+	GroupID                *int64
+	SubscriptionID         *int64
+	UserAgent              string
+	IPAddress              string
+	InboundEndpoint        string
 }
 
 type LiveCallRecord struct {

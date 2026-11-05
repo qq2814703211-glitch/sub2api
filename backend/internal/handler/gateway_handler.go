@@ -1186,7 +1186,17 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 // Falls back to default models if no whitelist is configured
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
-
+	if apiKey == nil {
+		apiKey = &service.APIKey{}
+	}
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	var groupID *int64
 	var platform string
 
@@ -1267,6 +1277,14 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 		return
 	}
 
+	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+	if keyErr != nil {
+		h.handleConcurrencyError(c, keyErr, "API key", false)
+		return
+	}
+	if keyRelease != nil {
+		defer keyRelease()
+	}
 	forcedPlatform := ""
 	if value, exists := middleware2.GetForcePlatformFromContext(c); exists {
 		forcedPlatform = strings.TrimSpace(value)
