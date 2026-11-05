@@ -177,6 +177,7 @@ export default {
       preset30d: '近 30 天',
       range: '{start} 至 {end}（时区 {timezone}）',
       today: '今日',
+      noTodayRecord: '今日无记录',
       rangeTotal: '所选区间',
       requests: '请求',
       tokens: 'Token',
