@@ -62,6 +62,14 @@ type ConnectionTraceList struct {
 	RetentionDays int               `json:"retention_days"`
 }
 
+type ConnectionDiagnosticsStats struct {
+	Dropped           uint64 `json:"dropped"`
+	WriteFailures     uint64 `json:"write_failures"`
+	RetentionFailures uint64 `json:"retention_failures"`
+	QueueDepth        int    `json:"queue_depth"`
+	WorkerRunning     bool   `json:"worker_running"`
+}
+
 func (s *UsageService) RecordConnectionTrace(record ConnectionTrace) {
 	if repo, ok := s.usageRepo.(interface{ RecordConnectionTrace(ConnectionTrace) }); ok {
 		repo.RecordConnectionTrace(record)
