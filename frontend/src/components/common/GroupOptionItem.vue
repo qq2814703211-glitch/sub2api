@@ -24,6 +24,8 @@
 
     <!-- Right: rate pill + checkmark (vertically centered to first row) -->
     <div class="flex shrink-0 items-center gap-2 pt-0.5">
+      <!-- 整行本身是一个按钮/选项，因此提示只能作为被动徽标，不能嵌套控件。 -->
+      <GroupRateSignals :signals="signals" :show-rate-change="showRateChange" :interactive="false" />
       <div class="flex shrink-0 flex-col items-end gap-1">
         <!-- Rate pill (platform color) -->
         <span v-if="rateMultiplier !== undefined" :class="['inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold', ratePillClass]">
@@ -62,6 +64,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
+import GroupRateSignals from './GroupRateSignals.vue'
+import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
@@ -81,6 +85,10 @@ interface Props {
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
+  /** GET /groups/available 返回的展示提示（近期调价、新分组）。 */
+  signals?: GroupSignalSource | null
+  /** 订阅分组不展示每 token 倍率，隐藏调价箭头。 */
+  showRateChange?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -88,7 +96,9 @@ const props = withDefaults(defineProps<Props>(), {
   selected: false,
   showCheckmark: true,
   userRateMultiplier: null,
-  peakRateEnabled: false
+  peakRateEnabled: false,
+  signals: null,
+  showRateChange: true
 })
 
 // Whether user has a custom rate different from default
