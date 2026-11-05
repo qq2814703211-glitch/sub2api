@@ -19,6 +19,7 @@ const messages: Record<string, string> = {
   'keys.usageDialog.preset30d': 'Last 30 days',
   'keys.usageDialog.range': '{start} to {end} (timezone {timezone})',
   'keys.usageDialog.today': 'Today',
+  'keys.usageDialog.noTodayRecord': 'No usage recorded today',
   'keys.usageDialog.rangeTotal': 'Selected range',
   'keys.usageDialog.requests': 'requests',
   'keys.usageDialog.tokens': 'tokens',
@@ -229,6 +230,8 @@ describe('KeyUsageDialog', () => {
 
     expect(wrapper.findAll('[data-testid="key-usage-row"]')).toHaveLength(1)
     expect(wrapper.find('[data-testid="key-usage-empty"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="key-usage-today-cost"]').text()).toBe('$0.0000')
+    expect(wrapper.find('[data-testid="key-usage-today-empty"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.0000')
 
     wrapper.unmount()
@@ -238,6 +241,26 @@ describe('KeyUsageDialog', () => {
 
     expect(wrapper.find('[data-testid="key-usage-empty"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('No usage recorded in this period')
+    expect(wrapper.get('[data-testid="key-usage-today-cost"]').text()).toBe('—')
+    expect(wrapper.get('[data-testid="key-usage-today-empty"]').text()).toContain('No usage recorded today')
+  })
+
+  it('shows a dash and a no-record hint when the window has rows but not for today', async () => {
+    getDailyUsage.mockResolvedValueOnce(
+      response(
+        [point('2026-11-02', { actual_cost: 0.4, requests: 2, total_tokens: 30 })],
+        { days: 7, start: '2026-10-30', end: '2026-11-05' }
+      )
+    )
+    const wrapper = await openDialog()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="key-usage-today-cost"]').text()).toBe('—')
+    expect(wrapper.get('[data-testid="key-usage-today-empty"]').text()).toContain('No usage recorded today')
+    expect(wrapper.get('[data-testid="key-usage-today-cost"]').text()).not.toContain('$0.0000')
+    expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.4000')
+    expect(wrapper.findAll('[data-testid="key-usage-row"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="key-usage-empty"]').exists()).toBe(false)
   })
 
   it('shows an error and reloads on retry', async () => {

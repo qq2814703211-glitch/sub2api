@@ -2,7 +2,6 @@
 // 语义参考 kiss-kedaya GroupRateMultipliersModal.vue:459 applyBatchSet（f01772586）：
 // 只接受有限正数，并按界面真实精度（6 位小数）取整；舍入后 <= 0 的值不能保存。
 export const RATE_SET_DECIMALS = 6
-export const RATE_SET_MIN_VALUE = 10 ** -RATE_SET_DECIMALS
 
 export type RateSetParseResult =
   | { ok: true; value: number }
