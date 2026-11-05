@@ -103,6 +103,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // pluginManager
 		nil, // sharedRuntime
 		nil, // keyUsage
+		nil, // ticketService
 	)
 
 	require.NotPanics(t, func() {
