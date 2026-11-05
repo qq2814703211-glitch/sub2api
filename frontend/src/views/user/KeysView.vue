@@ -34,15 +34,30 @@
             </span>
             <button
               class="btn btn-primary btn-sm"
-              :disabled="loading"
+              :disabled="loading || bulkDeleting"
               data-test="bulk-edit-keys"
               @click="showBulkEditModal = true"
             >
               {{ t('keys.bulkEdit.title') }}
             </button>
-            <button class="btn btn-secondary btn-sm" @click="selectedIds = []">
+            <button
+              class="btn btn-danger btn-sm"
+              :disabled="loading || bulkDeleting"
+              data-test="bulk-delete-keys"
+              @click="openBulkDelete"
+            >
+              <Icon name="trash" size="sm" class="mr-1" />
+              {{ t('keys.bulkDelete.button') }}
+            </button>
+            <button class="btn btn-secondary btn-sm" :disabled="bulkDeleting" @click="selectedIds = []">
               {{ t('keys.bulkEdit.clearSelection') }}
             </button>
+          </div>
+          <div v-if="bulkDeleting" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <Icon name="refresh" size="sm" class="animate-spin" />
+            <span role="status" data-test="bulk-delete-progress">
+              {{ t('keys.bulkDelete.deleting', { count: bulkDeleteTotal }) }}
+            </span>
           </div>
         </div>
       </template>
@@ -159,6 +174,7 @@
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
+                :data-test="'group-key-' + row.id"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
@@ -421,6 +437,7 @@
               <!-- Toggle Status Button -->
               <button
                 @click="toggleKeyStatus(row)"
+                :data-test="'toggle-key-' + row.id"
                 :class="[
                   'flex flex-col items-center gap-0.5 rounded-lg p-1.5 transition-colors',
                   row.status === 'active'
@@ -435,6 +452,7 @@
               <!-- Edit Button -->
               <button
                 @click="editKey(row)"
+                :data-test="'edit-key-' + row.id"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-700 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
                 <Icon name="edit" size="sm" />
@@ -443,6 +461,7 @@
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
+                :data-test="'delete-key-' + row.id"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
                 <Icon name="trash" size="sm" />
@@ -1054,6 +1073,20 @@
       @cancel="showDeleteDialog = false"
     />
 
+    <!-- Bulk Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showBulkDeleteDialog"
+      :title="t('keys.bulkDelete.title')"
+      :message="bulkDeleteMessage"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      :loading="bulkDeleting"
+      data-test="bulk-delete-dialog"
+      @confirm="handleBulkDelete"
+      @cancel="showBulkDeleteDialog = false"
+    />
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaDialog"
@@ -1214,6 +1247,7 @@
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useKeyRowActions } from '@/composables/useKeyRowActions'
 
 const { t } = useI18n()
 import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
@@ -1413,6 +1447,9 @@ const filterGroupId = ref<string | number>('')
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
+const showBulkDeleteDialog = ref(false)
+const bulkDeleting = ref(false)
+const bulkDeleteTotal = ref(0)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
@@ -1429,6 +1466,74 @@ const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | n
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
 let usageAbortController: AbortController | null = null
+
+// Local row edits and optimistic deletes must win over list responses that
+// were started before the mutation. Bumping this version makes those late
+// responses discard themselves instead of restoring stale rows.
+let listMutationVersion = 0
+const invalidateListLoad = () => {
+  listMutationVersion += 1
+  abortController?.abort()
+}
+
+const matchesActiveFilters = (key: ApiKey) => {
+  if (filterStatus.value && key.status !== filterStatus.value) return false
+  if (filterGroupId.value !== '') {
+    if (String(filterGroupId.value) === '0') {
+      if (key.group_id != null) return false
+    } else if (String(key.group_id ?? '') !== String(filterGroupId.value)) {
+      return false
+    }
+  }
+  const query = filterSearch.value.trim().toLowerCase()
+  if (query) {
+    const haystack = `${key.name ?? ''} ${key.key ?? ''}`.toLowerCase()
+    if (!haystack.includes(query)) return false
+  }
+  return true
+}
+
+const compareRowsForCurrentSort = (left: ApiKey, right: ApiKey): number => {
+  const direction = sortState.value.sort_order === 'asc' ? 1 : -1
+  const field = sortState.value.sort_by
+  const read = (key: ApiKey): string | number | null => {
+    if (field === 'group') return key.group?.name ?? null
+    const value = (key as unknown as Record<string, unknown>)[field]
+    return typeof value === 'number' || typeof value === 'string' ? value : null
+  }
+  const leftValue = read(left)
+  const rightValue = read(right)
+  if (leftValue == null && rightValue == null) return 0
+  if (leftValue == null) return 1
+  if (rightValue == null) return -1
+  if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+    return (leftValue - rightValue) * direction
+  }
+  return String(leftValue).localeCompare(String(rightValue)) * direction
+}
+
+const {
+  applyTotalDelta,
+  removeKeysLocally,
+  backfillPageIfEmpty,
+  mergeKeyLocally,
+  insertKeyLocally,
+  deleteKeyLocally,
+  deleteKeysLocally
+} = useKeyRowActions({
+  apiKeys,
+  usageStats,
+  selectedIds,
+  selectedKey,
+  pagination,
+  groups,
+  matchesFilters: matchesActiveFilters,
+  compareRows: compareRowsForCurrentSort,
+  loadPage: () => loadApiKeys(),
+  invalidateListLoad,
+  deleteKey: (id) => keysAPI.delete(id),
+  deleteKeys: (ids) => keysAPI.deleteMany(ids)
+})
 
 // Get the currently selected key for group change
 const selectedKeyForGroup = computed(() => {
@@ -1646,6 +1751,7 @@ const loadApiKeys = async () => {
   const controller = new AbortController()
   abortController = controller
   const { signal } = controller
+  const mutationVersionAtStart = listMutationVersion
   loading.value = true
   try {
     // Build filters
@@ -1665,7 +1771,7 @@ const loadApiKeys = async () => {
     const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
       signal
     })
-    if (signal.aborted) return
+    if (signal.aborted || mutationVersionAtStart !== listMutationVersion) return
     apiKeys.value = response.items
     handleSelectionChange(selectedIds.value)
     pagination.value.total = response.total
@@ -1770,11 +1876,17 @@ const editKey = (key: ApiKey) => {
 const toggleKeyStatus = async (key: ApiKey) => {
   const newStatus = key.status === 'active' ? 'inactive' : 'active'
   try {
-    await keysAPI.toggleStatus(key.id, newStatus)
+    const updated = await keysAPI.toggleStatus(key.id, newStatus)
+    const merged = mergeKeyLocally(updated)
+    if (merged && !matchesActiveFilters(merged)) {
+      // The row no longer belongs under the active status filter; drop it locally.
+      const removed = removeKeysLocally([merged.id])
+      applyTotalDelta(-removed.length)
+      await backfillPageIfEmpty()
+    }
     appStore.showSuccess(
       newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
     )
-    loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToUpdateStatus'))
   }
@@ -1820,9 +1932,14 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   if (key.group_id === newGroupId) return
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    const updated = await keysAPI.update(key.id, { group_id: newGroupId })
+    const merged = mergeKeyLocally(updated)
+    if (merged && !matchesActiveFilters(merged)) {
+      const removed = removeKeysLocally([merged.id])
+      applyTotalDelta(-removed.length)
+      await backfillPageIfEmpty()
+    }
     appStore.showSuccess(t('keys.groupChangedSuccess'))
-    loadApiKeys()
   } catch (error) {
     appStore.showError(t('keys.failedToChangeGroup'))
   }
@@ -1916,11 +2033,19 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
-      await keysAPI.update(selectedKey.value.id, updates)
+      const updated = await keysAPI.update(selectedKey.value.id, updates)
+      const merged = mergeKeyLocally(updated)
+      if (merged && !matchesActiveFilters(merged)) {
+        // Renaming, regrouping or changing status can move the row out of the
+        // current filter; drop it exactly like a refreshed page would.
+        const removed = removeKeysLocally([merged.id])
+        applyTotalDelta(-removed.length)
+        await backfillPageIfEmpty()
+      }
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
-      await keysAPI.create(
+      const created = await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
         customKey,
@@ -1930,6 +2055,12 @@ const handleSubmit = async () => {
         expiresInDays,
         rateLimitData
       )
+      insertKeyLocally(created)
+      // The new row has no usage snapshot yet; fetch the page's amounts again
+      // (one batch) so its usage cell does not stay in a loading state.
+      if (apiKeys.value.some((key) => key.id === created.id) && isColumnVisible('usage')) {
+        void loadUsageStats()
+      }
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1937,7 +2068,6 @@ const handleSubmit = async () => {
       }
     }
     closeModals()
-    loadApiKeys()
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
@@ -1947,24 +2077,58 @@ const handleSubmit = async () => {
   }
 }
 
+const bulkDeleteMessage = computed(() =>
+  t('keys.bulkDelete.confirmMessage', { count: selectedIds.value.length })
+)
+
+const openBulkDelete = () => {
+  if (bulkDeleting.value || selectedIds.value.length === 0) return
+  showBulkDeleteDialog.value = true
+}
+
+const handleBulkDelete = async () => {
+  const ids = [...selectedIds.value]
+  if (bulkDeleting.value || ids.length === 0) return
+  showBulkDeleteDialog.value = false
+  bulkDeleting.value = true
+  bulkDeleteTotal.value = ids.length
+  try {
+    const result = await deleteKeysLocally(ids)
+    if (result.error) {
+      appStore.showError(t('keys.failedToDelete'))
+    } else if (result.failed.length === 0) {
+      appStore.showSuccess(t('keys.bulkDelete.success', { count: result.succeeded.length }))
+    } else if (result.succeeded.length > 0) {
+      appStore.showError(t('keys.bulkDelete.partialFailure', {
+        success: result.succeeded.length,
+        failed: result.failed.length
+      }))
+    } else {
+      appStore.showError(t('keys.failedToDelete'))
+    }
+  } finally {
+    bulkDeleting.value = false
+    bulkDeleteTotal.value = 0
+  }
+}
+
 /**
  * 处理删除 API Key 的操作
  * 优化：错误处理改进，优先显示后端返回的具体错误消息（如权限不足等），
  * 若后端未返回消息则显示默认的国际化文本
  */
 const handleDelete = async () => {
-  if (!selectedKey.value) return
-
-  try {
-    await keysAPI.delete(selectedKey.value.id)
+  const key = selectedKey.value
+  if (!key) return
+  showDeleteDialog.value = false
+  const result = await deleteKeyLocally(key)
+  if (result.ok) {
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
-    showDeleteDialog.value = false
-    loadApiKeys()
-  } catch (error: any) {
-    // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
-    const errorMsg = error?.message || t('keys.failedToDelete')
-    appStore.showError(errorMsg)
+    return
   }
+  const error = result.error as { response?: { data?: { detail?: string } }; message?: string } | undefined
+  const errorMsg = error?.response?.data?.detail || error?.message || t('keys.failedToDelete')
+  appStore.showError(errorMsg)
 }
 
 const closeModals = () => {
@@ -2042,12 +2206,12 @@ const resetRateLimitUsage = async () => {
   if (!selectedKey.value) return
   showResetRateLimitDialog.value = false
   try {
-    await keysAPI.update(selectedKey.value.id, { reset_rate_limit_usage: true })
+    const target = selectedKey.value
+    const updated = await keysAPI.update(target.id, { reset_rate_limit_usage: true })
     appStore.showSuccess(t('keys.rateLimitResetSuccess'))
-    // Refresh key data
-    await loadApiKeys()
-    // Update the editing key with fresh data
-    const refreshedKey = apiKeys.value.find(k => k.id === selectedKey.value!.id)
+    // Patch only this key instead of reloading the whole page.
+    if (mergeKeyLocally(updated)) return
+    const refreshedKey = apiKeys.value.find(k => k.id === target.id)
     if (refreshedKey) {
       selectedKey.value = refreshedKey
     }
