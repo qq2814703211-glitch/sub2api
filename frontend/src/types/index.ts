@@ -2285,6 +2285,7 @@ export interface UsageQueryParams {
   timezone?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
+  request_id?: string
 }
 
 // ==================== Account Usage Statistics ====================
