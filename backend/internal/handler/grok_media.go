@@ -245,6 +245,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 	}
+	if boundLookupAccountID > 0 && apiKey.HasMultipleRoutes() {
+		if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, apiKey, &subscription, nil, routingModel, body); bindErr != nil {
+			h.errorResponse(c, http.StatusForbidden, "permission_error", "Video task group is no longer available")
+			return
+		}
+	}
 	// Grok 媒体（图片/视频生成与视频查询）按媒体倍率计费，不在 token 利润门
 	// 范围内：显式豁免，防止 service 层防御性装门按文本 D 误过滤媒体请求，
 	// 也防止已计费的在途视频任务因绑定账号被门排除而查询返回伪 404。
