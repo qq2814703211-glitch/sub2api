@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestoutcome"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
+	"github.com/Wei-Shaw/sub2api/internal/poison"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +26,7 @@ type ConnectionTraceRecorder interface {
 var connectionDiagnosticsEnabled atomic.Bool
 
 func SetConnectionDiagnosticsEnabled(enabled bool) { connectionDiagnosticsEnabled.Store(enabled) }
-func ConnectionDiagnosticsEnabled() bool { return connectionDiagnosticsEnabled.Load() }
+func ConnectionDiagnosticsEnabled() bool           { return connectionDiagnosticsEnabled.Load() }
 
 // RequestTiming runs before authentication and body pre-read. WebSocket turns
 // have a different lifetime and must not be labelled as an HTTP request trace.
@@ -46,6 +47,7 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 		writer := &timingWriter{ResponseWriter: c.Writer, collector: collector}
 		c.Writer = writer
 		finish := func() {
+			poison.Finalize(c)
 			writer.mu.Lock()
 			if writer.outcome != nil {
 				terminal := writer.outcome.Finish()
