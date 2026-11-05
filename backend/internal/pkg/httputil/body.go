@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"io"
 	"net/http"
 	"strings"
@@ -68,6 +69,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 		return nil, nil
 	}
 	if preread, ok := req.Body.(*PrereadBody); ok {
+		requestcapture.FromContext(req.Context()).ClientRequest(preread.Bytes(), req.Header.Get("Content-Type"), req.Header)
 		return preread.Bytes(), nil
 	}
 
@@ -90,6 +92,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
+		requestcapture.FromContext(req.Context()).ClientRequest(raw, req.Header.Get("Content-Type"), req.Header)
 		return raw, nil
 	}
 
@@ -102,6 +105,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded))
 
+	requestcapture.FromContext(req.Context()).ClientRequest(decoded, req.Header.Get("Content-Type"), req.Header)
 	return decoded, nil
 }
 

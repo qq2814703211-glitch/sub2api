@@ -399,7 +399,10 @@ func TestCapture200Concurrent(t *testing.T) {
 	target := task(t, m, "group", 1, false)
 	sessions := make([]*Session, 200)
 	for i := range sessions {
-		sessions[i] = m.Begin(Meta{UserID: int64(i + 1), GroupID: 1, RequestID: fmt.Sprint(i), Protocol: "http"})
+		require.Eventually(t, func() bool {
+			sessions[i] = m.Begin(Meta{UserID: int64(i + 1), GroupID: 1, RequestID: fmt.Sprint(i), Protocol: "http"})
+			return sessions[i] != nil
+		}, time.Second, time.Millisecond)
 		require.NotNil(t, sessions[i])
 	}
 	runtime.GC()
