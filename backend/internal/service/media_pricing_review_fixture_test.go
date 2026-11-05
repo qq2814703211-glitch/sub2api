@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 
@@ -50,6 +51,9 @@ func TestMediaPricingReviewedCNYCards(t *testing.T) {
 			t.Run(card.Models[0]+"/"+rule.Name, func(t *testing.T) {
 				c := rule.Conditions
 				u := &MediaUsage{Count: 1, Resolution: c.Resolution, Mode: c.Mode, InputType: c.InputType, Audio: c.Audio, ReferenceVideo: c.ReferenceVideo, Layer: c.Layer, DurationSeconds: 1}
+				// Synthetic text-only input, not an omitted/unknown measurement.
+				u.InputImageCount = mediaTestPtr(0)
+				u.InputDurationSeconds = mediaTestPtr(0.0)
 				if c.MinPixels != nil {
 					u.Pixels = *c.MinPixels
 				} else if c.MaxPixels != nil {
@@ -72,7 +76,7 @@ func TestMediaPricingReviewedCNYCards(t *testing.T) {
 					expected = rule.OutputPrice
 				}
 				require.NotNil(t, expected)
-				require.Nil(t, rule.PromptPrice, "upstream prompt_rate has no verified mapping in this fixture")
+				require.Nil(t, rule.PromptPrice, "reference-image prompt_rate belongs in extra_input_image_price")
 				// A single output/second/token must use the exact rendered CNY price,
 				// without a currency conversion or maximum-price approximation.
 				require.Equal(t, 1.0, u.DurationSeconds)
@@ -84,4 +88,66 @@ func TestMediaPricingReviewedCNYCards(t *testing.T) {
 		}
 	}
 	require.Equal(t, fixture.Rules, count)
+}
+
+func TestMediaReferenceReviewedV2Cards(t *testing.T) {
+	path := os.Getenv("MEDIA_PRICING_REVIEW_V2_FIXTURE")
+	if path == "" {
+		t.Skip("review-only V2 CNY fixture not supplied")
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var fixture struct {
+		Cards []ChannelModelPricing `json:"cards"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fixture))
+	cards := map[string]ChannelModelPricing{}
+	for _, card := range fixture.Cards {
+		cards[card.Models[0]] = card
+	}
+	// Literal acceptance amounts from the reviewed V2 fixture. These values
+	// are test-only, not supplier defaults or a deployment configuration.
+	for _, tc := range []struct {
+		model           string
+		free            int
+		amounts, scaled [4]float64
+	}{
+		{"seedream-5-0-pro", 1, [4]float64{0.300844, 0.300844, 0.3209, 0.461292}, [4]float64{0.451266, 0.451266, 0.48135, 0.691938}},
+		{"seedream-5-0-pro-NSFW-economy", 1, [4]float64{0.300844, 0.300844, 0.3209, 0.461292}, [4]float64{0.451266, 0.451266, 0.48135, 0.691938}},
+		{"seedream-5.0-pro-NSFW", 1, [4]float64{0.94, 0.94, 0.98, 1.26}, [4]float64{1.41, 1.41, 1.47, 1.89}},
+		{"MiniMax-H3", 5, [4]float64{0.92, 0.92, 1.19, 2}, [4]float64{1.38, 1.38, 1.785, 3}},
+	} {
+		card, ok := cards[tc.model]
+		require.True(t, ok)
+		p := card.MediaPricing
+		require.NotNil(t, p)
+		c := p.Rules[0].Conditions
+		for i, n := range []int{0, tc.free, tc.free + 1, 9} {
+			t.Run(fmt.Sprintf("%s/%d", tc.model, n), func(t *testing.T) {
+				u := &MediaUsage{Count: 1, InputImageCount: &n, InputDurationSeconds: mediaTestPtr(0.0), DurationSeconds: 1, Resolution: c.Resolution, Layer: c.Layer}
+				if c.MinPixels != nil {
+					u.Pixels = *c.MinPixels
+				}
+				cost, err := CalculateMediaPricingCost(p, u, UsageTokens{}, 1.5)
+				require.NoError(t, err)
+				require.InDelta(t, tc.amounts[i], cost.TotalCost, 1e-12)
+				require.InDelta(t, tc.scaled[i], cost.ActualCost, 1e-12)
+				// Aliases with no layer_rate use their ordinary output rate even
+				// when the provider reports a layer; do not synthesize Pro's half price.
+				if tc.model == "seedream-5-0-pro-NSFW-economy" || tc.model == "seedream-5.0-pro-NSFW" {
+					u.Layer = mediaTestPtr(true)
+					layer, err := CalculateMediaPricingCost(p, u, UsageTokens{}, 1.5)
+					require.NoError(t, err)
+					require.Equal(t, cost, layer)
+				}
+			})
+		}
+	}
+	p := cards["MiniMax-H3"].MediaPricing
+	require.Equal(t, MediaBillingDurationTotal, p.BillingDuration)
+	u := &MediaUsage{Count: 1, InputImageCount: mediaTestPtr(9), DurationSeconds: 4, InputDurationSeconds: mediaTestPtr(3.0), TotalDurationSeconds: mediaTestPtr(7.0), Resolution: "1080p"}
+	cost, err := CalculateMediaPricingCost(p, u, UsageTokens{}, 1.5)
+	require.NoError(t, err)
+	require.InDelta(t, 7.52, cost.TotalCost, 1e-12)
+	require.InDelta(t, 11.28, cost.ActualCost, 1e-12)
 }

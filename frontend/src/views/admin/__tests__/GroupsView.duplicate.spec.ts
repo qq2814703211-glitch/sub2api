@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminGroup } from '@/types'
 import GroupsView from '@/views/admin/GroupsView.vue'
 import { adminAPI } from '@/api/admin'
-import { mediaPricingFixture } from '@/__tests__/fixtures/mediaPricing'
+import { mediaPricingFixture, referenceVideoPricingFixture } from '@/__tests__/fixtures/mediaPricing'
 
 const {
   listGroups,
@@ -177,7 +177,7 @@ function mountView() {
 }
 
 describe('GroupsView duplicate action', () => {
-  it('creates a group with media rules and reads them back in the edit form', async () => {
+  it.each([mediaPricingFixture, referenceVideoPricingFixture])('creates a group and reads request-level media pricing back: %j', async (fixture) => {
     let stored: AdminGroup | null = null
     listGroups.mockImplementation(async () => ({ items: stored ? [stored] : [], total: stored ? 1 : 0, page: 1, page_size: 20, pages: 1 }))
     vi.mocked(adminAPI.groups.create).mockImplementation(async req => {
@@ -198,13 +198,13 @@ describe('GroupsView duplicate action', () => {
       await wrapper.get('[data-testid="media-pricing-json"]').setValue('{')
       await wrapper.get('#create-group-form').trigger('submit')
       expect(adminAPI.groups.create).not.toHaveBeenCalled()
-      await wrapper.get('[data-testid="media-pricing-json"]').setValue(JSON.stringify(mediaPricingFixture))
+      await wrapper.get('[data-testid="media-pricing-json"]').setValue(JSON.stringify(fixture))
       await wrapper.get('#create-group-form').trigger('submit')
       await flushPromises()
-      expect(adminAPI.groups.create).toHaveBeenCalledWith(expect.objectContaining({ model_pricing: [expect.objectContaining({ media_pricing: mediaPricingFixture })] }))
+      expect(adminAPI.groups.create).toHaveBeenCalledWith(expect.objectContaining({ model_pricing: [expect.objectContaining({ media_pricing: fixture })] }))
       await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
       await flushPromises()
-      expect(JSON.parse(wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').element.value)).toEqual(mediaPricingFixture)
+      expect(JSON.parse(wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').element.value)).toEqual(fixture)
     } finally { wrapper.unmount() }
   })
 
@@ -234,6 +234,8 @@ describe('GroupsView duplicate action', () => {
       const editor = () => wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]')
       expect(JSON.parse(editor().element.value)).toEqual(mediaPricingFixture)
       const edited = structuredClone(mediaPricingFixture)
+      edited.extra_input_image_price = 0
+      edited.free_input_images = 0
       edited.rules[0].price = 0.25
       edited.rules[1].conditions!.audio = true
       await editor().setValue(JSON.stringify(edited))

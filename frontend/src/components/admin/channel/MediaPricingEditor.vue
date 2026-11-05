@@ -15,6 +15,7 @@
       />
     </label>
     <p class="mt-1 text-xs text-gray-500">{{ t('mediaPricing.editorHint') }}</p>
+    <p class="mt-1 text-xs text-gray-500">{{ t('mediaPricing.referenceInputHint') }}</p>
     <p class="mt-1 text-xs text-gray-500">{{ t('mediaPricing.matchHint') }}</p>
     <p v-if="error" role="alert" class="mt-1 text-xs text-red-500">{{ error }}</p>
     <details class="mt-2 text-xs text-gray-500">

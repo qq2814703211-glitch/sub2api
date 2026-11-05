@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ChannelsView from '../ChannelsView.vue'
 import type { Channel, ChannelModelPricing } from '@/api/admin/channels'
-import { mediaPricingFixture } from '@/__tests__/fixtures/mediaPricing'
+import { mediaPricingFixture, referenceVideoPricingFixture } from '@/__tests__/fixtures/mediaPricing'
 
 const { list, update, create, getGroups, showError } = vi.hoisted(() => ({
   list: vi.fn(), update: vi.fn(), create: vi.fn(), getGroups: vi.fn(), showError: vi.fn(),
@@ -63,6 +63,8 @@ describe('ChannelsView media rule persistence (mock API)', () => {
       expect(editors()).toHaveLength(2)
       expect(editors().map(e => JSON.parse(e.element.value))).toEqual([mediaPricingFixture, mediaPricingFixture])
       const channelRules = wire(mediaPricingFixture)
+      channelRules.extra_input_image_price = 0
+      channelRules.free_input_images = 0
       channelRules.rules[0].price = 0.25
       const statsRules = wire(mediaPricingFixture)
       statsRules.rules[4].image_output_price = 0.00002
@@ -99,7 +101,7 @@ describe('ChannelsView media rule persistence (mock API)', () => {
     } finally { wrapper.unmount() }
   })
 
-  it('creates and reloads media-only image pricing without requiring a scalar price', async () => {
+  it.each([mediaPricingFixture, referenceVideoPricingFixture])('creates and reloads media pricing including request-level fields: %j', async (fixture) => {
     let stored: Channel | null = null
     list.mockImplementation(async () => ({ items: stored ? [wire(stored)] : [], total: stored ? 1 : 0 }))
     create.mockImplementation(async request => { stored = wire({ ...channel(), ...request }); return wire(stored) })
@@ -118,7 +120,7 @@ describe('ChannelsView media rule persistence (mock API)', () => {
       await pricingSection.findAll('button').find(b => b.text() === '+ common.add')!.trigger('click')
       const card = wrapper.findComponent({ name: 'PricingEntryCard' })
       // Exercise the real card update listener with the same form entry the editor emits.
-      card.vm.$emit('update', { ...card.props('entry'), models: ['media-example'], billing_mode: 'image', media_pricing: JSON.stringify(mediaPricingFixture) })
+      card.vm.$emit('update', { ...card.props('entry'), models: ['media-example'], billing_mode: 'image', media_pricing: JSON.stringify(fixture) })
       await wrapper.vm.$nextTick()
       await wrapper.findAll('button').find(b => b.text() === '+ admin.channels.form.addRule')!.trigger('click')
       await wrapper.get('input[placeholder="admin.channels.form.ruleName"]').setValue('Stats media')
@@ -130,16 +132,16 @@ describe('ChannelsView media rule persistence (mock API)', () => {
       statsCard.vm.$emit('update', { ...statsCard.props('entry'), models: ['media-example'], billing_mode: 'video' })
       await wrapper.vm.$nextTick()
       const editors = wrapper.findAll<HTMLTextAreaElement>('[data-testid="media-pricing-json"]')
-      await editors[1].setValue(JSON.stringify(mediaPricingFixture))
+      await editors[1].setValue(JSON.stringify(fixture))
       await wrapper.get('#channel-form').trigger('submit')
       await flushPromises()
       expect(showError).not.toHaveBeenCalled()
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
-        model_pricing: [expect.objectContaining({ media_pricing: mediaPricingFixture, per_request_price: null })],
-        account_stats_pricing_rules: [expect.objectContaining({ pricing: [expect.objectContaining({ media_pricing: mediaPricingFixture })] })],
+        model_pricing: [expect.objectContaining({ media_pricing: fixture, per_request_price: null })],
+        account_stats_pricing_rules: [expect.objectContaining({ pricing: [expect.objectContaining({ media_pricing: fixture })] })],
       }))
       await edit(wrapper)
-      expect(wrapper.findAll<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').map(e => JSON.parse(e.element.value))).toEqual([mediaPricingFixture, mediaPricingFixture])
+      expect(wrapper.findAll<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').map(e => JSON.parse(e.element.value))).toEqual([fixture, fixture])
     } finally { wrapper.unmount() }
   })
 })

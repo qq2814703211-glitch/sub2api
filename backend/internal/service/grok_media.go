@@ -680,6 +680,8 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		responseID = strings.TrimSpace(requestID)
 	}
 	media := &MediaUsage{Count: 1, DurationSeconds: mediaPositiveNumber(gjson.GetBytes(statusBody, "video.duration"))}
+	media = MergeMediaUsage(media, extractMediaReferenceResponse(gjson.ParseBytes(statusBody)))
+	media.Count = 1
 	if pending != nil {
 		media = MergeMediaUsage(pending.MediaUsage, media)
 	}

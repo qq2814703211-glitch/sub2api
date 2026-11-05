@@ -9,14 +9,15 @@ import (
 )
 
 type openAIImageOutputCounter struct {
-	seen         map[string]struct{}
-	seenSizes    map[string]string
-	seenOrder    []string
-	dataSizes    []string
-	seenMedia    map[string]MediaUsage
-	dataMedia    []MediaUsage
-	count        int
-	maxDataCount int
+	seen           map[string]struct{}
+	seenSizes      map[string]string
+	seenOrder      []string
+	dataSizes      []string
+	seenMedia      map[string]MediaUsage
+	dataMedia      []MediaUsage
+	count          int
+	maxDataCount   int
+	referenceUsage *MediaUsage
 }
 
 func newOpenAIImageOutputCounter() *openAIImageOutputCounter {
@@ -64,6 +65,7 @@ func (c *openAIImageOutputCounter) AddJSONResponse(body []byte) {
 		return
 	}
 	c.addDataArray(gjson.GetBytes(body, "data"))
+	c.referenceUsage = MergeMediaUsage(c.referenceUsage, extractMediaReferenceResponse(gjson.ParseBytes(body)))
 	c.addOutputArray(gjson.GetBytes(body, "output"))
 	c.addOutputArray(gjson.GetBytes(body, "response.output"))
 }
@@ -77,6 +79,7 @@ func (c *openAIImageOutputCounter) AddSSEData(data []byte) {
 		return
 	}
 	c.addDataArray(root.Get("data"))
+	c.referenceUsage = MergeMediaUsage(c.referenceUsage, extractMediaReferenceResponse(root))
 	eventType := strings.TrimSpace(root.Get("type").String())
 	switch eventType {
 	case "image_generation.partial_succeeded":

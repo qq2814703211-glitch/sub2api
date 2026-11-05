@@ -35,10 +35,18 @@ export default {
   "editorHint": "金额使用站内计量单位，不换汇。image/second/frame/request 的 price 为每张/秒/帧/请求单价；token 的 input_price、output_price、image_input_price、image_output_price 为每 token 单价（不是每百万）。prompt_price 为每请求一次的文本附加费。false 与 0 会保留。",
   "matchHint": "条件支持 resolution、mode、input_type、audio、reference_video、layer、min_pixels/max_pixels、min_duration/max_duration、fps/min_fps/max_fps。像素、时长与 FPS 范围含两端；相邻像素档下限为上一档上限 + 1。优先匹配条件最多的规则，同等条件数按声明顺序；缺少匹配数据或规则时报错，不回落单一价格。请配置明确、不重叠的档位。",
   "examples": "查看规则示例",
+  "referenceInputHint": "顶层 free_input_images（默认 0）为每次成功请求的输入图免计额度；extra_input_image_price 为超额输入图单价，附加费每请求仅计算一次，不使首个输出免费。duration_source 默认 output；total 仅用于 second 规则，按输出加参考视频总秒数计一次，已返回的 total_seconds 不再加输入。计量未知时保留待结算；prompt_price 不是参考图单价。",
+  "inputSurcharge": "每次成功请求含 {count} 张免计输入图，超额输入图每张 {price}；成功输出均正常收费。",
+  "inputAllowanceOnly": "输入图免计额度：{count} 张；未配置超额输入图单价。",
+  "durationSources": {
+    "output": "计费秒数：仅输出视频时长。",
+    "total": "计费秒数：请求总时长（输出 + 参考视频），仅计算一次；已报告总秒数包含输入。"
+  },
   "exampleHint": "以下仅为配置示例，并非供应商报价；请复制所需结构并填写实际规则。留空或 null 可清除规则；无规则时沿用原价卡。",
   "exampleLabels": {
     "image": "图片：像素 / 图层 / 提示词",
     "video": "视频：秒 / 帧 / 分辨率 / 声音 / 参考 / FPS / 时长",
+    "referenceVideo": "参考视频：总秒数 + 超额输入图",
     "token": "多模态 token"
   },
   "badge": "多维规则",
@@ -49,6 +57,9 @@ export default {
   "allConditions": "不限条件",
   "unnamedRule": "规则 {index}",
   "validation": {
+    "inputCount": "{field} 必须为非负安全整数或 null。",
+    "durationSource": "{field} 仅支持 output 或 total。",
+    "durationUnit": "{field}：总时长仅支持 second 规则。",
     "json": "媒体定价 JSON 解析失败，请修正后保存。",
     "rules": "媒体定价必须是包含非空 rules 数组的对象；如需使用原定价，请留空或填 null。",
     "rule": "{field} 必须为规则对象。",
