@@ -706,6 +706,19 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown:         false,
 	}
 
+	// Keep 2.6 billable even before the remote price catalog is populated.
+	// Official USD rates: see openAIGPTImage26FallbackPricing.
+	for _, model := range []string{"gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
+		p := openAIGPTImage26FallbackPricing
+		s.fallbackPrices[model] = &ModelPricing{
+			InputPricePerToken:          p.InputCostPerToken,
+			CacheReadPricePerToken:      p.CacheReadInputTokenCost,
+			ImageInputPricePerToken:     p.InputCostPerImageToken,
+			ImageCacheReadPricePerToken: p.CacheReadInputImageTokenCost,
+			ImageOutputPricePerToken:    p.OutputCostPerImageToken,
+		}
+	}
+
 	// ============================================================
 	// 国产 LLM 兜底定价（数据源：各家官方定价页/USD 口径）
 	// 顺序：DeepSeek → 智谱 GLM → 月之暗面 Kimi → MiniMax
@@ -1257,6 +1270,10 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// 覆盖带版本后缀的别名（如 doubao-embedding-vision-251215）。
 	if strings.Contains(modelLower, "doubao-embedding-vision") {
 		return s.fallbackPrices["doubao-embedding-vision"]
+	}
+
+	if modelLower == "gpt-image-2.6-flare" || modelLower == "gpt-image-2.6-sunburst" {
+		return s.fallbackPrices[modelLower]
 	}
 
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
