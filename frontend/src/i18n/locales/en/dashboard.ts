@@ -123,6 +123,7 @@ export default {
     disable: 'Disable',
     nameLabel: 'Name',
     namePlaceholder: 'My API Key',
+    routes: { title: 'Ordered fallback groups', hint: 'The first group is primary. Unavailable or incompatible groups fall back in order; billing uses the selected group.', primary: 'Primary', empty: 'No route groups selected', add: 'Add fallback group', noMore: 'All available groups selected', up: 'Move group up', down: 'Move group down', remove: 'Remove group', edit: 'Edit fallback order' },
     groupLabel: 'Group',
     providerLabel: 'Provider',
     providers: {

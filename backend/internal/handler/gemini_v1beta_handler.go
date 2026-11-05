@@ -419,6 +419,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// Get subscription (may be nil)
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 
 	// For Gemini native API, do not send Claude-style ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrencyHelper.concurrencyService, SSEPingFormatNone, 0)
@@ -596,7 +598,22 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if cachedContentExclusions != nil {
 			excludedAccountIDs = mergeAccountIDSets(cachedContentExclusions, fs.FailedAccountIDs)
 		}
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, modelName, excludedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
+		selection, routedKey, err := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, service.APIKeyRouteRequestModel(apiKey, reqModel, modelName), excludedAccountIDs, "", int64(0), service.PlatformGemini)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, reqModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				modelName = reqModel
+				if channelMapping.Mapped {
+					modelName = channelMapping.MappedModel
+				}
+			}
+		} // Gemini 不使用会话限制
 		if err == nil && cachedContentBinding != nil && selection.Account.ID != cachedContentBinding.AccountID {
 			if selection.Acquired && selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()

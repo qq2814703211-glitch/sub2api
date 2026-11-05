@@ -1375,6 +1375,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	result := &AdminUpdateAPIKeyGroupIDResult{}
+	apiKey.RouteGroupIDs = nil
 
 	if *groupID == 0 {
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）

@@ -35,6 +35,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -76,12 +78,15 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		// older/default text model before the upstream handshake can decide.
 		// An empty requested model keeps account selection capability-based;
 		// the actual voice model remains in the upstream WS query below.
-		candidate, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(), apiKey.GroupID, "", "", "", failed,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false, false, false, service.PlatformGrok,
-		)
+		candidate, _, routedKey, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, "", "", model, failed, service.OpenAIUpstreamTransportHTTPSSE, service.OpenAIEndpointCapabilityChatCompletions, false, false, false, service.PlatformGrok)
+		if selectErr == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, nil, model, nil); bindErr != nil {
+				releaseRejectedKeyRouteSelection(candidate)
+				c.AbortWithStatusJSON(403, gin.H{"error": gin.H{"message": bindErr.Error()}})
+				return
+			}
+			apiKey = routedKey
+		}
 		if selectErr != nil || candidate == nil || candidate.Account == nil {
 			break
 		}
@@ -192,6 +197,8 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -250,20 +257,15 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	selectionModel := "grok-4.5"
 
 	for attempts := 0; attempts < 4; attempts++ {
-		selection, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			"",
-			selectionModel,
-			failed,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityChatCompletions,
-			false,
-			false,
-			false,
-			service.PlatformGrok,
-		)
+		selection, _, routedKey, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, "", "", selectionModel, failed, service.OpenAIUpstreamTransportHTTPSSE, service.OpenAIEndpointCapabilityChatCompletions, false, false, false, service.PlatformGrok)
+		if selectErr == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, nil, selectionModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				c.AbortWithStatusJSON(403, gin.H{"error": gin.H{"message": bindErr.Error()}})
+				return
+			}
+			apiKey = routedKey
+		}
 		if selectErr != nil || selection == nil || selection.Account == nil {
 			if last != nil {
 				h.handleFailoverExhausted(c, last, false)

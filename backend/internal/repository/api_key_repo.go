@@ -42,7 +42,7 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
-func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
+func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) error {
 	builder := r.client.APIKey.Create().
 		SetUserID(key.UserID).
 		SetKey(key.Key).
@@ -86,7 +86,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.withGroupRoutes(ctx, apiKeyEntityToService(m))
 }
 
 // GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
@@ -124,7 +124,7 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.withGroupRoutes(ctx, apiKeyEntityToService(m))
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
@@ -240,10 +240,10 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.withGroupRoutes(ctx, apiKeyEntityToService(m))
 }
 
-func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
+func (r *apiKeyRepository) update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 空掩码代表调用方不改任何列，直接返回，避免产生一次无意义的整行写。
 	if fields.IsEmpty() {
 		return nil
@@ -449,7 +449,7 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 		if *filters.GroupID == 0 {
 			q = q.Where(apikey.GroupIDIsNil())
 		} else {
-			q = q.Where(apikey.GroupIDEQ(*filters.GroupID))
+			q = q.Where(apiKeyInGroup(*filters.GroupID))
 		}
 	}
 
@@ -508,6 +508,9 @@ func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, fi
 }
 
 func (r *apiKeyRepository) attachLastUsedIPs(ctx context.Context, keys []service.APIKey) error {
+	if err := r.attachGroupRoutes(ctx, keys); err != nil {
+		return err
+	}
 	if len(keys) == 0 || r.sql == nil {
 		return nil
 	}
@@ -621,7 +624,7 @@ func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, e
 }
 
 func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.APIKey, *pagination.PaginationResult, error) {
-	q := r.activeQuery().Where(apikey.GroupIDEQ(groupID))
+	q := r.activeQuery().Where(apiKeyInGroup(groupID))
 
 	total, err := q.Count(ctx)
 	if err != nil {
@@ -646,6 +649,9 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
 
+	if err := r.attachGroupRoutes(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 	return outKeys, paginationResultFromTotal(int64(total), params), nil
 }
 
@@ -716,31 +722,96 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.attachGroupRoutes(ctx, outKeys); err != nil {
+		return nil, err
+	}
 	return outKeys, nil
 }
 
 // ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil
 func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	n, err := r.client.APIKey.Update().
-		Where(apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
-		ClearGroupID().
-		Save(ctx)
-	return int64(n), err
+	var count int64
+	err := r.routeTransaction(ctx, func(repo *apiKeyRepository) error {
+		keys, err := repo.activeQuery().Where(apiKeyInGroup(groupID)).All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, entity := range keys {
+			key, err := repo.withGroupRoutes(ctx, apiKeyEntityToService(entity))
+			if err != nil {
+				return err
+			}
+			out := []int64{}
+			for _, id := range key.CandidateGroupIDs() {
+				if id != groupID {
+					out = append(out, id)
+				}
+			}
+			key.GroupID = nil
+			if len(out) > 0 {
+				key.GroupID = &out[0]
+			}
+			key.RouteGroupIDs = out
+			if err := repo.update(ctx, key, service.APIKeyUpdateFields{GroupID: true}); err != nil {
+				return err
+			}
+			if err := repo.replaceGroupRoutes(ctx, key.ID, out); err != nil {
+				return err
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	n, err := client.APIKey.Update().
-		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
-		SetGroupID(newGroupID).
-		Save(ctx)
-	return int64(n), err
+	var count int64
+	err := r.routeTransaction(ctx, func(repo *apiKeyRepository) error {
+		keys, err := repo.activeQuery().Where(apikey.UserIDEQ(userID), apiKeyInGroup(oldGroupID)).All(ctx)
+		if err != nil {
+			return err
+		}
+		for _, entity := range keys {
+			key, err := repo.withGroupRoutes(ctx, apiKeyEntityToService(entity))
+			if err != nil {
+				return err
+			}
+			ids := key.CandidateGroupIDs()
+			out := make([]int64, 0, len(ids))
+			seen := map[int64]bool{}
+			for _, id := range ids {
+				if id == oldGroupID {
+					id = newGroupID
+				}
+				if !seen[id] {
+					out = append(out, id)
+					seen[id] = true
+				}
+			}
+			if len(out) > 0 {
+				key.GroupID = &out[0]
+			} else {
+				key.GroupID = nil
+			}
+			key.RouteGroupIDs = out
+			if err := repo.update(ctx, key, service.APIKeyUpdateFields{GroupID: true}); err != nil {
+				return err
+			}
+			if err := repo.replaceGroupRoutes(ctx, key.ID, out); err != nil {
+				return err
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // CountByGroupID 获取分组的 API Key 数量
 func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	count, err := r.activeQuery().Where(apikey.GroupIDEQ(groupID)).Count(ctx)
+	count, err := r.activeQuery().Where(apiKeyInGroup(groupID)).Count(ctx)
 	return int64(count), err
 }
 
@@ -757,7 +828,7 @@ func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) (
 
 func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	keys, err := r.activeQuery().
-		Where(apikey.GroupIDEQ(groupID)).
+		Where(apiKeyInGroup(groupID)).
 		Select(apikey.FieldKey).
 		Strings(ctx)
 	if err != nil {

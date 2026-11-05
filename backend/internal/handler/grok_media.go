@@ -156,6 +156,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
@@ -196,9 +198,24 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	boundLookupAccountID := int64(0)
 	if endpoint.IsVideoLookupRequest() {
 		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID, subject.UserID, apiKey.ID)
-		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(
-			c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID,
-		)
+		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID)
+		if apiKey.HasMultipleRoutes() {
+			for _, gid := range apiKey.CandidateGroupIDs() {
+				boundID, lookupErr := h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), &gid, requestID, subject.UserID, apiKey.ID)
+				if lookupErr != nil || boundID <= 0 {
+					continue
+				}
+				routed, routeErr := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
+				if routeErr != nil {
+					continue
+				}
+				apiKey = routed
+				boundLookupAccountID = boundID
+				err = nil
+				c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
+				break
+			}
+		}
 		if err != nil || boundLookupAccountID <= 0 {
 			reqLog.Info("grok_media.video_lookup_owner_binding_missing", zap.Error(err))
 			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
@@ -209,6 +226,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	// 范围内：显式豁免，防止 service 层防御性装门按文本 D 误过滤媒体请求，
 	// 也防止已计费的在途视频任务因绑定账号被门排除而查询返回伪 404。
 	requestCtx := service.WithOpenAIProfitControlSuppressed(c.Request.Context())
+	c.Request = c.Request.WithContext(requestCtx)
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -247,20 +265,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				requestCtx, apiKey.GroupID, sessionHash, boundLookupAccountID, routingModel, platform,
 			)
 		} else {
-			selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForCapability(
-				requestCtx,
-				apiKey.GroupID,
-				"",
-				sessionHash,
-				routingModel,
-				failedAccountIDs,
-				service.OpenAIUpstreamTransportHTTPSSE,
-				requiredCapability,
-				false,
-				false,
-				false,
-				platform,
-			)
+			var routedKey *service.APIKey
+			selection, scheduleDecision, routedKey, err = h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(requestCtx, apiKey, "", sessionHash, routingModel, failedAccountIDs, service.OpenAIUpstreamTransportHTTPSSE, requiredCapability, false, false, false, platform)
+			if err == nil {
+				if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, nil, routingModel, body); bindErr != nil {
+					releaseRejectedKeyRouteSelection(selection)
+					c.AbortWithStatusJSON(403, gin.H{"error": gin.H{"message": bindErr.Error()}})
+					return
+				}
+				apiKey = routedKey
+				requestCtx = c.Request.Context()
+			}
 		}
 		// Own an eagerly acquired slot before any rejection or eligibility probe.
 		// Forwarding takes over the same once-only release after admission.
