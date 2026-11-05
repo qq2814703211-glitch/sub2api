@@ -87,7 +87,7 @@
         aria-hidden="true"
         :data-testid="`${openItem.testid}-detail`"
         :style="detailStyle"
-        class="pointer-events-none fixed z-[99999] w-max max-w-56 space-y-0.5 rounded-lg bg-gray-900 px-2.5 py-2 text-xs leading-snug text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800"
+        class="pointer-events-none fixed z-[100000030] w-max max-w-56 space-y-0.5 rounded-lg bg-gray-900 px-2.5 py-2 text-xs leading-snug text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800"
       >
         <p class="font-medium text-white">{{ openItem.title }}</p>
         <p class="text-gray-300">{{ openItem.detail }}</p>
