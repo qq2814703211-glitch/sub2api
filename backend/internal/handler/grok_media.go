@@ -443,7 +443,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		if err != nil {
 			if isGrokVideoCreateEndpoint(endpoint) {
-				if !service.IsResponseCommitted(c) {
+				if !service.IsResponseCommitted(c) && !c.Writer.Written() {
 					h.errorResponse(c, http.StatusBadGateway, "video_create_failed", "Video create could not be accepted; the gateway will not resend it")
 				}
 				return
