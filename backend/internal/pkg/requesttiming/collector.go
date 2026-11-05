@@ -38,6 +38,8 @@ type Attempt struct {
 	Events          map[string]float64  `json:"events"`
 }
 type Snapshot struct {
+	Protocol          string             `json:"protocol,omitempty"`
+	Turn              int                `json:"turn,omitempty"`
 	IdentitySource    string             `json:"identity_source,omitempty"`
 	AuthRejection     string             `json:"auth_rejection,omitempty"`
 	Routes            []RouteObservation `json:"routes,omitempty"`
@@ -85,8 +87,19 @@ func From(ctx context.Context) *Collector {
 	if ctx == nil {
 		return nil
 	}
-	c, _ := ctx.Value(key{}).(*Collector)
-	return c
+	switch value := ctx.Value(key{}).(type) {
+	case *Collector:
+		return value
+	case interface{ Collector() *Collector }:
+		return value.Collector()
+	default:
+		return nil
+	}
+}
+
+// WithSource follows a WS session's current turn without changing cancellation.
+func WithSource(ctx context.Context, source interface{ Collector() *Collector }) context.Context {
+	return context.WithValue(ctx, key{}, source)
 }
 func (c *Collector) offset(t time.Time) float64 {
 	return float64(t.Sub(c.start)) / float64(time.Millisecond)

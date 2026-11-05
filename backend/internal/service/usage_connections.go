@@ -70,6 +70,15 @@ type ConnectionDiagnosticsStats struct {
 	WorkerRunning     bool   `json:"worker_running"`
 }
 
+func (s *UsageService) ConnectionDiagnosticsStats() ConnectionDiagnosticsStats {
+	if repo, ok := s.usageRepo.(interface {
+		ConnectionDiagnosticsStats() ConnectionDiagnosticsStats
+	}); ok {
+		return repo.ConnectionDiagnosticsStats()
+	}
+	return ConnectionDiagnosticsStats{}
+}
+
 func (s *UsageService) RecordConnectionTrace(record ConnectionTrace) {
 	if repo, ok := s.usageRepo.(interface{ RecordConnectionTrace(ConnectionTrace) }); ok {
 		repo.RecordConnectionTrace(record)

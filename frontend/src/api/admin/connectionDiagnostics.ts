@@ -1,6 +1,8 @@
 import { apiClient } from '../client'
 
 export interface ConnectionTraceDetail {
+  protocol?: string
+  turn?: number
   version: number
   trace_id: string
   started_at: string
@@ -76,20 +78,27 @@ export interface ConnectionDiagnosticsSettings {
   enabled: boolean
   retention_days: number
   body_capture: false
+  stats: {
+    dropped: number
+    write_failures: number
+    retention_failures: number
+    queue_depth: number
+    worker_running: boolean
+  }
 }
 
-export async function list(params: ConnectionTraceQuery): Promise<ConnectionTraceList> {
-  const { data } = await apiClient.get('/admin/usage/connections', { params })
+export async function list(params: ConnectionTraceQuery, signal?: AbortSignal): Promise<ConnectionTraceList> {
+  const { data } = await apiClient.get('/admin/usage/connections', { params, signal })
   return data
 }
 
-export async function settings(): Promise<ConnectionDiagnosticsSettings> {
-  const { data } = await apiClient.get('/admin/usage/connection-diagnostics')
+export async function settings(signal?: AbortSignal): Promise<ConnectionDiagnosticsSettings> {
+  const { data } = await apiClient.get('/admin/usage/connection-diagnostics', { signal })
   return data
 }
 
-export async function setEnabled(enabled: boolean): Promise<ConnectionDiagnosticsSettings> {
-  const { data } = await apiClient.put('/admin/usage/connection-diagnostics', { enabled })
+export async function setEnabled(enabled: boolean, signal?: AbortSignal): Promise<ConnectionDiagnosticsSettings> {
+  const { data } = await apiClient.put('/admin/usage/connection-diagnostics', { enabled }, { signal })
   return data
 }
 
