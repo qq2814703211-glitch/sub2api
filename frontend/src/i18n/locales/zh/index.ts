@@ -6,11 +6,13 @@ import channelMonitorV2 from './channelMonitorV2'
 import channelMonitorV3 from './channelMonitorV3'
 import batchImage from './batchImage'
 import imagegen from './imagegen'
+import videoBilling from './videoBilling'
 import admin from './admin'
 import misc from './misc'
 
 export default {
   adminAccessKeys,
+  videoBilling,
   ...landing,
   ...common,
   ...dashboard,
