@@ -17,6 +17,7 @@
               <p class="truncate font-mono text-sm text-gray-500">{{ key.key.substring(0, 20) }}...{{ key.key.substring(key.key.length - 8) }}</p>
             </div>
           </div>
+          <KeyConcurrencyEditor :api-key="key" @updated="updated => { const i=apiKeys.findIndex(k=>k.id===updated.id);if(i>=0)apiKeys[i]=updated }" />
           <div class="mt-3 flex flex-wrap gap-4 text-xs text-gray-500">
             <div class="flex items-center gap-1">
               <span>{{ t('admin.users.group') }}:</span>
@@ -115,6 +116,8 @@ import type { AdminUser, AdminGroup, ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import KeyConcurrencyEditor from '@/components/keys/KeyConcurrencyEditor.vue'
+import {useKeyQueueStats} from '@/composables/useKeyQueueStats'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close'])
@@ -122,6 +125,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const apiKeys = ref<ApiKey[]>([])
+useKeyQueueStats(apiKeys,()=>props.show,()=>props.user?.id)
 const allGroups = ref<AdminGroup[]>([])
 const loading = ref(false)
 let requestVersion = 0

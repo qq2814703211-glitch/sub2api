@@ -66,6 +66,13 @@ export default {
 
   // API Keys
   keys: {
+    concurrencyLimit: "Key concurrency limit",
+    concurrencyHint: "0 adds no key limit. At capacity, requests follow the server queue policy.",
+    concurrencyInvalid: "Enter a non-negative integer concurrency limit",
+    waiting: "Waiting",
+    queueUnavailable: "Queue status unavailable",
+    saveConcurrency: "Save concurrency limit",
+
     title: 'API Keys',
     description: 'Manage your API keys and access tokens',
     searchPlaceholder: 'Search name or key...',

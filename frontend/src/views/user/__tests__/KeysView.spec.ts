@@ -88,6 +88,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
+vi.mock('@/api/keyQueue',()=>({getKeyQueue:vi.fn().mockResolvedValue([])}))
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
@@ -320,6 +321,16 @@ describe('user KeysView column settings', () => {
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
   })
+
+ it('loads existing limit and submits an explicit zero on edit',async()=>{
+  listKeys.mockResolvedValueOnce({items:[{...createApiKey(),group_id:4,concurrency_limit:3}],total:1,page:1,page_size:20,pages:1})
+  const wrapper=await mountView()
+  await getButtonByText(wrapper, 'common.edit').trigger('click')
+  expect((wrapper.get('#key-concurrency').element as HTMLInputElement).value).toBe('3')
+  await wrapper.get('#key-concurrency').setValue('0');updateKey.mockResolvedValue({...createApiKey(),concurrency_limit:0})
+  await wrapper.get('#key-form').trigger('submit');await flushPromises()
+  expect(updateKey).toHaveBeenCalledWith(1,expect.objectContaining({concurrency_limit:0}),expect.objectContaining({signal:expect.any(AbortSignal)}))
+ })
 
   it('renders keys immediately while usage is pending, then displays real zero amounts', async () => {
     const usage = deferred<BatchApiKeysUsageResponse>()
@@ -639,7 +650,7 @@ describe('user KeysView column settings', () => {
 
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
-    expect(updateKey).toHaveBeenNthCalledWith(2, key.id, expect.objectContaining({ name: 'Unsaved name', status: formStatus }))
+    expect(updateKey).toHaveBeenNthCalledWith(2, key.id, expect.objectContaining({ name: 'Unsaved name', status: formStatus }), expect.objectContaining({signal:expect.any(AbortSignal)}))
     wrapper.unmount()
   })
 
@@ -809,7 +820,7 @@ describe('user KeysView column settings', () => {
   it('renders the current concurrency value', async () => {
     const wrapper = await mountView()
 
-    expect(wrapper.get('[data-test="current-concurrency"]').text()).toBe('3')
+    expect(wrapper.get('[data-test="current-concurrency"]').text()).toContain('3 / ∞')
   })
 
   it('marks current concurrency as sortable', async () => {

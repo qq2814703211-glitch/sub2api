@@ -195,7 +195,7 @@
             </div>
           </template>
 
-          <template #cell-current_concurrency="{ value }">
+          <template #cell-current_concurrency="{ value, row }">
             <span
               :class="[
                 'inline-flex min-w-8 items-center justify-center rounded px-2 py-1 text-sm font-semibold tabular-nums',
@@ -204,8 +204,10 @@
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
               ]"
             >
-              {{ value ?? 0 }}
+              {{ value ?? 0 }} / {{ row.concurrency_limit || '∞' }}
             </span>
+            <span v-if="row.queue_stats_available" class="ml-2 text-xs text-gray-500">{{ t('keys.waiting') }}: {{ row.waiting_count }}</span>
+            <span v-else-if="row.concurrency_limit > 0" class="ml-2 text-xs text-amber-600">{{ t('keys.queueUnavailable') }}</span>
           </template>
 
           <template #cell-usage="{ row }">
@@ -492,6 +494,12 @@
             :placeholder="t('keys.namePlaceholder')"
             data-tour="key-form-name"
           />
+        </div>
+
+        <div>
+          <label for="key-concurrency" class="input-label">{{ t('keys.concurrencyLimit') }}</label>
+          <input id="key-concurrency" v-model.number="formData.concurrency_limit" type="number" min="0" max="2147483647" step="1" required class="input" />
+          <p class="mt-1 text-xs text-gray-500">{{ t('keys.concurrencyHint') }}</p>
         </div>
 
         <fieldset v-if="!showEditModal" data-tour="key-form-provider">
@@ -1237,6 +1245,7 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import {useKeyQueueStats} from '@/composables/useKeyQueueStats'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
@@ -1385,9 +1394,12 @@ const handleBulkUpdated = (succeededIds: number[]) => {
   loadApiKeys()
 }
 
+useKeyQueueStats(apiKeys)
 const groups = ref<Group[]>([])
 const loading = ref(false)
 const submitting = ref(false)
+let saveVersion=0
+let saveController: AbortController | undefined
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
@@ -1446,6 +1458,7 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  concurrency_limit: 0,
   group_id: null as number | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
@@ -1742,11 +1755,13 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
 }
 
 const editKey = (key: ApiKey) => {
+ saveVersion++;saveController?.abort();submitting.value=false
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
   formData.value = {
     name: key.name,
+    concurrency_limit: key.concurrency_limit ?? 0,
     group_id: key.group_id,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
@@ -1846,6 +1861,7 @@ const confirmDelete = (key: ApiKey) => {
 }
 
 const handleSubmit = async () => {
+  if (!Number.isSafeInteger(formData.value.concurrency_limit) || (formData.value.concurrency_limit < 0 || formData.value.concurrency_limit > 2147483647)) { appStore.showError(t('keys.concurrencyInvalid')); return }
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
@@ -1899,11 +1915,14 @@ const handleSubmit = async () => {
     rate_limit_7d: formData.value.rate_limit_7d && formData.value.rate_limit_7d > 0 ? formData.value.rate_limit_7d : 0,
   } : { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }
 
+  const version=++saveVersion
+  saveController?.abort();saveController=new AbortController()
   submitting.value = true
   try {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
+        concurrency_limit: formData.value.concurrency_limit,
         group_id: formData.value.group_id,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
@@ -1916,7 +1935,8 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
-      await keysAPI.update(selectedKey.value.id, updates)
+      await keysAPI.update(selectedKey.value.id, updates, {signal:saveController.signal})
+      if(version!==saveVersion)return
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
@@ -1928,8 +1948,11 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        formData.value.concurrency_limit,
+        {signal:saveController.signal}
       )
+      if(version!==saveVersion)return
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
@@ -1939,11 +1962,12 @@ const handleSubmit = async () => {
     closeModals()
     loadApiKeys()
   } catch (error: any) {
+    if(version!==saveVersion)return
     const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
-    submitting.value = false
+    if(version===saveVersion)submitting.value = false
   }
 }
 
@@ -1968,11 +1992,13 @@ const handleDelete = async () => {
 }
 
 const closeModals = () => {
+  saveVersion++;saveController?.abort();submitting.value=false
   showCreateModal.value = false
   showEditModal.value = false
   selectedKey.value = null
   formData.value = {
     name: '',
+  concurrency_limit: 0,
     group_id: null,
     status: 'active',
     use_custom_key: false,
@@ -2137,6 +2163,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  saveVersion++;saveController?.abort()
   abortController?.abort()
   cancelUsageStats()
   document.removeEventListener('click', closeGroupSelector)
