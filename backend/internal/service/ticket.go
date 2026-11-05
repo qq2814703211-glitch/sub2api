@@ -155,9 +155,10 @@ type CreateTicketInput struct {
 }
 
 type AdminCreateTicketInput struct {
-	UserID  int64  `json:"user_id"`
-	Subject string `json:"subject"`
-	Content string `json:"content"`
+	UserID   int64  `json:"user_id"`
+	Subject  string `json:"subject"`
+	Content  string `json:"content"`
+	ClientID string `json:"client_id"`
 }
 
 type ReplyTicketInput struct {
@@ -187,7 +188,7 @@ type TicketRepository interface {
 	ProcessPendingEmail(context.Context, func(context.Context, TicketEmailJob) error) (bool, error)
 	EmailOutboxStats(context.Context) (pending, failed int64, err error)
 	Create(context.Context, TicketActor, CreateTicketInput, string) (int64, error)
-	CreateForUser(context.Context, TicketActor, int64, string, string) (int64, error)
+	CreateForUser(context.Context, TicketActor, int64, string, string, string, string) (int64, error)
 	Mutate(context.Context, TicketActor, int64, string, string, func(*Ticket) (*TicketChange, error)) error
 	MarkRead(context.Context, TicketActor, int64, int64) error
 }
@@ -352,7 +353,25 @@ func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in
 	if target == nil || target.DeletedAt != nil || !target.IsActive() {
 		return nil, ticketInvalid("target user is not active")
 	}
-	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, in.Content)
+	clientID := in.ClientID
+	if strings.TrimSpace(clientID) == "" {
+		clientID = uuid.NewString()
+	} else {
+		clientID, err = ticketClientID(clientID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	hash, err := ticketHash(struct {
+		UserID   int64  `json:"user_id"`
+		Subject  string `json:"subject"`
+		Content  string `json:"content"`
+		ClientID string `json:"client_id"`
+	}{target.ID, subject, in.Content, clientID})
+	if err != nil {
+		return nil, err
+	}
+	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, in.Content, clientID, hash)
 	if err != nil {
 		return nil, err
 	}

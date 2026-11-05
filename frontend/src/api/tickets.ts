@@ -133,6 +133,7 @@ export interface ProactiveTicketInput {
   user_id: number
   subject?: string
   content: string
+  client_id: string
 }
 
 export function ticketsAPI(admin: boolean) {

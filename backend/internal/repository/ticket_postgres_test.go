@@ -546,4 +546,24 @@ func TestTicketPostgresEmailConversationDoesNotIncludeLaterMessages(t *testing.T
 	require.ErrorIs(t, err, service.ErrTicketNotFound)
 }
 
+func TestTicketPostgresProactiveContactIdempotency(t *testing.T) {
+	db, svc, ctx := ticketPostgres(t)
+	admin := service.TicketActor{UserID: 99, Admin: true}
+	input := service.AdminCreateTicketInput{UserID: 1, Subject: "We noticed an issue", Content: "please reply with details", ClientID: uuid.NewString()}
+	first, err := svc.CreateForUser(ctx, admin, input)
+	require.NoError(t, err)
+	second, err := svc.CreateForUser(ctx, admin, input)
+	require.NoError(t, err)
+	require.Equal(t, first.Ticket.ID, second.Ticket.ID)
+	var count int
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM support_tickets WHERE user_id=1").Scan(&count))
+	require.Equal(t, 1, count)
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM support_ticket_messages WHERE ticket_id=$1", first.Ticket.ID).Scan(&count))
+	require.Equal(t, 1, count)
+	changed := input
+	changed.Content = "different content"
+	_, err = svc.CreateForUser(ctx, admin, changed)
+	require.ErrorIs(t, err, service.ErrTicketClientConflict)
+}
+
 func ticketPGString(value string) *string { return &value }
