@@ -71,6 +71,7 @@ export default {
   "serverFirstToken": "Server first token",
   "billingHint": "Actual charges come from system usage logs, not upstream settlement. Billed input includes cache reads and writes; billing rules may change token counts. “—” means unreported or unavailable. First-text timing excludes reasoning-only events.",
   "pendingHint": "Some bills are not linked yet. Check bills later to read usage logs without repeating model requests. Automatic matching requires a correlation ID.",
+  "unavailableHint": "Some rounds never received a correlation ID, so their bills cannot be matched automatically. They stay marked “No correlation ID”; check the system logs by other identifiers. Model requests are never resent.",
   "notReported": "Not reported",
   "history": "Local test history",
   "clearHistory": "Clear history",

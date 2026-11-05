@@ -88,6 +88,26 @@ export function newCacheRound(index: number): CacheRound {
   }
 }
 
+/**
+ * Only a settled round that carries the correlation ID returned in the response
+ * header can be queried, and only while its billing state is still transient.
+ * There is no way to recover a missing ID: those rounds are never queried, and
+ * no model request is ever re-sent.
+ */
+export function retryableBillRounds(run: CacheTestRun | null): CacheRound[] {
+  return (run?.rounds ?? []).filter(round =>
+    round.status !== 'running' && !!round.requestId && !round.bill &&
+    (round.billingState === 'pending' || round.billingState === 'error')
+  )
+}
+
+/** Settled rounds whose missing correlation ID makes automatic reconciliation impossible. */
+export function uncorrelatedBillRounds(run: CacheTestRun | null): CacheRound[] {
+  return (run?.rounds ?? []).filter(round =>
+    round.status !== 'running' && !round.bill && !round.requestId
+  )
+}
+
 export async function probeCacheRound(run: CacheTestRun, round: CacheRound, key: string, prefix: string, signal: AbortSignal): Promise<void> {
   const controller = new AbortController()
   const abort = () => controller.abort()
@@ -206,11 +226,18 @@ export async function executeCacheRun(run: CacheTestRun, key: string, signal: Ab
 
 /** Read-only reconciliation: a missing bill never causes a repeated model request. */
 export async function reconcileCacheBills(run: CacheTestRun, userId: number, signal: AbortSignal, changed: () => void): Promise<void> {
+  // A round whose response never carried X-Client-Request-ID can never be matched.
+  // Label it explicitly instead of leaving it "pending" (and retrying) forever.
+  const uncorrelated = uncorrelatedBillRounds(run)
+  if (uncorrelated.some(round => round.billingState !== 'unavailable')) {
+    uncorrelated.forEach(round => { round.billingState = 'unavailable' })
+    changed()
+  }
   for (const delay of [0, 1000, 2000, 4000]) {
     if (signal.aborted) return
     try { await abortableDelay(delay, signal) } catch { return }
     if (signal.aborted) return
-    const pending = run.rounds.filter(r => r.requestId && !r.bill)
+    const pending = retryableBillRounds(run)
     if (!pending.length) return
     await Promise.all(pending.map(async round => {
       const controller = new AbortController(), abort = () => controller.abort()
