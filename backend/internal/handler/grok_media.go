@@ -196,8 +196,30 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, sessionSeed)
 	boundLookupAccountID := int64(0)
+	var durableVideoJob *service.VideoBillingJob
 	if endpoint.IsVideoLookupRequest() {
 		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID, subject.UserID, apiKey.ID)
+		if h.gatewayService.HasDurableVideoBilling() {
+			for _, gid := range apiKey.CandidateGroupIDs() {
+				job, loadErr := h.gatewayService.LoadVideoBillingJob(c.Request.Context(), requestID, subject.UserID, apiKey.ID, gid)
+				if loadErr != nil {
+					h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Video task storage unavailable")
+					return
+				}
+				if job == nil { continue }
+				routed, routeErr := h.gatewayService.ResolveAPIKeyRouteGroup(c.Request.Context(), apiKey, gid)
+				if routeErr != nil {
+					h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+					return
+				}
+				apiKey = routed
+				durableVideoJob = job
+				boundLookupAccountID = job.AccountID
+				c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
+				break
+			}
+		}
+		if durableVideoJob == nil {
 		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(c.Request.Context(), apiKey.GroupID, requestID, subject.UserID, apiKey.ID)
 		if apiKey.HasMultipleRoutes() {
 			for _, gid := range apiKey.CandidateGroupIDs() {
@@ -215,6 +237,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				c.Request = c.Request.WithContext(service.ContextWithAPIKeyRoute(c.Request.Context(), apiKey))
 				break
 			}
+		}
 		}
 		if err != nil || boundLookupAccountID <= 0 {
 			reqLog.Info("grok_media.video_lookup_owner_binding_missing", zap.Error(err))
@@ -399,14 +422,46 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
+		forwardCtx := requestCtx
+		if isGrokVideoCreateEndpoint(endpoint) && h.gatewayService.HasDurableVideoBilling() {
+			provider := "grok"
+			if endpoint.IsSeedance() {
+				provider = "seedance"
+			}
+			createInfo, infoErr := service.VideoBillingCreateInfo(endpoint, body, contentType, account)
+			if infoErr != nil {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid video request")
+				return
+			}
+			pending := service.GrokVideoPendingBilling{Model: requestModel, BillingModel: createInfo.Model,
+				UpstreamModel: account.GetMappedModel(createInfo.Model), VideoResolution: createInfo.Resolution,
+				VideoDurationSeconds: createInfo.DurationSeconds, OriginalModel: clientRequestedModel(c, requestModel), CreatedAt: videoCreateStartedAt}
+			if !createInfo.DurationSpecified {
+				pending.VideoDurationSeconds = 0
+			}
+			durableVideoJob, err = h.gatewayService.BeginVideoBillingJob(requestCtx, &service.OpenAIRecordUsageInput{
+				Result: &service.OpenAIForwardResult{Model: requestModel, BillingModel: pending.BillingModel, UpstreamModel: pending.UpstreamModel},
+				APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription, APIKeyService: h.apiKeyService,
+				PricingAt: requestStart, QuotaPlatform: service.QuotaPlatform(requestCtx, apiKey),
+				InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: GetUpstreamEndpoint(c, account.Platform),
+				ChannelUsageFields: service.ChannelUsageFields{OriginalModel: pending.OriginalModel, ChannelMappedModel: requestModel},
+			}, pending, provider)
+			if err != nil {
+				h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Video task storage or pricing unavailable")
+				return
+			}
+			forwardCtx = service.ContextWithVideoBeforePublish(requestCtx, func(ctx context.Context, result *service.OpenAIForwardResult) error {
+				return h.gatewayService.SubmitVideoBillingJob(ctx, durableVideoJob, result.ResponseID)
+			})
+		}
 		forwardStart := time.Now()
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer releaseAccount()
 			if endpoint.IsSeedance() {
-				return h.gatewayService.ForwardSeedance(requestCtx, c, account, endpoint, requestID, body)
+				return h.gatewayService.ForwardSeedance(forwardCtx, c, account, endpoint, requestID, body)
 			}
-			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
+			return h.gatewayService.ForwardGrokMedia(forwardCtx, c, account, endpoint, requestID, body, contentType)
 		}()
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
@@ -418,6 +473,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
 		if err != nil {
+			if isGrokVideoCreateEndpoint(endpoint) {
+				if !service.IsResponseCommitted(c) && !c.Writer.Written() {
+					h.errorResponse(c, http.StatusBadGateway, "video_create_failed", "Video create could not be accepted; the gateway will not resend it")
+				}
+				return
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if failoverClientGone(c) {
@@ -494,7 +555,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, grokMediaScheduleModel(account, routingModel, result), true, nil)
-		if isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
+		if durableVideoJob == nil && isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
 			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
 				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,
 			); err != nil {
@@ -536,7 +597,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
-		if endpoint == service.SeedanceEndpointStatus {
+		if durableVideoJob != nil && endpoint.IsVideoLookupRequest() {
+			settleCtx, cancel := context.WithTimeout(context.WithoutCancel(requestCtx), 20*time.Second)
+			if err := h.gatewayService.ObserveVideoBilling(settleCtx, durableVideoJob, result); err != nil {
+				reqLog.Warn("video_billing.observation_deferred")
+			}
+			cancel()
+		} else if endpoint == service.SeedanceEndpointStatus {
 			if billResult := prepareSeedanceCompletionBilling(requestCtx, h, apiKey, subject, requestID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
 			}
