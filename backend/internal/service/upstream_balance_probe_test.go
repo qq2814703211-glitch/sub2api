@@ -416,3 +416,15 @@ func TestBuildUpstreamBillingRateSnapshotItemsIncludesBalance(t *testing.T) {
 	require.NotNil(t, items[0].Snapshot.Balance)
 	require.Equal(t, 5.0, items[0].Snapshot.Balance.Data["remaining"])
 }
+
+func TestUpstreamBalanceInvalidKeyDoesNotBecomeHealthy(t *testing.T) {
+	now := time.Now()
+	observed := now.Add(-time.Minute)
+	until := now.Add(time.Hour)
+	previous := &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &observed, FreshUntil: &until, Data: map[string]any{"remaining": 1.0}}
+	result := upstreamBalanceSnapshotFromResult(upstreamBillingProbeHTTPResult{statusCode: 200, body: []byte(`{"isValid":false,"remaining":100}`)}, previous, 30, now)
+	require.Equal(t, "failed", result.Status)
+	require.Equal(t, observed, *result.ReceivedAt)
+	require.Equal(t, until, *result.FreshUntil)
+	require.Equal(t, 1.0, result.Data["remaining"])
+}

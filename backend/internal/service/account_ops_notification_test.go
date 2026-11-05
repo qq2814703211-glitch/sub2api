@@ -228,7 +228,9 @@ func TestAccountOpsChannelRetrySkipsSuccessfulDestinations(t *testing.T) {
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	calls := 0
 	body := `{"code":1}`
-	svc.robotClient = &http.Client{Transport: opsRoundTripFunc(func(*http.Request) (*http.Response, error) {
+	var deliveryKeys []string
+	svc.robotClient = &http.Client{Transport: opsRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		deliveryKeys = append(deliveryKeys, request.Header.Get("Idempotency-Key"))
 		calls++
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
@@ -241,6 +243,9 @@ func TestAccountOpsChannelRetrySkipsSuccessfulDestinations(t *testing.T) {
 	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, 2, calls)
+	require.Len(t, deliveryKeys, 2)
+	require.NotEmpty(t, deliveryKeys[0])
+	require.Equal(t, deliveryKeys[0], deliveryKeys[1])
 	require.Equal(t, "sent", repo.state)
 }
 

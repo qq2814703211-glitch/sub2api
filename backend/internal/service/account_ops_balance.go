@@ -177,7 +177,14 @@ func (s *AccountOpsService) usageWindows(ctx context.Context, a *Account, now ti
 		if summary == nil {
 			return []AccountOpsUsageWindow{{Window: "any", Status: "unknown"}}
 		}
+		for _, missing := range summary.UnknownWindows {
+			windows = append(windows, AccountOpsUsageWindow{Window: missing, Label: missing, Status: "unknown"})
+		}
 		for _, w := range summary.Windows {
+			if w.ResetAt != nil && !w.ResetAt.After(now) {
+				windows = append(windows, AccountOpsUsageWindow{Window: w.Window, Label: w.Window, Status: "stale", ResetsAt: w.ResetAt})
+				continue
+			}
 			used := 100 - w.RemainingPct
 			windows = append(windows, AccountOpsUsageWindow{Window: w.Window, Label: w.Window, Status: "ok", UsedPercent: &used, ObservedAt: snap.Balance.ReceivedAt, ResetsAt: w.ResetAt})
 		}

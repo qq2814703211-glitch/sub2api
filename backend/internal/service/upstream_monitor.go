@@ -229,6 +229,7 @@ type UpstreamUsageSummary struct {
 	Remaining       *float64              `json:"remaining,omitempty"`
 	MinRemainingPct *float64              `json:"min_remaining_pct,omitempty"`
 	Windows         []UpstreamUsageWindow `json:"windows,omitempty"`
+	UnknownWindows  []string              `json:"-"`
 	ExpiresAt       *time.Time            `json:"expires_at,omitempty"`
 	ReceivedAt      *time.Time            `json:"received_at,omitempty"`
 	Status          string                `json:"status,omitempty"`
@@ -824,7 +825,7 @@ func buildUpstreamAlerts(writes []UpstreamSampleWrite, rules map[int64]UpstreamA
 				}
 			}
 		}
-		if write.RateChanged && write.PreviousRate != nil && *write.PreviousRate > 0 {
+		if write.RateChanged && write.PreviousRate != nil && *write.PreviousRate > 0 && hasRule && rule.Enabled {
 			minPct := upstreamMonitorRateAlertMinPct
 			if hasRule && rule.RateMinPct > 0 {
 				minPct = rule.RateMinPct
@@ -910,6 +911,7 @@ func ParseUpstreamUsageSummary(raw string) *UpstreamUsageSummary {
 		}
 		used := 0.0
 		if window.Used == nil || math.IsNaN(*window.Used) || math.IsInf(*window.Used, 0) {
+			summary.UnknownWindows = append(summary.UnknownWindows, name)
 			continue
 		}
 		if window.Used != nil && !math.IsNaN(*window.Used) && !math.IsInf(*window.Used, 0) {

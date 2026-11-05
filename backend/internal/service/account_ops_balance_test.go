@@ -264,3 +264,33 @@ func TestAccountOpsValidationErrorPreservesPersistedConfiguration(t *testing.T) 
 	require.NotContains(t, err.Error(), "private database")
 	require.Equal(t, before, settings.raw)
 }
+
+func TestAccountOpsAPIKeyQuotaUnknownWindowCannotRecover(t *testing.T) {
+	now := time.Now()
+	snap := map[string]any{"status": "ok", "received_at": now.Add(-time.Minute).Format(time.RFC3339Nano), "fresh_until": now.Add(time.Hour).Format(time.RFC3339Nano), "data": map[string]any{"windows": []map[string]any{{"window": "5h", "limit": 100, "used": 10}, {"window": "7d", "limit": 100}}}}
+	a := &Account{ID: 7, Type: AccountTypeAPIKey, Extra: map[string]any{UpstreamBillingProbeExtraKey: map[string]any{"status": "ok", "balance": snap}}}
+	svc := NewAccountOpsService(nil, nil, nil)
+	cfg := defaultAccountOpsConfig()
+	cfg.QuotaThresholds = []AccountOpsQuotaRule{{AccountID: 7, Enabled: true, ThresholdPercent: 90, Window: "any"}}
+	_, state := svc.assessThreshold(context.Background(), a, "quota_threshold", cfg, now)
+	require.Equal(t, "suppressed", state, "unknown 7d cannot turn a previous adverse episode healthy")
+	cfg.QuotaThresholds[0].Window = "5h"
+	_, state = svc.assessThreshold(context.Background(), a, "quota_threshold", cfg, now)
+	require.Equal(t, "resolved", state)
+}
+
+func TestAccountOpsBalanceAndQuotaRulesCoexist(t *testing.T) {
+	a := &Account{ID: 7, Type: AccountTypeAPIKey}
+	svc := NewAccountOpsService(&accountOpsSettingsStub{}, &accountOpsRepoStub{}, nil)
+	svc.SetNotificationDependencies(&opsAccountsStub{account: a}, nil, false, "UTC")
+	cfg := defaultAccountOpsConfig()
+	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 7, Enabled: true, Threshold: 5, Unit: "USD"}}
+	cfg.QuotaThresholds = []AccountOpsQuotaRule{{AccountID: 7, Enabled: true, ThresholdPercent: 90, Window: "any"}}
+	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
+	saved, err := svc.GetConfig(context.Background())
+	require.NoError(t, err)
+	require.Len(t, saved.BalanceThresholds, 1)
+	require.Len(t, saved.QuotaThresholds, 1)
+	cfg.QuotaThresholds = append(cfg.QuotaThresholds, cfg.QuotaThresholds[0])
+	require.Error(t, svc.SaveConfig(context.Background(), cfg), "duplicates within one metric are still invalid")
+}

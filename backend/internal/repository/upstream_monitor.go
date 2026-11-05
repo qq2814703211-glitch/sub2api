@@ -409,9 +409,6 @@ FROM upstream_monitor_state`)
 }
 
 func (r *upstreamMonitorRepository) ApplySamples(ctx context.Context, writes []service.UpstreamSampleWrite, pruneSamplesBefore, pruneRatesBefore, pruneDailyBefore time.Time) error {
-	if len(writes) == 0 {
-		return nil
-	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
