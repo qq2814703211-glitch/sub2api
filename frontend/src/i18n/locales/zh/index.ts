@@ -8,6 +8,7 @@ import channelMonitorV3 from './channelMonitorV3'
 import batchImage from './batchImage'
 import imagegen from './imagegen'
 import groupSignals from './groupSignals'
+import videoBilling from './videoBilling'
 import admin from './admin'
 import misc from './misc'
 import tickets from './tickets'
@@ -15,6 +16,7 @@ import tickets from './tickets'
 export default {
   adminAccessKeys,
   mcp,
+  videoBilling,
   ...landing,
   ...common,
   ...dashboard,

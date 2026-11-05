@@ -385,6 +385,12 @@ func provideCleanup(
 				}
 				return nil
 			}},
+			{"VideoBillingWorker", func() error {
+				if openAIGateway != nil {
+					openAIGateway.StopVideoBillingWorker()
+				}
+				return nil
+			}},
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
 					openAIGateway.CloseOpenAIWSPool()
