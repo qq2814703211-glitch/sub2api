@@ -49,19 +49,6 @@ var (
 		Mode:                    "image_generation",
 		SupportsPromptCaching:   true,
 	}
-	// Official Flare/Sunburst 2.6 rates, USD per token (2026-11-05):
-	// https://developers.openai.com/api/docs/models/gpt-image-2.6-flare
-	// https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst
-	openAIGPTImage26FallbackPricing = &LiteLLMModelPricing{
-		InputCostPerToken:            5e-6,
-		CacheReadInputTokenCost:      1.25e-6,
-		InputCostPerImageToken:       8e-6,
-		CacheReadInputImageTokenCost: 2e-6,
-		OutputCostPerImageToken:      30e-6,
-		LiteLLMProvider:              "openai",
-		Mode:                         "image_generation",
-		SupportsPromptCaching:        true,
-	}
 	openAIGPT54FallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:       2.5e-06, // $2.5 per MTok
 		OutputCostPerToken:      1.5e-05, // $15 per MTok
@@ -1708,12 +1695,10 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 			return openAIGPTImage25FallbackPricing
 		}
 	}
-	if model == "gpt-image-2.6-flare" || model == "gpt-image-2.6-sunburst" {
-		return openAIGPTImage26FallbackPricing
-	}
-	if model == "gpt-image-2.6" {
-		// This is a local alias with no published rate; use an explicit catalog
-		// entry or the mapped concrete model instead of guessing legacy prices.
+	switch model {
+	case "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
+		// Exact operator/catalog entries are handled before fallback matching.
+		// Do not assign USD or an older model's price to a new CNY-billed SKU.
 		return nil
 	}
 	if isOpenAIImageGenerationModel(model) {
