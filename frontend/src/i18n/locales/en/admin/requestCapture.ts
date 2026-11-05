@@ -3,6 +3,8 @@ export default { requestCapture: {
   instanceScope: 'Captures traffic on this instance only; pin management requests to this instance. Instance:',
   storageNotConfigured: 'Stable capture slot not configured; capture cannot be enabled.',
   "title": "Request capture",
+  description: "Temporarily capture by user, group or upstream account; retain failed requests with four message stages and attempt history.",
+  privacy: "Only confirmed error requests or turns are retained, including retries that later succeed. Processing may create temporary files; successful and unconfirmed outcomes are deleted on finalization. Structured credentials are filtered before storage, but free text may still contain sensitive information. Body previews and exports always require recent 2FA; enable only when needed and clean up promptly.",
   "enabled": "Enable targeted error capture",
   expiresAt: 'Automatic deletion at',
   droppedHint: 'Capture omissions and skips in this process; resets on restart. These counts do not imply business request failures.',
