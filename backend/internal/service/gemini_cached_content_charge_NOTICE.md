@@ -1,0 +1,3 @@
+# Gemini cachedContents charge recovery attribution
+Cache-specific preparation/replay and handler regression cases are adapted from the fixed reference revision `cdf13f1991c369dbc5a4585ad197c103f0772451` of `sub2api-kiss-kedaya` (service/repository `gemini_cached_content_charge.go`, handler `gemini_cached_contents_charge_test.go`).
+The existing repository LICENSE remains unchanged. The reference revision contains LICENSE and no tracked NOTICE file. This adaptation uses an independent GeminiCachedContentChargeIntent and adds settlement leases, completion fencing, deletion-safe recovery, and database fault tests.
