@@ -79,6 +79,8 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	// Billing eligibility (same as other requests)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -151,9 +153,16 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	// First attempt + up to 3 failover accounts (max 4 total).
 	for attempt := 0; attempt < 4; attempt++ {
-		selected, selectErr := h.gatewayService.SelectAccountWithLoadAwareness(
-			c.Request.Context(), groupID, "", searchModel, failedAccounts, "", 0,
-		)
+		selected, routedKey, selectErr := h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, "", searchModel, failedAccounts, "", 0, service.PlatformGrok)
+		if selectErr == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, nil, searchModel, auditBody); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selected)
+				c.AbortWithStatusJSON(403, gin.H{"error": gin.H{"message": bindErr.Error()}})
+				return
+			}
+			apiKey = routedKey
+			groupID = apiKey.GroupID
+		}
 		if selectErr != nil {
 			if attempt == 0 {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{

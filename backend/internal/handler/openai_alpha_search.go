@@ -90,6 +90,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, requestedModel)
 	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	routeState := newKeyRouteBindingState(c, apiKey, h.gatewayService, h.billingCacheService)
+	defer routeState.Close()
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	userRelease, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
@@ -137,20 +139,19 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	c.Request = c.Request.WithContext(asPricingCtx)
 
 	for {
-		selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
-			c.Request.Context(),
-			apiKey.GroupID,
-			"",
-			sessionHash,
-			requestedModel,
-			failedAccountIDs,
-			service.OpenAIUpstreamTransportHTTPSSE,
-			service.OpenAIEndpointCapabilityAlphaSearch,
-			false,
-			false,
-			false,
-			service.PlatformOpenAI,
-		)
+		selection, _, routedKey, err := h.gatewayService.SelectAccountWithSchedulerForCapabilityAlongKeyRoutes(c.Request.Context(), apiKey, "", sessionHash, requestedModel, failedAccountIDs, service.OpenAIUpstreamTransportHTTPSSE, service.OpenAIEndpointCapabilityAlphaSearch, false, false, false, service.PlatformOpenAI)
+		if err == nil {
+			if bindErr := routeState.bind(c, h.gatewayService, h.billingCacheService, apiKey, routedKey, &subscription, &channelMapping, requestedModel, body); bindErr != nil {
+				releaseRejectedKeyRouteSelection(selection)
+				status, code, message, _ := billingErrorDetails(bindErr)
+				h.errorResponse(c, status, code, message)
+				return
+			}
+			apiKey = routedKey
+			if apiKey.HasMultipleRoutes() {
+				forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+			}
+		}
 		if err != nil || selection == nil || selection.Account == nil {
 			if failoverClientGone(c) {
 				reqLog.Info("openai_alpha_search.account_select_aborted_client_disconnected", zap.Error(err))

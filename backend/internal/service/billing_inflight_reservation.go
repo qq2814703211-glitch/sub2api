@@ -191,6 +191,10 @@ func (r *InflightReservation) startRenewal(renewer InflightBalanceReservationRen
 
 type inflightReservationCtxKey struct{}
 
+func WithoutInflightReservation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inflightReservationCtxKey{}, (*InflightReservation)(nil))
+}
+
 // WithInflightReservation 把预留句柄挂到 context 上，供计费任务提交时交接。
 func WithInflightReservation(ctx context.Context, r *InflightReservation) context.Context {
 	if r == nil {
