@@ -127,6 +127,9 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		// 站内工单（仅本人会话）
+		registerUserTicketRoutes(authenticated, h)
+
 		// 卡密兑换
 		redeem := authenticated.Group("/redeem")
 		{
@@ -162,5 +165,23 @@ func RegisterUserRoutes(
 			monitorV2.GET("/errors", h.ChannelMonitorV2.Errors)
 			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
 		}
+	}
+}
+
+// registerUserTicketRoutes mounts the authenticated ticket center. The nil guard
+// keeps partial handler graphs used by narrow route tests working.
+func registerUserTicketRoutes(authenticated *gin.RouterGroup, h *handler.Handlers) {
+	if h.Ticket == nil {
+		return
+	}
+	tickets := authenticated.Group("/tickets")
+	{
+		tickets.GET("", h.Ticket.List)
+		tickets.GET("/stats", h.Ticket.Stats)
+		tickets.POST("", h.Ticket.Create)
+		tickets.GET("/:id", h.Ticket.Detail)
+		tickets.POST("/:id/replies", h.Ticket.Reply)
+		tickets.PATCH("/:id", h.Ticket.Update)
+		tickets.POST("/:id/read", h.Ticket.MarkRead)
 	}
 }

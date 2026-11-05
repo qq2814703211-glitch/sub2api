@@ -168,6 +168,7 @@ export default {
     upstreamMonitor: '上游监控',
     dashboard: '仪表盘',
     announcements: '公告',
+    tickets: '工单',
     apiKeys: 'API 密钥',
     batchImage: '批量生图',
     usage: '使用记录',

@@ -139,6 +139,7 @@ func provideCleanup(
 	keyUsage *keyusage.Runtime,
 	settingService *service.SettingService,
 	accountOps *service.AccountOpsService,
+	ticketService *service.TicketService,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -161,6 +162,12 @@ func provideCleanup(
 			{"KeyUsageRuntime", func() error {
 				if keyUsage != nil {
 					keyUsage.Stop()
+				}
+				return nil
+			}},
+			{"TicketService", func() error {
+				if ticketService != nil {
+					ticketService.Stop()
 				}
 				return nil
 			}},
