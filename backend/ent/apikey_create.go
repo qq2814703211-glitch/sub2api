@@ -139,6 +139,20 @@ func (_c *APIKeyCreate) SetIPBlacklist(v []string) *APIKeyCreate {
 	return _c
 }
 
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (_c *APIKeyCreate) SetConcurrencyLimit(v int) *APIKeyCreate {
+	_c.mutation.SetConcurrencyLimit(v)
+	return _c
+}
+
+// SetNillableConcurrencyLimit sets the "concurrency_limit" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableConcurrencyLimit(v *int) *APIKeyCreate {
+	if v != nil {
+		_c.SetConcurrencyLimit(*v)
+	}
+	return _c
+}
+
 // SetQuota sets the "quota" field.
 func (_c *APIKeyCreate) SetQuota(v float64) *APIKeyCreate {
 	_c.mutation.SetQuota(v)
@@ -387,6 +401,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.ConcurrencyLimit(); !ok {
+		v := apikey.DefaultConcurrencyLimit
+		_c.mutation.SetConcurrencyLimit(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -455,6 +473,14 @@ func (_c *APIKeyCreate) check() error {
 	if v, ok := _c.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.ConcurrencyLimit(); !ok {
+		return &ValidationError{Name: "concurrency_limit", err: errors.New(`ent: missing required field "APIKey.concurrency_limit"`)}
+	}
+	if v, ok := _c.mutation.ConcurrencyLimit(); ok {
+		if err := apikey.ConcurrencyLimitValidator(v); err != nil {
+			return &ValidationError{Name: "concurrency_limit", err: fmt.Errorf(`ent: validator failed for field "APIKey.concurrency_limit": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
@@ -546,6 +572,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IPBlacklist(); ok {
 		_spec.SetField(apikey.FieldIPBlacklist, field.TypeJSON, value)
 		_node.IPBlacklist = value
+	}
+	if value, ok := _c.mutation.ConcurrencyLimit(); ok {
+		_spec.SetField(apikey.FieldConcurrencyLimit, field.TypeInt, value)
+		_node.ConcurrencyLimit = value
 	}
 	if value, ok := _c.mutation.Quota(); ok {
 		_spec.SetField(apikey.FieldQuota, field.TypeFloat64, value)
@@ -844,6 +874,24 @@ func (u *APIKeyUpsert) UpdateIPBlacklist() *APIKeyUpsert {
 // ClearIPBlacklist clears the value of the "ip_blacklist" field.
 func (u *APIKeyUpsert) ClearIPBlacklist() *APIKeyUpsert {
 	u.SetNull(apikey.FieldIPBlacklist)
+	return u
+}
+
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (u *APIKeyUpsert) SetConcurrencyLimit(v int) *APIKeyUpsert {
+	u.Set(apikey.FieldConcurrencyLimit, v)
+	return u
+}
+
+// UpdateConcurrencyLimit sets the "concurrency_limit" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateConcurrencyLimit() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldConcurrencyLimit)
+	return u
+}
+
+// AddConcurrencyLimit adds v to the "concurrency_limit" field.
+func (u *APIKeyUpsert) AddConcurrencyLimit(v int) *APIKeyUpsert {
+	u.Add(apikey.FieldConcurrencyLimit, v)
 	return u
 }
 
@@ -1280,6 +1328,27 @@ func (u *APIKeyUpsertOne) UpdateIPBlacklist() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearIPBlacklist() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearIPBlacklist()
+	})
+}
+
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (u *APIKeyUpsertOne) SetConcurrencyLimit(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetConcurrencyLimit(v)
+	})
+}
+
+// AddConcurrencyLimit adds v to the "concurrency_limit" field.
+func (u *APIKeyUpsertOne) AddConcurrencyLimit(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddConcurrencyLimit(v)
+	})
+}
+
+// UpdateConcurrencyLimit sets the "concurrency_limit" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateConcurrencyLimit() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateConcurrencyLimit()
 	})
 }
 
@@ -1918,6 +1987,27 @@ func (u *APIKeyUpsertBulk) UpdateIPBlacklist() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearIPBlacklist() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearIPBlacklist()
+	})
+}
+
+// SetConcurrencyLimit sets the "concurrency_limit" field.
+func (u *APIKeyUpsertBulk) SetConcurrencyLimit(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetConcurrencyLimit(v)
+	})
+}
+
+// AddConcurrencyLimit adds v to the "concurrency_limit" field.
+func (u *APIKeyUpsertBulk) AddConcurrencyLimit(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddConcurrencyLimit(v)
+	})
+}
+
+// UpdateConcurrencyLimit sets the "concurrency_limit" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateConcurrencyLimit() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateConcurrencyLimit()
 	})
 }
 

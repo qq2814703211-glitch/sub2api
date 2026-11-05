@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 26 // v26: ordered API Key fallback groups
+const apiKeyAuthSnapshotVersion = 27 // combined ordered fallback groups and enforced key concurrency
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -351,6 +351,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		RateLimit5h:   apiKey.RateLimit5h,
 		RateLimit1d:   apiKey.RateLimit1d,
 		RateLimit7d:   apiKey.RateLimit7d,
+		ConcurrencyLimit: apiKey.ConcurrencyLimit,
 		User: APIKeyAuthUserSnapshot{
 			ID:                         apiKey.User.ID,
 			Status:                     apiKey.User.Status,
@@ -462,6 +463,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit5h:   snapshot.RateLimit5h,
 		RateLimit1d:   snapshot.RateLimit1d,
 		RateLimit7d:   snapshot.RateLimit7d,
+		ConcurrencyLimit: snapshot.ConcurrencyLimit,
 		User: &User{
 			ID:                         snapshot.User.ID,
 			Status:                     snapshot.User.Status,

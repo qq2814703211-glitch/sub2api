@@ -70,6 +70,9 @@ type APIKey struct {
 	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	ConcurrencyLimit    int        `json:"concurrency_limit"`
+	WaitingCount        *int       `json:"waiting_count"`
+	QueueStatsAvailable bool       `json:"queue_stats_available"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
