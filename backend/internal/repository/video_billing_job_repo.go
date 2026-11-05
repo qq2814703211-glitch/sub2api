@@ -100,8 +100,7 @@ func (r *videoBillingJobRepository) Claim(ctx context.Context, id string, lease 
 func (r *videoBillingJobRepository) ClaimDue(ctx context.Context, lease time.Duration) (*service.VideoBillingJob, error) {
 	return scanVideoJob(r.db.QueryRowContext(ctx, `UPDATE video_billing_jobs SET lease_token=$1,
  lease_until=NOW()+make_interval(secs=>$2::double precision),attempts=attempts+1,updated_at=NOW()
- WHERE id=(SELECT id FROM video_billing_jobs WHERE state IN ('creating','submitted','ready','billed','reconciliation')
- AND (state <> 'reconciliation' OR task_id IS NOT NULL)
+ WHERE id=(SELECT id FROM video_billing_jobs WHERE state IN ('creating','submitted','ready','billed')
  AND available_at<=NOW() AND (lease_until IS NULL OR lease_until<NOW())
  ORDER BY available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING `+videoJobColumns, uuid.NewString(), lease.Seconds()))
 }
@@ -214,7 +213,9 @@ func (r *videoBillingJobRepository) List(ctx context.Context, state, before stri
 	return out, rows.Err()
 }
 func (r *videoBillingJobRepository) Retry(ctx context.Context, id string) error {
-	return videoJobAffected(r.db.ExecContext(ctx, `UPDATE video_billing_jobs SET state=CASE WHEN intent IS NULL THEN 'submitted' ELSE state END,
+	return videoJobAffected(r.db.ExecContext(ctx, `UPDATE video_billing_jobs SET state=CASE
+ WHEN state='billed' THEN state WHEN intent IS NULL THEN 'submitted'
+ WHEN state='reconciliation' THEN 'ready' ELSE state END,
  available_at=NOW(),last_error='',updated_at=NOW() WHERE id=$1 AND task_id IS NOT NULL
  AND state IN ('submitted','ready','billed','reconciliation') AND (lease_until IS NULL OR lease_until<NOW())`, id))
 }

@@ -350,8 +350,22 @@ func TestVideoDBUnknownCreateNeverResentAndUpgradePreservesData(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "reconciliation", jobs[0].State)
 	require.Equal(t, "create_outcome_unknown_no_replay", jobs[0].LastError)
-	require.Error(t, svc.RetryVideoBillingJob(context.Background(), j.ID))
+	require.ErrorIs(t, svc.RetryVideoBillingJob(context.Background(), j.ID), service.ErrVideoJobLeaseLost)
+	before := jobs[0]
+	for n := 0; n < 3; n++ {
+		require.NoError(t, svc.RunVideoBillingRecovery(context.Background(), 3))
+	}
+	jobs, err = repoListVideoTest(f.db)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, before, jobs[0], "unknown create stays pending manual reconciliation without another claim")
+	require.Empty(t, jobs[0].TaskID)
 	require.Zero(t, u.calls)
+	for _, table := range []string{"usage_billing_dedup", "usage_logs"} {
+		var count int
+		require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE api_key_id=$1`, f.key).Scan(&count))
+		require.Zero(t, count)
+	}
 	require.NoError(t, ApplyMigrations(context.Background(), f.db))
 	var balance float64
 	require.NoError(t, f.db.QueryRow(`SELECT balance FROM users WHERE id=$1`, f.user).Scan(&balance))
