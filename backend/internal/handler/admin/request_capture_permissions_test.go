@@ -22,6 +22,10 @@ import (
 
 type captureUserRepo struct{ service.UserRepository }
 
+func (captureUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
 func (captureUserRepo) GetByID(context.Context, int64) (*service.User, error) {
 	return &service.User{ID: 27, Role: service.RoleAdmin, TotpEnabled: true}, nil
 }
