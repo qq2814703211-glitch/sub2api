@@ -52,12 +52,16 @@ func ProvideAdminHandlers(
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	claudeResetCredits *service.ClaudeResetCreditService,
+	accountOps *admin.AccountOpsHandler,
+	monitor *admin.UpstreamMonitorHandler,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	return &AdminHandlers{
+		AccountOps:             accountOps,
+		UpstreamMonitor:        monitor,
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
 		Group:                  groupHandler,
@@ -296,5 +300,7 @@ var ProviderSet = wire.NewSet(
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,
+	ProvideAccountOpsHandler,
+	admin.NewUpstreamMonitorHandler,
 	ProvideHandlers,
 )
