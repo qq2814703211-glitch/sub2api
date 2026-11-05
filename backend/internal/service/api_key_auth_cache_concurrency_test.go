@@ -9,6 +9,27 @@ import (
 	"testing"
 )
 
+func TestAPIKeyAuthSnapshotRoundTripPreservesRoutesAndConcurrency(t *testing.T) {
+	primary, backup := int64(11), int64(22)
+	apiKey := &APIKey{
+		ID: 7, UserID: 8, GroupID: &primary, RouteGroupIDs: []int64{primary, backup},
+		ConcurrencyLimit: 4, User: &User{ID: 8, Status: StatusActive},
+	}
+	svc := &APIKeyService{}
+
+	payload, err := json.Marshal(&APIKeyAuthCacheEntry{Snapshot: svc.snapshotFromAPIKey(context.Background(), apiKey)})
+	require.NoError(t, err)
+	var cached APIKeyAuthCacheEntry
+	require.NoError(t, json.Unmarshal(payload, &cached))
+
+	materialized, accepted, err := svc.applyAuthCacheEntry(apiKey.Key, &cached)
+	require.NoError(t, err)
+	require.True(t, accepted)
+	require.Equal(t, apiKeyAuthSnapshotVersion, cached.Snapshot.Version)
+	require.Equal(t, []int64{primary, backup}, materialized.RouteGroupIDs)
+	require.Equal(t, 4, materialized.ConcurrencyLimit)
+}
+
 func TestAPIKeyConcurrencyAuthCacheRoundTrip(t *testing.T) {
 	for _, limit := range []int{0, 1, 500} {
 		svc := &APIKeyService{}
