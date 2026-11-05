@@ -27,6 +27,8 @@ func TestSeedanceNativeForwarding(t *testing.T) {
 	c, w := grokMediaContentTestContext(http.MethodPost, "/api/v3/contents/generations/tasks", nil)
 	result, err := svc.ForwardSeedance(context.Background(), c, seedanceTestAccount(), SeedanceEndpointCreate, "", body)
 	require.NoError(t, err)
+	require.Empty(t, w.Body.String())
+	svc.CommitDeferredMediaCreateResponse(c, result)
 	require.JSONEq(t, `{"id":"task-1"}`, w.Body.String())
 	require.Equal(t, "seedance:task-1", result.ResponseID)
 	require.Zero(t, result.Usage.OutputTokens)

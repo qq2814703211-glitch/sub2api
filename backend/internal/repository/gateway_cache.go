@@ -175,7 +175,7 @@ func (c *gatewayCache) SetGrokVideoPendingBilling(ctx context.Context, key strin
 		return errors.New("invalid grok video pending billing payload")
 	}
 	if ttl <= 0 {
-		ttl = 24 * time.Hour
+		ttl = 15 * 24 * time.Hour
 	}
 	return c.rdb.Set(ctx, grokVideoPendingBillingPrefix+key, payload, ttl).Err()
 }
@@ -198,29 +198,38 @@ func (c *gatewayCache) GetGrokVideoPendingBilling(ctx context.Context, key strin
 	return val, nil
 }
 
-func (c *gatewayCache) ClaimGrokVideoBilled(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+func (c *gatewayCache) ClaimGrokVideoBilled(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
 	if c == nil || c.rdb == nil {
 		return false, errors.New("gateway cache unavailable")
 	}
 	key = strings.TrimSpace(key)
-	if key == "" {
+	owner = strings.TrimSpace(owner)
+	if key == "" || owner == "" {
 		return false, errors.New("invalid grok video billed key")
 	}
 	if ttl <= 0 {
-		ttl = 48 * time.Hour
+		ttl = 2 * time.Minute
 	}
-	return c.rdb.SetNX(ctx, grokVideoBilledPrefix+key, "1", ttl).Result()
+	return c.rdb.SetNX(ctx, grokVideoBilledPrefix+key, owner, ttl).Result()
 }
 
-func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) error {
+var releaseGrokVideoBilledScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key, owner string) error {
 	if c == nil || c.rdb == nil {
 		return errors.New("gateway cache unavailable")
 	}
 	key = strings.TrimSpace(key)
-	if key == "" {
+	owner = strings.TrimSpace(owner)
+	if key == "" || owner == "" {
 		return errors.New("invalid grok video billed key")
 	}
-	return c.rdb.Del(ctx, grokVideoBilledPrefix+key).Err()
+	return releaseGrokVideoBilledScript.Run(ctx, c.rdb, []string{grokVideoBilledPrefix + key}, owner).Err()
 }
 
 // Compile-time assertion: gatewayCache must implement CyberSessionBlockStore.

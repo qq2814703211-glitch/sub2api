@@ -101,6 +101,9 @@ func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gi
 		}
 		result.ResponseID = CompatibleVideoTaskKey(id)
 		result.MediaUsage = MergeMediaUsage(ExtractMediaRequestUsage(body), extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
+		result.DeferredHTTPStatus = resp.StatusCode
+		result.DeferredHTTPBody = append([]byte(nil), responseBody...)
+		result.DeferredHTTPHeaders = resp.Header.Clone()
 	} else {
 		result.ResponseID = taskID
 		root := gjson.ParseBytes(responseBody)
@@ -132,6 +135,9 @@ func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gi
 			}
 		}
 	}
-	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	// The handler commits creates after storing their billing snapshot.
+	if endpoint != CompatibleVideoEndpointCreate {
+		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	}
 	return result, nil
 }
