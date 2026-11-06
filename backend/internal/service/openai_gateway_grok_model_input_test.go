@@ -223,6 +223,33 @@ func TestSanitizeGrokResponsesModelInputSkipsInvalidOutputImages(t *testing.T) {
 	require.Equal(t, "message", gjson.GetBytes(patched, "input.1.type").String())
 }
 
+func TestPatchGrokResponsesBodyNormalizesLegacyNestedFunctionChoice(t *testing.T) {
+	tests := []struct {
+		name   string
+		choice string
+		want   string
+	}{
+		{
+			name:   "legacy nested function name",
+			choice: `{"type":"function","function":{"name":"lookup","description":"ignored"}}`,
+			want:   `{"type":"function","name":"lookup"}`,
+		},
+		{
+			name:   "top-level name wins",
+			choice: `{"type":"function","name":"lookup","function":{"name":"nested"}}`,
+			want:   `{"type":"function","name":"lookup","function":{"name":"nested"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"input":"Find alpha","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"key":{"type":"string"}}}}],"tool_choice":` + tt.choice + `}`)
+			patched, err := patchGrokResponsesBody(body, "grok-4.7")
+			require.NoError(t, err)
+			require.JSONEq(t, tt.want, gjson.GetBytes(patched, "tool_choice").Raw)
+		})
+	}
+}
+
 func TestPatchGrokResponsesBodyCombinesAdditionalToolsAndDropsOrphanControls(t *testing.T) {
 	body := []byte(`{
 		"input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup"}]},{"role":"user","content":"hi"}],
