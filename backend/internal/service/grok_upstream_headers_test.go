@@ -14,7 +14,6 @@ import (
 
 func TestApplyDefaultGrokUpstreamHeadersUsesCLIUserAgent(t *testing.T) {
 	t.Setenv(xai.CLIVersionEnv, "")
-
 	req, err := http.NewRequest(http.MethodGet, "https://api.x.ai/v1/responses", nil)
 	require.NoError(t, err)
 	req.Header.Set("User-Agent", "claude-code/1.2.3")
@@ -22,13 +21,13 @@ func TestApplyDefaultGrokUpstreamHeadersUsesCLIUserAgent(t *testing.T) {
 
 	applyDefaultGrokUpstreamHeaders(req)
 
-	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), req.Header.Get("User-Agent"))
-	require.Equal(t, xai.CLIClientVersion, req.Header.Get("x-grok-client-version"))
+	require.Equal(t, "1.0.70", req.Header.Get("x-grok-client-version"))
+	require.Equal(t, xai.CLIUserAgent("1.0.70"), req.Header.Get("User-Agent"))
 	require.Equal(t, xai.CLIClientIdentifier, req.Header.Get("x-grok-client-identifier"))
 }
 
 func TestApplyDefaultGrokUpstreamHeadersHonorsCLIVersionOverride(t *testing.T) {
-	t.Setenv(xai.CLIVersionEnv, "1.0.14")
+	t.Setenv(xai.CLIVersionEnv, "1.0.70")
 
 	req, err := http.NewRequest(http.MethodGet, "https://api.x.ai/v1/responses", nil)
 	require.NoError(t, err)
@@ -36,8 +35,8 @@ func TestApplyDefaultGrokUpstreamHeadersHonorsCLIVersionOverride(t *testing.T) {
 
 	applyDefaultGrokUpstreamHeaders(req)
 
-	require.Equal(t, "1.0.14", req.Header.Get("x-grok-client-version"))
-	require.Equal(t, xai.CLIUserAgent("1.0.14"), req.Header.Get("User-Agent"))
+	require.Equal(t, "1.0.70", req.Header.Get("x-grok-client-version"))
+	require.Equal(t, xai.CLIUserAgent("1.0.70"), req.Header.Get("User-Agent"))
 	require.Equal(t, "grok-pager", req.Header.Get("x-grok-client-identifier"))
 }
 
@@ -55,7 +54,7 @@ func TestResolveGrokUpstreamUserAgentNeverPassthrough(t *testing.T) {
 }
 
 func TestApplyGrokRuntimeHeadersKeepsCLIUserAgent(t *testing.T) {
-	t.Setenv(xai.CLIVersionEnv, "")
+	t.Setenv(xai.CLIVersionEnv, "1.0.70")
 
 	req, err := http.NewRequest(http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", nil)
 	require.NoError(t, err)
@@ -66,9 +65,9 @@ func TestApplyGrokRuntimeHeadersKeepsCLIUserAgent(t *testing.T) {
 		UpstreamOriginator: "codex_cli_rs",
 	})
 
-	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), req.Header.Get("User-Agent"))
+	require.Equal(t, xai.CLIUserAgent("1.0.70"), req.Header.Get("User-Agent"))
 	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
-	require.Equal(t, xai.CLIClientVersion, req.Header.Get("x-grok-client-version"))
+	require.Equal(t, "1.0.70", req.Header.Get("x-grok-client-version"))
 }
 
 func TestApplyGrokTLSProfileHeadersAlwaysUsesCLIUserAgent(t *testing.T) {

@@ -38,13 +38,19 @@ func TestCLIUserAgentMatchesOfficialInteractiveCapture(t *testing.T) {
 
 func TestResolveCLIVersionDefaultsToPinnedClientVersion(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
-	// Default advertise pin is CLIClientVersion; CLIStableVersion is only the floor.
-	require.Equal(t, CLIClientVersion, ResolveCLIVersion())
+	// CLIStableVersion is only the minimum; the advertised default is the release pin.
+	require.Equal(t, "1.0.70", CLIClientVersion)
+	require.Equal(t, "1.0.70", ResolveCLIVersion())
+	require.Equal(t, "1.0.13", CLIStableVersion)
+	require.Contains(t, CLIUserAgent("1.0.70"), "grok-pager/1.0.70 grok-shell/1.0.70 (")
 	require.True(t, IsSupportedCLIVersion(CLIClientVersion))
 	require.True(t, IsSupportedCLIVersion(CLIStableVersion))
 }
 
 func TestResolveCLIVersionAcceptsValidOverride(t *testing.T) {
+	t.Setenv(CLIVersionEnv, "1.0.70")
+	require.Equal(t, "1.0.70", ResolveCLIVersion())
+
 	t.Setenv(CLIVersionEnv, "1.0.14-alpha.1")
 	require.Equal(t, "1.0.14-alpha.1", ResolveCLIVersion())
 }

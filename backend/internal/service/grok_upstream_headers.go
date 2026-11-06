@@ -12,7 +12,6 @@ import (
 
 // Fixed CLI identity aliases — single source of truth is internal/pkg/xai.
 const (
-	grokClientVersionHeader    = xai.CLIStableVersion
 	grokClientIdentifierHeader = xai.CLIClientIdentifier
 	grokClientModeHeader       = xai.CLIClientMode
 )

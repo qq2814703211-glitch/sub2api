@@ -1214,6 +1214,15 @@ func sanitizeGrokResponsesTools(body []byte) ([]byte, error) {
 	if !toolChoice.Exists() {
 		return body, nil
 	}
+	if toolChoice.IsObject() && strings.TrimSpace(toolChoice.Get("type").String()) == "function" && !toolChoice.Get("name").Exists() {
+		if choiceName := strings.TrimSpace(toolChoice.Get("function.name").String()); choiceName != "" {
+			body, err = sjson.SetBytes(body, "tool_choice", map[string]string{"type": "function", "name": choiceName})
+			if err != nil {
+				return nil, err
+			}
+			toolChoice = gjson.GetBytes(body, "tool_choice")
+		}
+	}
 	if shouldDropGrokToolChoice(toolChoice, filteredTools) {
 		body, err = sjson.DeleteBytes(body, "tool_choice")
 		if err != nil {
