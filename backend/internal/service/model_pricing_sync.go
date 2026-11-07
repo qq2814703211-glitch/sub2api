@@ -119,7 +119,7 @@ type ModelPricingSyncHistoryRepository interface {
 	List(ctx context.Context, filter *ModelPricingSyncHistoryFilter) ([]*ModelPricingSyncHistory, int64, error)
 	// ListSyncedFields 返回某个来源曾写入过的 (模型, 字段) 集合，用于判定字段
 	// 归属：出现在这里的字段由同步任务维护，可以跟随官方价更新。
-	ListSyncedFields(ctx context.Context, source string) (map[string]map[string]struct{}, error)
+	ListSyncedFields(ctx context.Context, source string) (map[string]map[string]float64, error)
 }
 
 // ModelPricingSyncService 把 models.dev 的官方参考价同步进 pricing.override_file。
@@ -347,9 +347,9 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 }
 
 // loadSyncedFields 读取变更史里由同步任务写过的字段集合。
-func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[string]map[string]struct{}, error) {
+func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[string]map[string]float64, error) {
 	if s.history == nil {
-		return map[string]map[string]struct{}{}, nil
+		return map[string]map[string]float64{}, nil
 	}
 	return s.history.ListSyncedFields(ctx, ModelPricingSyncSourceModelsDev)
 }
@@ -493,7 +493,7 @@ func buildModelPricingSyncReference(registry map[string]modelPricingSyncRegistry
 func computeModelPricingSyncChanges(
 	existing map[string]json.RawMessage,
 	reference map[string]modelPricingSyncReferenceEntry,
-	syncedFields map[string]map[string]struct{},
+	syncedFields map[string]map[string]float64,
 ) []modelPricingSyncChange {
 	var changes []modelPricingSyncChange
 	models := make([]string, 0, len(reference))
@@ -535,13 +535,22 @@ func computeModelPricingSyncChanges(
 }
 
 // modelHasManualPricing 报告覆盖层里该模型是否有运营手配的字段。
-// 非零且不在同步写入记录里的字段即为手配价。
-func modelHasManualPricing(fields map[string]float64, synced map[string]struct{}) bool {
+//
+// 判据是「当前值与同步任务上次写入的值不同」，而不是「字段是否出现在同步史里」。
+// 只比对字段名的做法会漏掉最常见的一种顺序：同步先写入了某个模型，之后运营才
+// 手动改价。此时该字段既非零、又出现在同步史里，旧规则就会把它判成同步所有，
+// 下一轮静默覆盖掉运营的手工价。
+//
+// synced 记录的是「上次同步写进去的值」；字段不在其中，或其中记的值与当前值不等，
+// 都说明当前值是别人写的。
+func modelHasManualPricing(fields map[string]float64, synced map[string]float64) bool {
 	for field, value := range fields {
 		if value == 0 {
 			continue
 		}
-		if _, syncedBefore := synced[field]; syncedBefore {
+		lastSynced, syncedBefore := synced[field]
+		if syncedBefore && lastSynced == value {
+			// 与上次同步写入的值一致：这是同步自己写的，可以继续跟随官方价。
 			continue
 		}
 		return true

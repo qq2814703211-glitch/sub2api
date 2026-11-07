@@ -152,10 +152,13 @@ func (r *modelPricingSyncHistoryRepository) List(ctx context.Context, filter *se
 	return records, total, nil
 }
 
-// ListSyncedFields 返回指定来源写入过的 (模型, 字段) 集合。
-// 同步任务用它判定字段归属：出现在这里的字段由同步维护，可跟随官方价更新；
-// 不在其中的已有值视为运营手配价，绝不覆盖。
-func (r *modelPricingSyncHistoryRepository) ListSyncedFields(ctx context.Context, source string) (map[string]map[string]struct{}, error) {
+// ListSyncedFields 返回指定来源最近一次写入的 (模型, 字段) -> 值。
+//
+// 同步任务用它判定字段归属：值等于上次同步写入的值，说明这是同步自己的，
+// 可以跟随官方价更新；值不等或字段不存在，说明当前值由别人（运营）写入，
+// 绝不覆盖。取 DISTINCT ON 的最新一行，而不是只取字段名，是为了抓住
+// 「同步先写入、运营后改价」这种顺序下被手工编辑过的值。
+func (r *modelPricingSyncHistoryRepository) ListSyncedFields(ctx context.Context, source string) (map[string]map[string]float64, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("nil model pricing sync history repository")
 	}
@@ -164,16 +167,20 @@ func (r *modelPricingSyncHistoryRepository) ListSyncedFields(ctx context.Context
 		source = service.ModelPricingSyncSourceModelsDev
 	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT DISTINCT model, field FROM model_pricing_sync_history WHERE source = $1`, source)
+		`SELECT DISTINCT ON (model, field) model, field, new_value
+		   FROM model_pricing_sync_history
+		  WHERE source = $1
+		  ORDER BY model, field, applied_at DESC, id DESC`, source)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make(map[string]map[string]struct{})
+	out := make(map[string]map[string]float64)
 	for rows.Next() {
 		var model, field sql.NullString
-		if err := rows.Scan(&model, &field); err != nil {
+		var value sql.NullFloat64
+		if err := rows.Scan(&model, &field, &value); err != nil {
 			return nil, err
 		}
 		if model.String == "" || field.String == "" {
@@ -181,10 +188,10 @@ func (r *modelPricingSyncHistoryRepository) ListSyncedFields(ctx context.Context
 		}
 		fields, ok := out[model.String]
 		if !ok {
-			fields = make(map[string]struct{})
+			fields = make(map[string]float64)
 			out[model.String] = fields
 		}
-		fields[field.String] = struct{}{}
+		fields[field.String] = value.Float64
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
