@@ -612,6 +612,17 @@ export default {
         created: '创建时间',
         actions: '操作'
       },
+      inflight: {
+        title: '当前在途请求',
+        subtitle: '按分组汇总此刻正在处理的请求；点击刷新查看最新状态。',
+        expandHint: '查看该用户的在途请求明细',
+        empty: '该用户当前没有在途请求',
+        ungrouped: '未分组',
+        requestsUnit: '个请求',
+        modelPending: '模型尚未解析',
+        startedAt: '最早开始于 {time}',
+        sinceHint: '最早一条请求开始于 {time}'
+      },
       today: '今日',
       total: '近30天',
       sortBy: '排序方式',
@@ -917,6 +928,21 @@ export default {
       accountsRateLimited: '限流:',
       accountsTotal: '总量:',
       accountsUnit: '个账号',
+      activeUsers: {
+        badge: '实时使用中',
+        title: '实时使用中的用户',
+        titleWithGroup: '「{name}」实时使用中的用户',
+        description:
+          '此刻有请求正在处理的用户。请求一结束就不算，与「会话数」是两个不同的口径。',
+        empty: '当前没有用户正在使用该分组',
+        loadFailed: '加载实时使用名单失败',
+        columns: {
+          user: '用户',
+          email: '邮箱',
+          inflight: '在途请求',
+          models: '模型'
+        }
+      },
       form: {
         name: '名称',
         description: '描述',
