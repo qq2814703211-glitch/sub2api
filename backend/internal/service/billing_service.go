@@ -114,6 +114,11 @@ type ModelPricing struct {
 	ReasoningEffortMultipliers         map[string]float64 // 最终转发的推理等级对应的计费倍率；未配置的等级按 1 倍计费
 	CacheCreation5mPrice               float64            // 5分钟缓存创建每token价格 (USD)
 	CacheCreation1hPrice               float64            // 1小时缓存创建每token价格 (USD)
+	// CacheWrite30mPrice / CacheWrite12hPrice 是 OpenAI 语义的缓存写入分档单价
+	// （30 分钟 / 12 小时 TTL），与上面 Anthropic 语义的 5m/1h 是两套独立字段
+	// （ADR 0011）。为 0 时按官方倍率从输入价推导：30m = 1.25×，12h = 2.5×。
+	CacheWrite30mPrice                 float64
+	CacheWrite12hPrice                 float64
 	SupportsCacheBreakdown             bool               // 是否支持详细的缓存分类
 	LongContextInputThreshold          int                // 超过阈值后按整次会话提升输入价格
 	LongContextThresholdInclusive      bool               // 达到阈值即应用（xAI）；默认保持严格大于以兼容既有模型
@@ -194,6 +199,10 @@ type UsageTokens struct {
 	CacheReadTokens       int
 	CacheCreation5mTokens int
 	CacheCreation1hTokens int
+	// CacheWrite30mTokens / CacheWrite12hTokens 是 OpenAI 的缓存写入 TTL 分档
+	// （30 分钟 / 12 小时）。与 Anthropic 的 5m/1h 分档无关，两者不会同时非零。
+	CacheWrite30mTokens int
+	CacheWrite12hTokens int
 	ImageOutputTokens     int
 }
 
@@ -205,6 +214,10 @@ type CostBreakdown struct {
 	ImageOutputCost           float64
 	CacheCreationCost         float64
 	CacheReadCost             float64
+	// CacheWriteTTLCost 是 OpenAI 30 分钟 / 12 小时缓存写入的分档费用合计。
+	// 与 CacheCreationCost（Anthropic 5m/1h 语义 + 未分档写入）分开记账，
+	// 避免两个 provider 的口径混在同一个数字里（ADR 0011）。
+	CacheWriteTTLCost         float64
 	TotalCost                 float64
 	ActualCost                float64 // 应用倍率后的实际费用
 	BillingMode               string  // 计费模式（"token"/"per_request"/"image"），由 CalculateCostUnified 填充
@@ -220,6 +233,7 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.OutputCost *= multiplier
 	cost.ImageOutputCost *= multiplier
 	cost.CacheCreationCost *= multiplier
+	cost.CacheWriteTTLCost *= multiplier
 	cost.CacheReadCost *= multiplier
 	cost.TotalCost *= multiplier
 	cost.ActualCost *= multiplier
@@ -1732,6 +1746,10 @@ func (s *BillingService) computeTokenBreakdown(
 	}
 
 	bd := &CostBreakdown{}
+	// OpenAI 30m/12h 分档写入在 computeTokenBreakdown 里走独立单价（输入价 × 1.25 / × 2.5），
+	// 因此要从「未分档写入」的 token 里扣除，否则同一批 token 会既按分档价又按
+	// CacheCreationPricePerToken 计一次。Anthropic 路径下这两个字段恒为 0，扣除是 no-op。
+	tokensForCacheCreation, cacheWrite30mTokens, cacheWrite12hTokens := splitOpenAICacheWriteTTLTokens(tokens)
 	// 分离图片输入 token 与文本输入 token（多模态 embedding、图片编辑等图文不同价场景）。
 	// InputCost 仅计文本输入，图片输入费用单独记入 ImageInputCost，便于对账；总额不变。
 	// ImageInputTokens 为 0 时（绝大多数 chat/vision 流量）走原始单价路径，行为不变。
@@ -1769,8 +1787,11 @@ func (s *BillingService) computeTokenBreakdown(
 		bd.ImageOutputCost = float64(tokens.ImageOutputTokens) * imgPrice
 	}
 
-	// 缓存创建费用
-	bd.CacheCreationCost = s.computeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
+	// 缓存创建费用（Anthropic 5m/1h 与未分档写入）
+	bd.CacheCreationCost = s.computeCacheCreationCost(pricing, tokensForCacheCreation, cacheCreationPrice, cacheCreationMultiplier)
+	// OpenAI 30 分钟 / 12 小时缓存写入分档（ADR 0011）。这两档的 token 在
+	// tokensForCacheCreation 里已被扣除，不会与上面的 CacheCreationCost 重叠。
+	bd.CacheWriteTTLCost = s.computeOpenAICacheWriteTTLCost(pricing, cacheWrite30mTokens, cacheWrite12hTokens, inputPrice, cacheCreationMultiplier)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
 	if imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0)); imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
@@ -1783,11 +1804,12 @@ func (s *BillingService) computeTokenBreakdown(
 		bd.OutputCost *= tierMultiplier
 		bd.ImageOutputCost *= tierMultiplier
 		bd.CacheCreationCost *= tierMultiplier
+		bd.CacheWriteTTLCost *= tierMultiplier
 		bd.CacheReadCost *= tierMultiplier
 	}
 
 	bd.TotalCost = bd.InputCost + bd.ImageInputCost + bd.OutputCost + bd.ImageOutputCost +
-		bd.CacheCreationCost + bd.CacheReadCost
+		bd.CacheCreationCost + bd.CacheWriteTTLCost + bd.CacheReadCost
 	bd.ActualCost = bd.TotalCost * rateMultiplier
 	bd.LongContextBillingApplied = baselineCost != nil && bd.ActualCost > baselineCost.ActualCost
 
