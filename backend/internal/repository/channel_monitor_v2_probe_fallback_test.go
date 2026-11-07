@@ -13,11 +13,11 @@ func probeEntry(status string, ttft *int, at time.Time) *service.ChannelMonitorH
 
 func intPtr(v int) *int { return &v }
 
-func TestProbeSamplesToMetricsDeriveRatesFromProbeCounts(t *testing.T) {
+func TestProbeSamplesToMetricsDeriveAvailabilityFromProbeCounts(t *testing.T) {
 	base := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 
-	// One successful probe with a real TTFT: cache and availability become 100%
-	// because 1/1 requests succeeded, not because anything is hardcoded.
+	// One successful probe with a real TTFT: availability is 100% because 1/1
+	// requests succeeded, not because anything is hardcoded.
 	metrics, ok := probeSamplesToMetrics([]channelMonitorHybridProbeSample{
 		{Success: true, TTFTMs: intPtr(180), CheckedAt: base},
 	}, 5, false)
@@ -30,11 +30,49 @@ func TestProbeSamplesToMetricsDeriveRatesFromProbeCounts(t *testing.T) {
 	if metrics.SuccessRate != 1 {
 		t.Fatalf("success rate must be 1/1 = 100%%, got %v", metrics.SuccessRate)
 	}
-	if metrics.CacheRateDenominator != 1 || metrics.CacheRateNumerator != 1 {
-		t.Fatalf("cache rate must be 1/1 = 100%%, got %d/%d", metrics.CacheRateNumerator, metrics.CacheRateDenominator)
-	}
 	if metrics.TTFT.P50Ms == nil || *metrics.TTFT.P50Ms != 180 {
 		t.Fatalf("probe TTFT must come from the measured first token, got %+v", metrics.TTFT)
+	}
+}
+
+// ADR 0009 replaced the old "a successful probe caches 1 of 1 tokens, so 100%"
+// arithmetic. A probe is a single request that barely touches prompt caching and
+// the upstream returns no cache fields for it, so the rate it used to produce
+// described "the probe ran" while rendering as a best-case value for an unknown
+// quantity. A probe bucket now reports cache as unknown unless the caller passes
+// a real-traffic average.
+func TestProbeSamplesToMetricsLeaveCacheRateUnknownWithoutRealTraffic(t *testing.T) {
+	metrics, ok := probeSamplesToMetrics([]channelMonitorHybridProbeSample{
+		{Success: true, TTFTMs: intPtr(180), CheckedAt: time.Now()},
+	}, 5, false)
+	if !ok {
+		t.Fatal("one sample must produce metrics")
+	}
+	if metrics.CacheRate == 1 {
+		t.Fatal("a successful probe must not be credited with a 100% cache rate")
+	}
+	if metrics.CacheRateKnown == nil || *metrics.CacheRateKnown {
+		t.Fatalf("probe bucket cache rate must be flagged unknown, got %v", metrics.CacheRateKnown)
+	}
+}
+
+func TestProbeSamplesToMetricsStampRealTrafficCacheAverage(t *testing.T) {
+	rate := 0.42
+	metrics, ok := probeSamplesToMetricsWithCacheRate([]channelMonitorHybridProbeSample{
+		{Success: true, TTFTMs: intPtr(180), CheckedAt: time.Now()},
+	}, 5, false, &rate)
+	if !ok {
+		t.Fatal("one sample must produce metrics")
+	}
+	if metrics.CacheRate != rate {
+		t.Fatalf("a supplied real-traffic average must be used verbatim, got %v want %v", metrics.CacheRate, rate)
+	}
+	if metrics.CacheRateKnown == nil || !*metrics.CacheRateKnown {
+		t.Fatalf("a supplied real-traffic average must be flagged known, got %v", metrics.CacheRateKnown)
+	}
+	if metrics.CacheRateNumerator != 0 || metrics.CacheRateDenominator != 0 {
+		t.Fatalf("borrowed average must not fabricate token counts: %d/%d",
+			metrics.CacheRateNumerator, metrics.CacheRateDenominator)
 	}
 }
 
@@ -48,8 +86,8 @@ func TestProbeSamplesToMetricsReportZeroForFailedProbe(t *testing.T) {
 	if metrics.SuccessRate != 0 {
 		t.Fatalf("a failed probe is 0/1 = 0%%, got %v", metrics.SuccessRate)
 	}
-	if metrics.CacheRateDenominator != 1 || metrics.CacheRateNumerator != 0 {
-		t.Fatalf("a failed probe caches nothing: %d/%d", metrics.CacheRateNumerator, metrics.CacheRateDenominator)
+	if metrics.CacheRateDenominator != 0 || metrics.CacheRateNumerator != 0 {
+		t.Fatalf("a failed probe has no cache reading at all: %d/%d", metrics.CacheRateNumerator, metrics.CacheRateDenominator)
 	}
 	if metrics.TTFT.P50Ms != nil {
 		t.Fatalf("a failed probe has no first token, got %v", *metrics.TTFT.P50Ms)
