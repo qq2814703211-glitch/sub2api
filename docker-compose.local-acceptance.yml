@@ -1,0 +1,100 @@
+# Local acceptance stack for GloryCode 0.2.20-GloryCode-0.1.0.
+#
+# Differences from the shipped docker-compose.yml:
+#   - builds the image from this working tree instead of pulling a digest-pinned
+#     release, so what runs is what we just compiled
+#   - exposes Postgres and Redis on loopback so the test harness and psql can
+#     reach them (the shipped file keeps them on the internal network only)
+#   - uses a separate project name and its own volumes so it can never touch a
+#     real deployment's data
+#
+# Usage:
+#   docker compose -f docker-compose.local-acceptance.yml up -d --build
+#   docker compose -f docker-compose.local-acceptance.yml down -v
+
+services:
+  sub2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: 0.2.20-GloryCode-0.1.0
+    image: sub2api:0.2.20-glorycode-0.1.0-acceptance
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      - AUTO_SETUP=true
+      - SERVER_MODE=release
+      - RUN_MODE=standard
+      - TZ=Asia/Shanghai
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=sub2api
+      - DATABASE_PASSWORD=localacceptance
+      - DATABASE_DBNAME=sub2api
+      - DATABASE_SSLMODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - ADMIN_EMAIL=admin@sub2api.local
+      - ADMIN_PASSWORD=LocalAcceptance!2026
+      - JWT_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - TOTP_ENCRYPTION_KEY=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+      - GOMEMLIMIT=4GiB
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: sub2api-acceptance-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      - POSTGRES_USER=sub2api
+      - POSTGRES_PASSWORD=localacceptance
+      - POSTGRES_DB=sub2api
+      - PGDATA=/var/lib/postgresql/data
+      - TZ=Asia/Shanghai
+    # Tuned for a laptop: the shipped defaults assume 4GB of page cache.
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=128MB
+      -c work_mem=8MB
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U sub2api -d sub2api && psql -U sub2api -d sub2api -Atqc 'SELECT 1' >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  redis:
+    image: redis:8-alpine
+    container_name: sub2api-acceptance-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6380:6379"
+    # No password: this stack is bound to loopback only and is disposable.
+    command:
+      - redis-server
+      - --save
+      - "60"
+      - "1"
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
