@@ -41,6 +41,10 @@ services:
       - JWT_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       - TOTP_ENCRYPTION_KEY=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
       - GOMEMLIMIT=4GiB
+      # models.dev 价格同步（ADR 0010）：配置了 override_file 才会启动同步任务，
+      # 且启动时立刻跑一轮。指向数据卷内的路径，容器重建不丢。
+      - PRICING_OVERRIDE_FILE=/app/data/pricing.override.json
+      - PRICING_UPDATE_INTERVAL_HOURS=24
     depends_on:
       postgres:
         condition: service_healthy
