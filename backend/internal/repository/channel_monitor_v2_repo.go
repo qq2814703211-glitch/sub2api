@@ -371,6 +371,32 @@ type channelMonitorV2MatrixAccumulator struct {
 }
 
 func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter service.ChannelMonitorV2Filter, cfg service.ChannelMonitorV2Config, groupBy service.ChannelMonitorV2GroupBy, admin bool) (*service.ChannelMonitorV2Matrix, error) {
+	return r.getMatrix(ctx, filter, cfg, groupBy, admin, r.probeFallback())
+}
+
+// channelMonitorProbeFallback fills traffic-free buckets from one probe source.
+//
+// It is an interface so the V2 board (V1 probe history, group-name keyed) and the
+// V3 board (V3's own probe samples, group-id keyed, real-traffic cache average)
+// can share the aggregation code while keeping their probe data strictly apart.
+type channelMonitorProbeFallback interface {
+	applyProbeFallbackToMatrix(
+		ctx context.Context,
+		matrix *service.ChannelMonitorV2Matrix,
+		filter service.ChannelMonitorV2Filter,
+		bucketMinutes int,
+		admin bool,
+	)
+}
+
+func (r *channelMonitorV2Repository) getMatrix(
+	ctx context.Context,
+	filter service.ChannelMonitorV2Filter,
+	cfg service.ChannelMonitorV2Config,
+	groupBy service.ChannelMonitorV2GroupBy,
+	admin bool,
+	probe channelMonitorProbeFallback,
+) (*service.ChannelMonitorV2Matrix, error) {
 	if channelMonitorV2RestrictedGroupScopeEmpty(filter, cfg) {
 		return &service.ChannelMonitorV2Matrix{GroupBy: groupBy, Items: []service.ChannelMonitorV2MatrixRow{}}, nil
 	}
@@ -517,35 +543,55 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 	// Organic traffic is authoritative. Only after every real bucket is in place do
 	// we fill the gaps with active-probe samples, so a bucket that has traffic can
 	// never be overwritten by a probe.
-	r.applyProbeFallback(ctx, result, filter, cfg, admin)
+	//
+	// probe is injected so V3 can supply its own samples and its own cache-rate
+	// rule (ADR 0009) without V3 ever borrowing V1/V2 probe data.
+	if probe != nil {
+		bucketMinutes := int(filter.Bucket / time.Minute)
+		if bucketMinutes > 0 {
+			probe.applyProbeFallbackToMatrix(ctx, result, filter, bucketMinutes, admin)
+		}
+	}
 
 	return result, nil
 }
 
-// applyProbeFallback loads probe history for the matrix window and fills the
-// traffic-free buckets. A failure here must not fail the whole matrix: the page
-// degrades to showing only real traffic, which is exactly the pre-existing
+// channelMonitorHistoryProbeFallback is the V2 board's probe source: V1 probe
+// history joined by monitor group_name. It is what the V2 mode has always used,
+// and it stays exactly as it was (V1/V2 gating semantics are not touched).
+type channelMonitorHistoryProbeFallback struct {
+	history service.ChannelMonitorRepository
+}
+
+// probeFallback returns the V2 probe source, or nil when no history repository is
+// wired (tests / partial graphs), in which case the matrix is traffic-only.
+func (r *channelMonitorV2Repository) probeFallback() channelMonitorProbeFallback {
+	if r.monitorHistory == nil {
+		return nil
+	}
+	return channelMonitorHistoryProbeFallback{history: r.monitorHistory}
+}
+
+// applyProbeFallbackToMatrix loads probe history for the matrix window and fills
+// the traffic-free buckets. A failure here must not fail the whole matrix: the
+// page degrades to showing only real traffic, which is exactly the pre-existing
 // behaviour.
-func (r *channelMonitorV2Repository) applyProbeFallback(
+func (f channelMonitorHistoryProbeFallback) applyProbeFallbackToMatrix(
 	ctx context.Context,
 	matrix *service.ChannelMonitorV2Matrix,
 	filter service.ChannelMonitorV2Filter,
-	cfg service.ChannelMonitorV2Config,
+	bucketMinutes int,
 	admin bool,
 ) {
-	if matrix == nil || len(matrix.Items) == 0 {
+	if matrix == nil || len(matrix.Items) == 0 || bucketMinutes <= 0 {
 		return
 	}
 	start, end, ok := channelMonitorProbeFallbackWindow(matrix, filter)
 	if !ok {
 		return
 	}
-	samples, err := r.monitorHistory.ListHistoryInWindowByGroup(ctx, start, end)
+	samples, err := f.history.ListHistoryInWindowByGroup(ctx, start, end)
 	if err != nil || len(samples) == 0 {
-		return
-	}
-	bucketMinutes := int(filter.Bucket / time.Minute)
-	if bucketMinutes <= 0 {
 		return
 	}
 	bucketed := bucketProbeSamplesByGroup(samples, bucketMinutes)
