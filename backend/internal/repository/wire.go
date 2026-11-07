@@ -123,6 +123,7 @@ var ProviderSet = wire.NewSet(
 	NewOpenAI403CounterCache,
 	NewInternal500CounterCache,
 	ProvideConcurrencyCache,
+	ProvideUsageInflightCache,
 	ProvideSessionLimitCache,
 	NewRPMCache,
 	NewUserRPMCache,
