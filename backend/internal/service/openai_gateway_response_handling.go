@@ -1298,6 +1298,12 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
 	}
+	if src.CacheWrite30mTokens > 0 {
+		dst.CacheWrite30mTokens = src.CacheWrite30mTokens
+	}
+	if src.CacheWrite12hTokens > 0 {
+		dst.CacheWrite12hTokens = src.CacheWrite12hTokens
+	}
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
 	}
@@ -1306,7 +1312,8 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 func openAIUsageHasTokens(usage *OpenAIUsage) bool {
 	return usage != nil && (usage.InputTokens > 0 || usage.ImageInputTokens > 0 ||
 		usage.OutputTokens > 0 || usage.CacheCreationInputTokens > 0 ||
-		usage.CacheReadInputTokens > 0 || usage.ImageOutputTokens > 0)
+		usage.CacheReadInputTokens > 0 || usage.CacheWrite30mTokens > 0 ||
+		usage.CacheWrite12hTokens > 0 || usage.ImageOutputTokens > 0)
 }
 
 const openAIMissingUsageLogInterval = time.Minute
@@ -1407,7 +1414,8 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 	}
 	if usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 ||
 		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
-		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0) {
+		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0 ||
+		usage.CacheWrite30mTokens > 0 || usage.CacheWrite12hTokens > 0) {
 		return false
 	}
 	if gjson.GetBytes(data, "usage").Exists() || gjson.GetBytes(data, "response.usage").Exists() {
@@ -1567,6 +1575,9 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	}
 	cacheReadTokens := openAICacheReadTokensFromUsage(value)
 	cacheCreationTokens := openAICacheCreationTokensFromUsage(value)
+	// OpenAI 缓存写入 TTL 分档（30m / 12h）。上游不返回分档时两者为 0：
+	// 此时只按 cached_tokens 计缓存读，不臆造写入分档（ADR 0011）。
+	cacheWrite30mTokens, cacheWrite12hTokens := openAICacheWriteTTLTokensFromUsage(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -1584,6 +1595,8 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		OutputTokens:             int(outputTokens),
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cacheReadTokens,
+		CacheWrite30mTokens:      cacheWrite30mTokens,
+		CacheWrite12hTokens:      cacheWrite12hTokens,
 		ImageOutputTokens:        int(imageOutputTokens),
 	}, true
 }
