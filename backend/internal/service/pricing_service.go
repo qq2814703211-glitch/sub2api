@@ -1255,6 +1255,33 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 	return nil
 }
 
+// GetImagePrice returns only the per-image price. Token fallback restrictions
+// must not change the existing image-count price hierarchy. Returning a scalar
+// prevents a legacy image default from becoming a new model's token price.
+func (s *PricingService) GetImagePrice(modelName string) float64 {
+	if pricing := s.GetModelPricing(modelName); pricing != nil {
+		return pricing.OutputCostPerImage
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	candidates := s.buildModelLookupCandidates(strings.ToLower(strings.TrimSpace(modelName)))
+	if len(candidates) == 0 {
+		return 0
+	}
+	switch candidates[0] {
+	case "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
+		// These SKUs intentionally opt out of token-family fallback.
+	default:
+		return 0
+	}
+	for _, model := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {
+		if pricing := s.pricingData[model]; pricing != nil {
+			return pricing.OutputCostPerImage
+		}
+	}
+	return 0
+}
+
 // lookupIdentifiedModelPricingLocked 只做"确定性识别"的三步查找：精确键、已知拼写
 // 变体、去掉日期/版本后缀后的同名条目。它刻意不包含 matchByModelFamily /
 // matchOpenAIModel 这类按子串猜系列的兜底——那些兜底会给任意名字都返回一个价格。
@@ -1697,6 +1724,12 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		if model == imageModel || model == imageModel+"-2026-09-08" {
 			return openAIGPTImage25FallbackPricing
 		}
+	}
+	switch model {
+	case "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
+		// Exact operator/catalog entries are handled before fallback matching.
+		// Do not assign USD or an older model's price to a new CNY-billed SKU.
+		return nil
 	}
 	if isOpenAIImageGenerationModel(model) {
 		for _, candidate := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {

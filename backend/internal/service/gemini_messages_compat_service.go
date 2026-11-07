@@ -3125,6 +3125,20 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 		})
 	}
 
+	// Prompt modality totals include cached content. Preserve only the known
+	// uncached IMAGE subset inside InputTokens; cached modalities remain in
+	// the existing cache bucket and are never charged a second time.
+	imageInputTokens := geminiModalityTokens(usage.Get("promptTokensDetails"), "IMAGE")
+	if cached > 0 {
+		if details := usage.Get("cacheTokensDetails"); details.IsArray() {
+			imageInputTokens = max(imageInputTokens-geminiModalityTokens(details, "IMAGE"), 0)
+		} else {
+			// The uncached modality split is unknown without cache details.
+			imageInputTokens = 0
+		}
+	}
+	imageInputTokens = min(imageInputTokens, max(prompt-cached, 0))
+
 	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
 	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去。
 	// prompt 被拦截时上游可能只报 cachedContentTokenCount，差值下限为 0。
@@ -3133,7 +3147,21 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 		OutputTokens:         cand + thoughts,
 		CacheReadInputTokens: cached,
 		ImageOutputTokens:    imageTokens,
+		ImageInputTokens:     imageInputTokens,
 	}
+}
+
+func geminiModalityTokens(details gjson.Result, modality string) int {
+	total := 0
+	if !details.IsArray() {
+		return total
+	}
+	for _, detail := range details.Array() {
+		if detail.Get("modality").String() == modality {
+			total += max(0, int(detail.Get("tokenCount").Int()))
+		}
+	}
+	return total
 }
 
 func asInt(v any) (int, bool) {
