@@ -652,6 +652,7 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
+import { mediaPricingToForm, formMediaPricingToAPI, validateMediaPricing } from '@/utils/mediaPricing'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 
@@ -875,6 +876,7 @@ function addPricingEntry(sectionIdx: number) {
   form.platforms[sectionIdx].model_pricing.push({
     models: [],
     billing_mode: 'token',
+    media_pricing: null,
     input_price: null,
     output_price: null,
     cache_write_price: null,
@@ -914,6 +916,7 @@ async function syncLatestModels(sectionIdx: number) {
     section.model_pricing.push({
       models: newModels,
       billing_mode: 'token',
+      media_pricing: null,
       input_price: null,
       output_price: null,
       cache_write_price: null,
@@ -984,6 +987,7 @@ function addRulePricingEntry(sectionIdx: number, ruleIndex: number) {
   form.platforms[sectionIdx].account_stats_pricing_rules[ruleIndex].pricing.push({
     models: [],
     billing_mode: 'token',
+    media_pricing: null,
     input_price: null,
     output_price: null,
     cache_write_price: null,
@@ -1102,6 +1106,7 @@ function accountStatsRulesToAPI(): AccountStatsPricingRule[] {
             platform: section.platform,
             models: p.models,
             billing_mode: p.billing_mode,
+            media_pricing: formMediaPricingToAPI(p.media_pricing),
             input_price: mTokToPerToken(p.input_price),
             output_price: mTokToPerToken(p.output_price),
             cache_write_price: mTokToPerToken(p.cache_write_price),
@@ -1146,6 +1151,7 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
         platform: section.platform,
         models: entry.models,
         billing_mode: entry.billing_mode,
+        media_pricing: formMediaPricingToAPI(entry.media_pricing),
         input_price: mTokToPerToken(entry.input_price),
         output_price: mTokToPerToken(entry.output_price),
         cache_write_price: mTokToPerToken(entry.cache_write_price),
@@ -1247,6 +1253,7 @@ function apiToForm(channel: Channel): PlatformSection[] {
       .map(p => ({
         models: p.models || [],
         billing_mode: p.billing_mode,
+        media_pricing: mediaPricingToForm(p.media_pricing),
         input_price: perTokenToMTok(p.input_price),
         output_price: perTokenToMTok(p.output_price),
         cache_write_price: perTokenToMTok(p.cache_write_price),
@@ -1441,6 +1448,7 @@ function distributeRulesToPlatforms(apiRules: AccountStatsPricingRule[]) {
       pricing: (apiRule.pricing || []).map(p => ({
         models: [...(p.models || [])],
         billing_mode: p.billing_mode,
+        media_pricing: mediaPricingToForm(p.media_pricing),
         input_price: perTokenToMTok(p.input_price),
         output_price: perTokenToMTok(p.output_price),
         cache_write_price: perTokenToMTok(p.cache_write_price),
@@ -1546,19 +1554,6 @@ async function handleSubmit() {
     }
   }
 
-  // 校验 per_request/image 模式必须有价格 (只校验启用的平台)
-  for (const section of form.platforms.filter(s => s.enabled)) {
-    for (const entry of section.model_pricing) {
-      if (entry.models.length === 0) continue
-      if ((entry.billing_mode === 'per_request' || entry.billing_mode === 'image') &&
-          (entry.per_request_price == null || entry.per_request_price === '') &&
-          (!entry.intervals || entry.intervals.length === 0)) {
-        appStore.showError(t('admin.channels.form.perRequestPriceRequired'))
-        return
-      }
-    }
-  }
-
   // 思考等级倍率同时适用于渠道计价和独立的账号统计计价规则。
   for (const section of form.platforms.filter(s => s.enabled)) {
     const entries = [
@@ -1566,13 +1561,28 @@ async function handleSubmit() {
       ...section.account_stats_pricing_rules.flatMap(rule => rule.pricing),
     ]
     for (const entry of entries) {
-      const error = validateReasoningEffortMultipliers(entry.reasoning_effort_multipliers, t)
+      const error = validateMediaPricing(entry.media_pricing, t) ||
+        validateReasoningEffortMultipliers(entry.reasoning_effort_multipliers, t)
       if (!error) continue
       const platformLabel = t('admin.groups.platforms.' + section.platform, catalogPlatformLabel(section.platform))
       const modelLabel = entry.models.join(', ') || t('admin.channels.form.unnamed')
       appStore.showError(`${platformLabel} - ${modelLabel}: ${error}`)
       activeTab.value = section.platform
       return
+    }
+  }
+
+  // 有媒体规则时不要求单一价格；清空、null 和空白恢复原有价格校验。
+  for (const section of form.platforms.filter(s => s.enabled)) {
+    for (const entry of section.model_pricing) {
+      if (entry.models.length === 0) continue
+      if ((entry.billing_mode === 'per_request' || entry.billing_mode === 'image') &&
+          (entry.per_request_price == null || entry.per_request_price === '') &&
+          (!entry.intervals || entry.intervals.length === 0) &&
+          !formMediaPricingToAPI(entry.media_pricing)?.rules.length) {
+        appStore.showError(t('admin.channels.form.perRequestPriceRequired'))
+        return
+      }
     }
   }
 

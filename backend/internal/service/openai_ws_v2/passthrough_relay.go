@@ -27,6 +27,7 @@ type FrameConn interface {
 type Usage struct {
 	InputTokens              int
 	ImageInputTokens         int
+	ImageCacheReadTokens     int
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
@@ -103,6 +104,9 @@ type RelayTraceEvent struct {
 type relayState struct {
 	usage                   Usage
 	turnUsage               Usage
+	turnBaseUsage           Usage
+	turnImageUsage          Usage
+	turnHasImageUsage       bool
 	turnWroteDownstream     atomic.Bool
 	requestModelMu          sync.RWMutex
 	requestModel            string
@@ -766,6 +770,11 @@ func observeUpstreamMessage(
 	if responseID == "" && isTerminalEvent(eventType) {
 		responseID = strings.TrimSpace(values[3].String())
 	}
+	// A retransmitted terminal/progress snapshot of the just-settled response
+	// must not emit another turn or leak its usage into the next response.
+	if responseID != "" && responseID == state.lastResponseID {
+		return observedUpstreamEvent{}
+	}
 	now := nowFn()
 
 	if state.firstTokenMs == nil && isTokenEvent(eventType) {
@@ -1079,14 +1088,21 @@ func parseUsageAndAccumulate(
 	eventType string,
 	onParseFailure func(eventType string, usageRaw string),
 ) Usage {
-	if state == nil || len(message) == 0 || !shouldParseUsage(eventType) || !bytes.Contains(message, []byte(`"usage"`)) {
+	if state == nil || len(message) == 0 || !shouldParseUsage(eventType) || (!bytes.Contains(message, []byte(`"usage"`)) && !bytes.Contains(message, []byte(`"tool_usage"`))) {
 		return Usage{}
 	}
 	usageResult := gjson.GetBytes(message, "response.usage")
 	if !usageResult.Exists() {
 		usageResult = gjson.GetBytes(message, "usage")
 	}
+	imageGen := gjson.GetBytes(message, "response.tool_usage.image_gen")
+	if !imageGen.Exists() {
+		imageGen = gjson.GetBytes(message, "tool_usage.image_gen")
+	}
 	if !usageResult.Exists() {
+		if imageGen.IsObject() {
+			return updateRelayHostedUsage(state, Usage{}, false, imageGen, isTerminalEvent(strings.TrimSpace(eventType)))
+		}
 		return Usage{}
 	}
 	usageRaw := strings.TrimSpace(usageResult.Raw)
@@ -1111,23 +1127,12 @@ func parseUsageAndAccumulate(
 		cachedResult = usageResult.Get("prompt_tokens_details.cached_tokens")
 	}
 	imageTokens := usageResult.Get("output_tokens_details.image_tokens").Int()
-	if imageTokens == 0 {
+	if !usageResult.Get("output_tokens_details.image_tokens").Exists() {
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
 	imageInputTokens := usageResult.Get("input_tokens_details.image_tokens").Int()
-	if imageInputTokens <= 0 {
+	if !usageResult.Get("input_tokens_details.image_tokens").Exists() {
 		imageInputTokens = usageResult.Get("prompt_tokens_details.image_tokens").Int()
-	}
-	// 与 HTTP Responses 同口径：usage 缺图片计数时由托管工具 tool_usage.image_gen 回填。
-	imageGen := gjson.GetBytes(message, "response.tool_usage.image_gen")
-	if !imageGen.Exists() {
-		imageGen = gjson.GetBytes(message, "tool_usage.image_gen")
-	}
-	if imageTokens <= 0 {
-		imageTokens = max(imageGen.Get("output_tokens_details.image_tokens").Int(), 0)
-	}
-	if imageInputTokens <= 0 {
-		imageInputTokens = max(imageGen.Get("input_tokens_details.image_tokens").Int(), 0)
 	}
 
 	requireTotals := isTerminalEvent(strings.TrimSpace(eventType))
@@ -1151,7 +1156,13 @@ func parseUsageAndAccumulate(
 			int64(inputTokens), int64(outputTokens), usageResult.Get("total_tokens").Int(), reasoningTokens,
 		))
 	}
+	cachedDetails := usageResult.Get("input_tokens_details.cached_tokens_details")
+	if !cachedDetails.Exists() {
+		cachedDetails = usageResult.Get("prompt_tokens_details.cached_tokens_details")
+	}
+	imageCached := min(relayHostedCount(cachedDetails.Get("image_tokens")), max(int(imageInputTokens), 0), max(cachedTokens, 0))
 	parsedUsage := Usage{
+		ImageCacheReadTokens:     imageCached,
 		InputTokens:              inputTokens,
 		ImageInputTokens:         int(imageInputTokens),
 		OutputTokens:             outputTokens,
@@ -1160,6 +1171,9 @@ func parseUsageAndAccumulate(
 		ImageOutputTokens:        int(imageTokens),
 	}
 
+	if imageGen.IsObject() || state.turnHasImageUsage {
+		return updateRelayHostedUsage(state, parsedUsage, true, imageGen, isTerminalEvent(strings.TrimSpace(eventType)))
+	}
 	if isTerminalEvent(strings.TrimSpace(eventType)) {
 		if relayUsageHasTokens(parsedUsage) || !relayUsageHasTokens(state.turnUsage) {
 			state.turnUsage = parsedUsage
@@ -1199,6 +1213,9 @@ func mergeRelayUsageNonZero(dst *Usage, src Usage) {
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
 	}
+	if src.ImageCacheReadTokens > 0 {
+		dst.ImageCacheReadTokens = src.ImageCacheReadTokens
+	}
 }
 
 func finalizeRelayTurnUsage(state *relayState) Usage {
@@ -1212,7 +1229,11 @@ func finalizeRelayTurnUsage(state *relayState) Usage {
 	state.usage.CacheCreationInputTokens += turnUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += turnUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += turnUsage.ImageOutputTokens
+	state.usage.ImageCacheReadTokens += turnUsage.ImageCacheReadTokens
 	state.turnUsage = Usage{}
+	state.turnBaseUsage = Usage{}
+	state.turnImageUsage = Usage{}
+	state.turnHasImageUsage = false
 	return turnUsage
 }
 

@@ -384,6 +384,8 @@ func RegisterGatewayRoutes(
 		rootRoute(http.MethodGet, prefix+"/contents/generations/tasks/:task_id", bodyLimit, h.OpenAIGateway.SeedanceTasks)
 		rootRoute(http.MethodDelete, prefix+"/contents/generations/tasks/:task_id", bodyLimit, h.OpenAIGateway.SeedanceTasks)
 	}
+	rootRoute(http.MethodPost, "/v1/video/generations", bodyLimit, h.OpenAIGateway.CompatibleVideoTasks)
+	rootRoute(http.MethodGet, "/v1/video/generations/:task_id", bodyLimit, h.OpenAIGateway.CompatibleVideoTasks)
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
 	rootRoute(http.MethodPost, "/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
