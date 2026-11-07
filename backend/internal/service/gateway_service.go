@@ -488,11 +488,10 @@ type GatewayCache interface {
 	SetGrokVideoPendingBilling(ctx context.Context, key string, payload []byte, ttl time.Duration) error
 	// GetGrokVideoPendingBilling returns the create-time billing snapshot; miss → nil, nil.
 	GetGrokVideoPendingBilling(ctx context.Context, key string) ([]byte, error)
-	// ClaimGrokVideoBilled atomically marks a video request as billed (SetNX).
-	// Returns true when this caller won the claim; false when already billed or claim unavailable.
-	ClaimGrokVideoBilled(ctx context.Context, key string, ttl time.Duration) (bool, error)
-	// ReleaseGrokVideoBilled clears a claim so a failed RecordUsage can retry billing.
-	ReleaseGrokVideoBilled(ctx context.Context, key string) error
+	// ClaimGrokVideoBilled acquires a short owner-fenced lease for async fallback billing.
+	ClaimGrokVideoBilled(ctx context.Context, key, owner string, ttl time.Duration) (bool, error)
+	// ReleaseGrokVideoBilled only releases the matching lease owner.
+	ReleaseGrokVideoBilled(ctx context.Context, key, owner string) error
 
 	// Reasoning content cache (Responses→Chat Completions 桥接）。
 	// SetReasoningContent 按 reasoning item id 缓存 reasoning 全文，供后续请求
