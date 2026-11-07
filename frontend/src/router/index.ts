@@ -509,6 +509,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/model-pricing-sync',
+    name: 'AdminModelPricingSync',
+    component: () => import('@/views/admin/ModelPricingSyncView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Model Pricing Sync',
+      titleKey: 'admin.modelPricingSync.title',
+      descriptionKey: 'admin.modelPricingSync.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),
