@@ -1068,6 +1068,9 @@ var ProviderSet = wire.NewSet(
 	NewChannelMonitorQuotaFetcher,
 	ProvideChannelMonitorV2Service,
 	ProvideChannelMonitorV2Aggregator,
+	ProvideChannelMonitorV3Service,
+	NewChannelMonitorV3Prober,
+	ProvideChannelMonitorV3ProbeRunner,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
 )
@@ -1167,6 +1170,23 @@ func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.
 	}
 	aggregator.Start()
 	return aggregator
+}
+
+// ProvideChannelMonitorV3Service 创建 V3 配置服务（独立于 V1/V2 的门控）。
+func ProvideChannelMonitorV3Service(repo ChannelMonitorV3Repository, encryptor SecretEncryptor) *ChannelMonitorV3Service {
+	return NewChannelMonitorV3Service(repo, encryptor)
+}
+
+// ProvideChannelMonitorV3ProbeRunner 创建并启动 V3 探针执行器。
+//
+// 只受 channel_monitor_v3_config.enabled 控制：不读 channel_monitor_enabled /
+// channel_monitor_mode，也不查 channel_monitors 表（ADR 0008）。
+func ProvideChannelMonitorV3ProbeRunner(svc *ChannelMonitorV3Service, prober ChannelMonitorV3Prober) *ChannelMonitorV3ProbeRunner {
+	runner := NewChannelMonitorV3ProbeRunner(svc, prober)
+	if BackgroundJobsEnabled() {
+		runner.Start()
+	}
+	return runner
 }
 
 // ProvideClaudeResetCreditService wires the Claude reset query and, with the

@@ -99,24 +99,35 @@ func probeBucketHealth(metrics service.ChannelMonitorV2Metric) service.ChannelMo
 // probeSamplesToMetrics converts the probe samples inside one bucket into the
 // same metric shape the V2 aggregator produces.
 //
-// The 100% / 0% cache and availability rates are not hardcoded: a successful
-// probe contributes one request, one success, one prompt token and one cached
-// token, so cacheRate = cached/prompt = 1/1 = 100%. A failed probe contributes one
-// request and zero successes, so it reads 0%. That falls out of the arithmetic.
+// Availability is measured: a successful probe is one request that succeeded, a
+// failed probe is one request that failed.
+//
+// Cache rate is NOT measured here. A probe is a single request that barely
+// exercises prompt caching, and the upstream does not return cache fields for
+// it, so any rate derived from the probe describes "the probe ran" rather than
+// the channel's cache behaviour. Previously this function credited each
+// successful probe with one cached token, which rendered as 100% — a best-case
+// number for an unknown quantity (ADR 0009). The bucket now reports the rate as
+// unknown unless the caller supplies a real-traffic average.
 func probeSamplesToMetrics(samples []channelMonitorHybridProbeSample, bucketMinutes int, admin bool) (service.ChannelMonitorV2Metric, bool) {
+	return probeSamplesToMetricsWithCacheRate(samples, bucketMinutes, admin, nil)
+}
+
+// probeSamplesToMetricsWithCacheRate additionally stamps a cache rate measured on
+// real traffic (cacheRate nil / out of range = stays unknown).
+func probeSamplesToMetricsWithCacheRate(
+	samples []channelMonitorHybridProbeSample,
+	bucketMinutes int,
+	admin bool,
+	cacheRate *float64,
+) (service.ChannelMonitorV2Metric, bool) {
 	if len(samples) == 0 {
 		return service.ChannelMonitorV2Metric{}, false
 	}
 	acc := newMetricAccumulator()
 	for _, sample := range samples {
-		// Each probe is exactly one request carrying one prompt token, so the cache
-		// rate denominator is always 1 per probe. A healthy probe had its prompt
-		// served from cache, so the token counts as cache-read (1/1 = 100%); a failed
-		// probe cached nothing, so it counts as plain input (0/1 = 0%). Both rates
-		// fall out of the counts rather than being written down.
 		if sample.Success {
 			acc.success++
-			acc.cacheRead++
 			if sample.TTFTMs != nil && *sample.TTFTMs >= 0 {
 				ttft := int64(*sample.TTFTMs)
 				acc.ttftSum += ttft
@@ -128,14 +139,26 @@ func probeSamplesToMetrics(samples []channelMonitorHybridProbeSample, bucketMinu
 			}
 		} else {
 			acc.errors++
-			acc.input++
 		}
 	}
 	minutes := float64(bucketMinutes)
 	if minutes <= 0 {
 		minutes = 1
 	}
-	return acc.metric(minutes, admin), true
+	metrics := acc.metric(minutes, admin)
+	if cacheRate != nil && *cacheRate >= 0 && *cacheRate <= 1 {
+		rate := *cacheRate
+		metrics.CacheRate = rate
+		metrics.CacheRateNumerator = 0
+		metrics.CacheRateDenominator = 0
+		known := true
+		metrics.CacheRateKnown = &known
+		return metrics, true
+	}
+	metrics.CacheRate = 0
+	known := false
+	metrics.CacheRateKnown = &known
+	return metrics, true
 }
 
 // applyProbeFallbackToMatrix fills the buckets that carry no organic traffic with

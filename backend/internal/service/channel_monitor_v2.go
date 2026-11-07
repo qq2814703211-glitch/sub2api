@@ -104,6 +104,11 @@ type ChannelMonitorV2Metric struct {
 	CacheRate                float64                 `json:"cache_rate"`
 	CacheRateNumerator       int64                   `json:"cache_rate_numerator"`
 	CacheRateDenominator     int64                   `json:"cache_rate_denominator"`
+	// CacheRateKnown is omitted (nil) for real-traffic buckets, where CacheRate is
+	// measured. A probe-filled bucket sets it to false when no real sample backs a
+	// cache rate, so the UI renders "—" (unknown) instead of a fabricated 0%/100%
+	// (ADR 0009).
+	CacheRateKnown *bool `json:"cache_rate_known,omitempty"`
 	TTFT                     ChannelMonitorV2Latency `json:"ttft"`
 	Duration                 ChannelMonitorV2Latency `json:"duration"`
 	UpstreamAffectedRequests *int64                  `json:"upstream_affected_requests,omitempty"`
@@ -452,7 +457,19 @@ func (s *ChannelMonitorV2Service) UpdateConfig(ctx context.Context, cfg ChannelM
 }
 
 func (s *ChannelMonitorV2Service) ParseFilter(rangeValue string, platforms, models []string, groupIDs []int64) (ChannelMonitorV2Filter, error) {
-	now := s.now().UTC()
+	return parseChannelMonitorRangeFilter(rangeValue, platforms, models, groupIDs, s.now)
+}
+
+// parseChannelMonitorRangeFilter resolves a UI range into a half-open window plus
+// its bucket size. Shared with V3 so the 90m/24h/7d/30d windows and bucket
+// alignment can never drift between the two products.
+func parseChannelMonitorRangeFilter(
+	rangeValue string,
+	platforms, models []string,
+	groupIDs []int64,
+	nowFn func() time.Time,
+) (ChannelMonitorV2Filter, error) {
+	now := nowFn().UTC()
 	var window, bucket time.Duration
 	switch strings.TrimSpace(rangeValue) {
 	case "", "90m":
