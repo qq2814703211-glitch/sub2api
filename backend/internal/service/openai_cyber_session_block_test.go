@@ -201,11 +201,11 @@ func (c *comboCacheAndStore) SetGrokVideoPendingBilling(_ context.Context, _ str
 func (c *comboCacheAndStore) GetGrokVideoPendingBilling(_ context.Context, _ string) ([]byte, error) {
 	return nil, nil
 }
-func (c *comboCacheAndStore) ClaimGrokVideoBilled(_ context.Context, _ string, _ time.Duration) (bool, error) {
+func (c *comboCacheAndStore) ClaimGrokVideoBilled(_ context.Context, _ string, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
 
-func (c *comboCacheAndStore) ReleaseGrokVideoBilled(_ context.Context, _ string) error {
+func (c *comboCacheAndStore) ReleaseGrokVideoBilled(_ context.Context, _ string, _ string) error {
 	return nil
 }
 

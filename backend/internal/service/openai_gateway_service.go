@@ -233,8 +233,12 @@ type OpenAIUsage struct {
 
 // OpenAIForwardResult represents the result of forwarding
 type OpenAIForwardResult struct {
-	RequestID  string
-	ResponseID string
+	RequestID           string
+	ResponseID          string
+	BillingClaimOwner   string // in-process lease token; never persisted
+	DeferredHTTPStatus  int
+	DeferredHTTPBody    []byte
+	DeferredHTTPHeaders http.Header
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           OpenAIUsage
