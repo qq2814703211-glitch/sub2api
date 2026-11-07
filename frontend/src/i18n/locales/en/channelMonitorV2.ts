@@ -145,6 +145,7 @@ export default {
       tabV2: 'V2 data monitor config',
       tabV1Active: 'V1 active probes',
       tabV1History: 'V1 history (probes not active in current mode)',
+      tabV3: 'V3 hybrid monitor config',
     },
   },
 }

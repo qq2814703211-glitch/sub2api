@@ -788,10 +788,11 @@ const adminNavItems = computed((): NavItem[] => {
       expandOnly: true,
       children: [
         { path: '/admin/channels/pricing', label: t('nav.channelPricing'), icon: PriceTagIcon },
-        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: SignalIcon, featureFlag: flagChannelMonitor },
-        // V3 has its own switch, so its admin entry must not be hidden behind the
-        // V1/V2 feature flag (ADR 0008).
-        { path: '/admin/channel-monitor-v3', label: t('nav.channelMonitorV3'), icon: SignalIcon },
+        // V3 的配置已并入这一页，而 V3 是独立产品（ADR 0008）：它只认自己的
+        // channel_monitor_v3_config.enabled，不看 channel_monitor_enabled /
+        // channel_monitor_mode。这里若挂 flagChannelMonitor，V1/V2 总开关关闭时
+        // V3 配置入口会一并消失，违反 ADR。与「渠道定价」一致，不做 flag 过滤。
+        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: SignalIcon },
       ],
     },
     // 「仅充值」站点连管理端的「订阅管理」入口也一并收起（路由本身不拦截）。
