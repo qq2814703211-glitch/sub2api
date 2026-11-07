@@ -43,9 +43,22 @@ V3 的表结构、探针执行器、`channel_monitor_mode` 门控保持独立，
 中间件钩子，以及 `request_capture_tasks`、`request_capture_records` 两张表。
 
 ### 性能
-见 `docs/perf-0.1.1-baseline.md`。
+keys 页与 monitor V3 的慢查询都是「用量表全表扫描 + 大排序」，靠加索引与调 `work_mem` 都救不了
+（实测 32MB 仍 `external merge Disk: 139760kB`）。改为按本地日预聚合，读侧在预聚不可信时自动回落原查询。
+
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 单 key 30 天日趋势（生产 571 万行热点 key） | 4,769 ms | 0.081 ms |
+| 分组 30 天缓存率（生产 1,763 万行） | 5,276 ms | 0.443 ms |
+
+端到端 HTTP（验收栈）：走预聚 5.8–9.3ms，回落原查询 23.7–38.7ms。
+
+完整实测见 `docs/perf-0.1.1-monitor.md` 与 `docs/perf-0.1.1-baseline.md`。
 
 ## 升级注意
 
-- 迁移编号：917（删请求采集表）、918（性能索引）
+- 迁移编号：917（删请求采集表）、918（键日预聚 + 覆盖索引）、919（分组日预聚）
 - 无需手动干预，容器启动自动迁移
+- 预聚表首启会自动回填已关闭的历史日；回填完成前读侧走原查询，结果不受影响
+- 预聚可随时关闭（`usage_key_daily_state.enabled` / `usage_group_daily_state.enabled`），
+  关闭后毫秒级回落原查询，无需重启
