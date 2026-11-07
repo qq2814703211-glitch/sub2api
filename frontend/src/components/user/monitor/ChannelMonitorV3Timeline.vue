@@ -59,7 +59,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixBucket } from '@/api/channelMonitorV2'
-import { availabilityBarClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityBarClass, formatMonitorCacheRate, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 
 const props = withDefaults(defineProps<{
   buckets?: MonitorMatrixBucket[]
@@ -174,7 +174,7 @@ const displayBars = computed<TimelineBar[]>(() => {
       title: t('channelMonitorV3.timelineTooltip', {
         time: formatBucketTime(bucket.bucket_start),
         availability: formatMonitorPercent(1 - bucket.metrics.error_rate, locale.value || 'zh-CN'),
-        cache: formatMonitorPercent(bucket.metrics.cache_rate, locale.value || 'zh-CN'),
+        cache: formatMonitorCacheRate(bucket.metrics.cache_rate, bucket.metrics.cache_rate_known, locale.value || 'zh-CN'),
         ttft: formatMonitorMs(bucket.metrics.ttft.p50_ms),
       }),
     })
