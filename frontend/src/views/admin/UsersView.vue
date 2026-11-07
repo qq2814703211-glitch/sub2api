@@ -577,6 +577,7 @@
             <UserConcurrencyCell
               :current="row.current_concurrency ?? 0"
               :max="row.concurrency"
+              :user-id="row.id"
             />
           </template>
 

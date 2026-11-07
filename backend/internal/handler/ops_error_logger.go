@@ -451,6 +451,10 @@ func setOpsRequestContext(c *gin.Context, model string, stream bool) {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.Model, model)
 		c.Request = c.Request.WithContext(ctx)
 	}
+	// 在途登记发生在鉴权之后、请求体解析之前，那时还不知道模型名。
+	// 所有网关 handler 解析出模型后都会走这里，因此这里是补写模型的唯一钩子。
+	// 补写失败只记日志；无在途登记（非网关请求、已跳过登记）时是 no-op。
+	middleware2.NoteUsageInflightModel(c, model, stream)
 }
 
 // setOpsEndpointContext stores upstream model and request type for ops error logging.
