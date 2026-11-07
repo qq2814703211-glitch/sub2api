@@ -46,7 +46,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixRow } from '@/api/channelMonitorV2'
-import { availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityTextClass, formatMonitorCacheRate, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import ProviderIcon from './ProviderIcon.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
@@ -75,7 +75,12 @@ const latestBucket = computed(() => [...props.row.buckets]
 const latestMetrics = computed(() => latestBucket.value?.metrics ?? props.row.metrics)
 const latestHealth = computed(() => latestBucket.value?.health ?? props.row.health)
 // The cards show the newest completed monitoring bucket, not the selected-range aggregate.
-const cacheRate = computed(() => formatMonitorPercent(latestMetrics.value.cache_rate))
+// Probe-filled buckets carry no cache reading of their own; they borrow the group's
+// real-traffic average, and show "—" when there is none (ADR 0009).
+const cacheRate = computed(() => formatMonitorCacheRate(
+  latestMetrics.value.cache_rate,
+  latestMetrics.value.cache_rate_known,
+))
 const availabilityPercent = computed(() => (1 - latestMetrics.value.error_rate) * 100)
 const successRate = computed(() => formatMonitorPercent(availabilityPercent.value / 100))
 const availabilityClass = computed(() => availabilityTextClass(availabilityPercent.value))
