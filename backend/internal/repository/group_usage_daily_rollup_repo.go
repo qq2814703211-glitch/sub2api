@@ -50,7 +50,7 @@ func (r *usageGroupDailyRollupRepository) readState(ctx context.Context, timezon
 	var stateTimezone sql.NullString
 	var enabled sql.NullBool
 	if err := scanSingleRow(ctx, r.sql, `
-		SELECT COUNT(*), MAX(closed_before)::text, MAX(timezone_name), MAX(enabled)
+		SELECT COUNT(*), MAX(closed_before)::text, MAX(timezone_name), BOOL_AND(enabled)
 		FROM usage_group_daily_state
 		WHERE id = 1
 	`, nil, &rowCount, &closedBefore, &stateTimezone, &enabled); err != nil {

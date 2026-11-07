@@ -345,7 +345,16 @@ func (s *DashboardAggregationService) syncGroupUsageRollups(ctx context.Context,
 // 现算。因此这里最坏情况只重算昨天一天，成本与历史深度无关。
 //
 // 用独立的 leader lock：键日汇总出错不应该拖住分组汇总，反之亦然。
+//
+// 实现转发：dashboardAggregationRepository.Sync 已经承载分组维度，而两个维度
+// 的 Sync 签名完全相同，Go 无法用同名方法区分，所以键维度走显式的
+// SyncKeyUsageDaily。若仓储没提供该方法（旧实现/测试桩），回落到接口断言。
 func (s *DashboardAggregationService) syncKeyUsageDailyRollups(ctx context.Context, now time.Time) error {
+	if explicit, ok := s.repo.(interface {
+		SyncKeyUsageDaily(context.Context, time.Time) error
+	}); ok {
+		return explicit.SyncKeyUsageDaily(ctx, now)
+	}
 	repo, ok := s.repo.(UsageKeyDailyRollupRepository)
 	if !ok {
 		return nil
