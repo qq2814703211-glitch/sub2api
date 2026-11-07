@@ -101,3 +101,18 @@ describe('AppSidebar connection diagnostics entry', () => {
     expect(componentSource).toContain("path: '/admin/connections', label: t('nav.connectionDiagnostics')")
   })
 })
+
+describe('AppSidebar channel monitor entry', () => {
+  it('has no separate Channel Monitor V3 entry', () => {
+    // V3 的配置并入了 /admin/channels/monitor 的第三个页签，侧边栏不再单列一级入口。
+    expect(componentSource).not.toContain("path: '/admin/channel-monitor-v3'")
+    expect(componentSource).not.toContain("t('nav.channelMonitorV3')")
+  })
+
+  it('keeps the merged monitor entry reachable regardless of V1/V2 flags', () => {
+    // V3 只认自己的开关（ADR 0008）：这一页现在同时承载 V3 配置，不能挂在
+    // channel_monitor_enabled 的菜单过滤上，否则总开关关掉时 V3 入口会消失。
+    expect(componentSource).toMatch(/path: '\/admin\/channels\/monitor', label: t\('nav\.channelMonitor'\), icon: SignalIcon \}/)
+    expect(componentSource).not.toMatch(/path: '\/admin\/channels\/monitor'[^\n]*featureFlag: flagChannelMonitor/)
+  })
+})
