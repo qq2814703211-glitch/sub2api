@@ -40,7 +40,7 @@ func (f stubModelPricingSyncFetcher) FetchPricingJSON(context.Context, string) (
 type stubModelPricingSyncHistory struct {
 	rows       []*ModelPricingSyncHistory
 	insertErr  error
-	syncedSets map[string]map[string]struct{}
+	syncedSets map[string]map[string]float64
 }
 
 func (s *stubModelPricingSyncHistory) InsertBatch(_ context.Context, rows []*ModelPricingSyncHistory) (int64, error) {
@@ -49,15 +49,15 @@ func (s *stubModelPricingSyncHistory) InsertBatch(_ context.Context, rows []*Mod
 	}
 	s.rows = append(s.rows, rows...)
 	if s.syncedSets == nil {
-		s.syncedSets = map[string]map[string]struct{}{}
+		s.syncedSets = map[string]map[string]float64{}
 	}
 	for _, row := range rows {
 		fields, ok := s.syncedSets[row.Model]
 		if !ok {
-			fields = map[string]struct{}{}
+			fields = map[string]float64{}
 			s.syncedSets[row.Model] = fields
 		}
-		fields[row.Field] = struct{}{}
+		fields[row.Field] = row.NewValue
 	}
 	return int64(len(rows)), nil
 }
@@ -66,15 +66,15 @@ func (s *stubModelPricingSyncHistory) List(_ context.Context, _ *ModelPricingSyn
 	return s.rows, int64(len(s.rows)), nil
 }
 
-func (s *stubModelPricingSyncHistory) ListSyncedFields(_ context.Context, _ string) (map[string]map[string]struct{}, error) {
+func (s *stubModelPricingSyncHistory) ListSyncedFields(_ context.Context, _ string) (map[string]map[string]float64, error) {
 	if s.syncedSets == nil {
-		return map[string]map[string]struct{}{}, nil
+		return map[string]map[string]float64{}, nil
 	}
-	out := make(map[string]map[string]struct{}, len(s.syncedSets))
+	out := make(map[string]map[string]float64, len(s.syncedSets))
 	for model, fields := range s.syncedSets {
-		cloned := make(map[string]struct{}, len(fields))
-		for field := range fields {
-			cloned[field] = struct{}{}
+		cloned := make(map[string]float64, len(fields))
+		for field, value := range fields {
+			cloned[field] = value
 		}
 		out[model] = cloned
 	}
@@ -184,8 +184,9 @@ func TestModelPricingSync_ManualModelSkippedEntirely(t *testing.T) {
 // TestModelPricingSync_SyncedFieldFollowsRegistryDrift 上一轮同步写过的字段
 // 可以跟随官方价更新（这是 ADR「补/改」里的「改」，与手配价无关）。
 func TestModelPricingSync_SyncedFieldFollowsRegistryDrift(t *testing.T) {
-	history := &stubModelPricingSyncHistory{syncedSets: map[string]map[string]struct{}{
-		"brand-new-model": {"input_cost_per_token": {}},
+	history := &stubModelPricingSyncHistory{syncedSets: map[string]map[string]float64{
+		// 上次同步写入的值就是覆盖层里现在的值，说明没被人改过，可以跟随官方价。
+		"brand-new-model": {"input_cost_per_token": 1e-06},
 	}}
 	path := filepath.Join(t.TempDir(), "overrides.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"brand-new-model": {"input_cost_per_token": 1e-06}}`), 0o644))
