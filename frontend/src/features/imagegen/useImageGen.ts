@@ -18,9 +18,20 @@ import {
   downloadUrl,
   gatewayUrl,
   requestImages,
-  rewritePrompt,
   verifyApiKey,
 } from './api'
+import { requestRewrite } from './rewriteApi'
+import {
+  LEGACY_REWRITE_MODEL_KEY,
+  REWRITE_CONFIG_STORAGE_KEY,
+  coerceEffortForProtocol,
+  normalizeRewriteBaseUrl,
+  normalizeRewriteConfig,
+  resolveRewriteRequest,
+  type RewriteConfig,
+  type RewriteEffort,
+  type RewriteProtocol,
+} from './rewriteConfig'
 import type {
   GeneratedImage,
   HistoryItem,
@@ -52,6 +63,7 @@ import {
   readRawHistory,
   saveHistoryImages,
   safeGet,
+  safeRemove,
   safeSet,
   savePreviewSize,
   writeRawHistory,
@@ -114,13 +126,6 @@ export const STYLE_OPTIONS = [
   { value: '3d render, cinema 4d', label: '3D 渲染' },
 ]
 
-/**
- * Model used for template prompt rewriting. The source page hard-coded
- * `gpt-5.5`, which Sub2API no longer routes on ChatGPT-backed accounts; the
- * field stays editable so an operator can switch models without a rebuild.
- */
-const DEFAULT_REWRITE_MODEL = 'gpt-6-astra'
-
 export type ToastKind = 'success' | 'error' | 'info'
 
 export function useImageGen(toast: (message: string, kind?: ToastKind) => void) {
@@ -139,7 +144,23 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
   const moderation = ref('auto')
   const compression = ref(80)
   const style = ref('')
-  const rewriteModel = ref(DEFAULT_REWRITE_MODEL)
+
+  // ==================== AI rewrite config ====================
+  //
+  // Split from the image key on purpose: the rewrite LLM may live on another
+  // vendor entirely, so it carries its own credential, base URL, protocol,
+  // model and reasoning effort. `loadRewriteConfig` tolerates every shape an
+  // older profile could hold (see `normalizeRewriteConfig`), and `enabled`
+  // defaults to false so an untouched install keeps using the image key.
+  const rewriteConfig = ref<RewriteConfig>(loadRewriteConfig())
+  const rewriteModel = computed({
+    get: () => rewriteConfig.value.model,
+    set: (value: string) => {
+      rewriteConfig.value = { ...rewriteConfig.value, model: value }
+    },
+  })
+  /** Persist on change rather than on every keystroke of the key field. */
+  watch(rewriteConfig, (value) => saveRewriteConfig(value), { deep: true })
 
   const isCustomSize = computed(() => size.value === 'custom')
 
@@ -572,6 +593,82 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     safeSet(API_KEY_STORAGE, cleaned)
   }
 
+  // ==================== AI rewrite config persistence ====================
+
+  /**
+   * Read the persisted rewrite config.
+   *
+   * Backward compatibility, in order of preference:
+   *   1. `ig_rewriteConfig` — the shape this build writes.
+   *   2. A bare model string under the same key (nothing else wrote it, but a
+   *      hand-edited profile could have).
+   *   3. `ig_rewriteModel` — the seed the collapsed build never persisted but a
+   *      port-era profile might carry.
+   *   4. Nothing at all — the defaults, i.e. `gpt-6-astra` on the image key.
+   * A config whose fields are individually corrupt keeps whatever is valid,
+   * because `normalizeRewriteConfig` falls back per field.
+   */
+  function loadRewriteConfig(): RewriteConfig {
+    const legacyModel = safeGet(LEGACY_REWRITE_MODEL_KEY)
+    const raw = safeGet(REWRITE_CONFIG_STORAGE_KEY)
+    if (!raw) return normalizeRewriteConfig(null, legacyModel)
+    try {
+      return normalizeRewriteConfig(JSON.parse(raw), legacyModel)
+    } catch {
+      // Stored as a bare model name rather than JSON.
+      return normalizeRewriteConfig(raw, legacyModel)
+    }
+  }
+
+  function saveRewriteConfig(value: RewriteConfig): void {
+    safeSet(REWRITE_CONFIG_STORAGE_KEY, JSON.stringify(normalizeRewriteConfig(value)))
+    // The legacy key is now redundant; drop it so a later rename cannot
+    // resurrect a stale seed. Harmless to call on every save.
+    safeRemove(LEGACY_REWRITE_MODEL_KEY)
+  }
+
+  /** Switch protocol, stepping the effort down to a level it can express. */
+  function setRewriteProtocol(protocol: RewriteProtocol): void {
+    const effort = coerceEffortForProtocol(rewriteConfig.value.effort, protocol)
+    rewriteConfig.value = { ...rewriteConfig.value, protocol, effort }
+  }
+
+  function setRewriteEffort(effort: RewriteEffort): void {
+    rewriteConfig.value = {
+      ...rewriteConfig.value,
+      effort: coerceEffortForProtocol(effort, rewriteConfig.value.protocol),
+    }
+  }
+
+  function setRewriteEnabled(enabled: boolean): void {
+    rewriteConfig.value = { ...rewriteConfig.value, enabled }
+  }
+
+  function setRewriteApiKey(value: string): void {
+    rewriteConfig.value = { ...rewriteConfig.value, apiKey: value }
+  }
+
+  function setRewriteBaseUrl(value: string): void {
+    rewriteConfig.value = { ...rewriteConfig.value, baseUrl: normalizeRewriteBaseUrl(value) }
+  }
+
+  function setRewriteModel(value: string): void {
+    rewriteConfig.value = { ...rewriteConfig.value, model: value }
+  }
+
+  /**
+   * Whether the next rewrite will bill the image token.
+   *
+   * This is exactly the `usesGenerationKey` rule in `resolveRewriteRequest`
+   * (off, or on-but-keyless), derived from the config alone. The UI shows it as
+   * an advisory badge — the authoritative decision is still made at call time.
+   */
+  const rewriteUsesGenerationKey = computed(() => {
+    const current = rewriteConfig.value
+    if (!current.enabled) return true
+    return !current.apiKey.trim()
+  })
+
   // ==================== Key verification ====================
 
   const keyStatus = ref<'unknown' | 'verified' | 'invalid'>('unknown')
@@ -849,19 +946,15 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     toast('已应用模板', 'success')
   }
 
-  /** AI-rewrite the template prompt currently open in the preview stage. */
+  /**
+   * AI-rewrite the template prompt currently open in the preview stage.
+   *
+   * Deliberately independent of the generation path: it validates only the
+   * rewrite config (falling back to the image key when the split config is off
+   * or keyless), and a failure here leaves `errorText` and the results pane
+   * untouched so a broken rewrite key never blocks generation.
+   */
   async function rewriteTemplatePrompt(original: string, instruction: string): Promise<void> {
-    const key = cleanApiKey(apiKey.value)
-    if (!key) {
-      toast('请输入令牌', 'error')
-      return
-    }
-    try {
-      assertHeaderSafeKey(key)
-    } catch (error) {
-      toast((error as Error).message, 'error')
-      return
-    }
     if (!original.trim()) {
       toast('原提示词为空', 'error')
       return
@@ -871,20 +964,43 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
       return
     }
 
+    // Validate the resolved key/URL up front so the failure names the field
+    // that is wrong instead of surfacing as an opaque fetch TypeError.
+    const resolved = resolveRewriteRequest(rewriteConfig.value, apiKey.value)
+    if (!resolved.ok) {
+      const message =
+        resolved.reason === 'bad-base-url'
+          ? 'AI 改写接口地址无效，请填写 http(s) 开头的地址'
+          : '请输入令牌：AI 改写未单独配置令牌，也没有可回落的生图令牌'
+      rewriteStatus.value = message
+      toast(message, 'error')
+      return
+    }
+    try {
+      assertHeaderSafeKey(resolved.request.apiKey)
+    } catch (error) {
+      const message = (error as Error).message
+      rewriteStatus.value = message
+      toast(message, 'error')
+      return
+    }
+
     rewriting.value = true
     rewriteStatus.value = 'AI 智能修改提示词中...'
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 120000)
     try {
-      const next = await rewritePrompt({
-        key,
-        model: rewriteModel.value.trim() || DEFAULT_REWRITE_MODEL,
+      const result = await requestRewrite({
+        config: rewriteConfig.value,
+        generationKey: apiKey.value,
         original,
         instruction,
         signal: controller.signal,
       })
-      rewrittenPrompt.value = next
-      rewriteStatus.value = '已生成新提示词，可继续修改或应用'
+      rewrittenPrompt.value = result.prompt
+      rewriteStatus.value = result.usesGenerationKey
+        ? '已生成新提示词（本次使用生图令牌，可在设置中单独配置改写令牌）'
+        : '已生成新提示词，可继续修改或应用'
       toast('提示词已修改', 'success')
     } catch (error) {
       const message =
@@ -922,6 +1038,15 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     compression,
     style,
     rewriteModel,
+    // AI rewrite config (split from the image key)
+    rewriteConfig,
+    rewriteUsesGenerationKey,
+    setRewriteEnabled,
+    setRewriteApiKey,
+    setRewriteBaseUrl,
+    setRewriteProtocol,
+    setRewriteModel,
+    setRewriteEffort,
     isCustomSize,
     persistKey,
     saveApiKey,

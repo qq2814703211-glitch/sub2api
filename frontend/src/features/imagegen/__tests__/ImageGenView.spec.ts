@@ -186,4 +186,112 @@ describe('ImageGenView', () => {
 
     wrapper.unmount()
   })
+
+  it('renders the AI rewrite settings as their own block, separate from the token', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const toggle = wrapper
+      .findAll('button')
+      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
+    expect(toggle).toBeTruthy()
+
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain(zh.imagegen.rewriteKeyLabel)
+    expect(text).toContain(zh.imagegen.rewriteBaseUrlLabel)
+    expect(text).toContain(zh.imagegen.rewriteProtocolLabel)
+    expect(text).toContain(zh.imagegen.rewriteEffortLabel)
+    expect(text).toContain(zh.imagegen.rewriteModelLabel)
+
+    // The collapsed default is the legacy behaviour: rewrite rides the image
+    // token, and the card says so instead of silently looking configured.
+    expect(text).toContain(zh.imagegen.rewriteKeyFallbackShort)
+
+    // A second password field proves the rewrite key is a separate input; the
+    // image token field is the first.
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+
+    wrapper.unmount()
+  })
+
+  it('offers only the effort levels the selected protocol can express', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const toggle = wrapper
+      .findAll('button')
+      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    // The protocol <select> is the one carrying the anthropic option.
+    const protocolSelect = wrapper
+      .findAll('select')
+      .find((node) =>
+        Array.from((node.element as HTMLSelectElement).options).some(
+          (option) => option.value === 'openai-responses',
+        ),
+      )
+    expect(protocolSelect).toBeTruthy()
+
+    const effortSelectFor = () =>
+      wrapper
+        .findAll('select')
+        .find((node) =>
+          Array.from((node.element as HTMLSelectElement).options).some(
+            (option) => option.value === 'unset',
+          ),
+        )!
+    const effortValues = () =>
+      Array.from((effortSelectFor().element as HTMLSelectElement).options).map((option) => option.value)
+
+    // Chat completions tops out at high.
+    expect(effortValues()).toContain('high')
+    expect(effortValues()).not.toContain('max')
+
+    await protocolSelect!.setValue('anthropic-messages')
+    await flushPromises()
+
+    // Anthropic can carry max.
+    expect(effortValues()).toContain('max')
+
+    await protocolSelect!.setValue('openai-responses')
+    await flushPromises()
+    expect(effortValues()).toContain('max')
+
+    wrapper.unmount()
+  })
+
+  it('does not block generation when the rewrite side is unconfigured', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    // Turn the split config on but leave its key blank: the rewrite should be
+    // unusable on its own, while generation still validates normally.
+    const toggle = wrapper
+      .findAll('button')
+      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    const enableSwitch = wrapper.find('button[role="switch"]')
+    expect(enableSwitch.exists()).toBe(true)
+    await enableSwitch.trigger('click')
+    await flushPromises()
+
+    const fetchStub = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    const before = fetchStub.mock.calls.length
+
+    // The generate button must still be live (not disabled by rewrite state).
+    const generate = wrapper
+      .findAll('button')
+      .find((node) => node.text().includes(zh.imagegen.generate))
+    expect((generate!.element as HTMLButtonElement).disabled).toBe(false)
+    expect(fetchStub.mock.calls.length).toBe(before)
+
+    wrapper.unmount()
+  })
 })
