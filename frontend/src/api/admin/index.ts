@@ -35,6 +35,7 @@ import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
+import modelPricingSyncAPI from './modelPricingSync'
 import connectionDiagnosticsAPI from './connectionDiagnostics'
 import pluginsAPI from './plugins'
 
@@ -74,6 +75,7 @@ export const adminAPI = {
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
   audit: auditAPI,
+  modelPricingSync: modelPricingSyncAPI,
   connectionDiagnostics: connectionDiagnosticsAPI,
   plugins: pluginsAPI
 }
@@ -111,6 +113,7 @@ export {
   riskControlAPI,
   adminComplianceAPI,
   auditAPI,
+  modelPricingSyncAPI,
   connectionDiagnosticsAPI,
   pluginsAPI
 }
@@ -119,6 +122,12 @@ export default adminAPI
 
 // Re-export types used by components
 export type { AuditLog, AuditLogQuery, AuditLogListResponse } from './audit'
+export type {
+  ModelPricingSyncHistoryRow,
+  ModelPricingSyncHistoryQuery,
+  ModelPricingSyncHistoryResponse,
+  ModelPricingSyncStatus
+} from './modelPricingSync'
 export type { BalanceHistoryItem } from './users'
 export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from './errorPassthrough'
 export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
