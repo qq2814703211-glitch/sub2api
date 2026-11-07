@@ -80,6 +80,54 @@ func TestCodexDirectImagesMappingBeforeRouting(t *testing.T) {
 	}
 }
 
+func TestCodexDirectImagesExtendedFormatPayloads(t *testing.T) {
+	for _, test := range []struct {
+		name, body, wantURL, wantMIME string
+	}{
+		{"gif", `{"model":"gpt-image-2.6-flare","prompt":"loop","response_format":"url","output_format":"gif","frame_count":4,"frame_duration_ms":120,"quality":"xhigh"}`, "data:image/gif;base64,R0lGODlh", "image/gif"},
+		{"svg", `{"model":"gpt-image-2.6-sunburst","prompt":"vector","response_format":"url","output_format":"svg","svg":{"model":"gpt-image-svg-author","reasoning":{"effort":"max"}},"quality":"max"}`, "data:image/svg+xml;base64,PHN2Zz4=", "image/svg+xml"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, rec := newOpenAIImagesTestContext(t, []byte(test.body))
+			respBody := fmt.Sprintf(`{"data":[{"b64_json":%q,"output_format":%q}],"usage":{"output_tokens":12}}`, strings.TrimPrefix(test.wantURL, "data:"+test.wantMIME+";base64,"), map[string]string{"gif": "gif", "svg": "svg"}[test.name])
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(respBody))}}
+			svc := newOpenAIImagesTestService(upstream)
+			parsed, err := svc.ParseOpenAIImagesRequest(c, []byte(test.body))
+			require.NoError(t, err)
+			result, err := svc.ForwardImages(context.Background(), c, directImagesTestAccount(), []byte(test.body), parsed, "")
+			require.NoError(t, err)
+			require.Equal(t, "/backend-api/codex/images/generations", upstream.lastReq.URL.Path)
+			require.Equal(t, test.wantURL, gjson.GetBytes(rec.Body.Bytes(), "data.0.url").String())
+			require.Equal(t, 12, result.Usage.ImageOutputTokens)
+			if test.name == "gif" {
+				require.EqualValues(t, 4, gjson.GetBytes(upstream.lastBody, "frame_count").Int())
+				require.EqualValues(t, 120, gjson.GetBytes(upstream.lastBody, "frame_duration_ms").Int())
+				require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "quality").String())
+			} else {
+				require.Equal(t, "gpt-image-svg-author", gjson.GetBytes(upstream.lastBody, "svg.model").String())
+				require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "svg.reasoning.effort").String())
+				require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "quality").String())
+			}
+		})
+	}
+}
+
+func TestCodexDirectImagesUpstreamGIFEntitlementErrorIsPreserved(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2.6-flare","prompt":"loop","output_format":"gif","frame_count":4,"frame_duration_ms":120}`)
+	c, rec := newOpenAIImagesTestContext(t, body)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_value","code":"invalid_value","message":"GIF output is not enabled for this request"}}`))}}
+	svc := newOpenAIImagesTestService(upstream)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	result, err := svc.ForwardImages(context.Background(), c, directImagesTestAccount(), body, parsed, "")
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Equal(t, "/backend-api/codex/images/generations", upstream.lastReq.URL.Path)
+	require.Equal(t, "gif", gjson.GetBytes(upstream.lastBody, "output_format").String())
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "GIF output is not enabled for this request")
+}
+
 func TestCodexDirectImagesHTTPErrorFallbacksOnlyWhenEndpointUnavailable(t *testing.T) {
 	for _, status := range []int{400, 401, 403, 429, 500, 502, 503, 404, 405} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

@@ -58,6 +58,70 @@ function mountTable(
 }
 
 describe('PlazaModelPricingTable', () => {
+  it('shows conditional media prices and units instead of a misleading scalar price', () => {
+    const model = tokenModel({ name: 'conditional-video', official_pricing: null })
+    model.pricing!.billing_mode = 'video'
+    Object.assign(model.pricing!, {
+      per_request_price: 999,
+      media_pricing: { rules: [{ name: '720p silent', unit: 'second', price: 0.2, prompt_price: 0.01, conditions: { resolution: '720p', audio: false, min_duration: 0, max_duration: 10, fps: 24 } }] },
+    })
+    const wrapper = mountTable([model], 0.5)
+    expect(wrapper.find('[data-testid="media-pricing-rules"]').exists()).toBe(true)
+    const display = wrapper.get('[data-testid="media-pricing-rules"]').text()
+    expect(display).toContain('720p silent')
+    expect(display).toContain('0.1 / mediaPricing.units.second')
+    expect(display).toContain('+0.005 / mediaPricing.units.request')
+    expect(display).toContain('mediaPricing.no')
+    expect(display).toContain('mediaPricing.conditions.min_duration: 0')
+    expect(wrapper.text()).not.toContain('$499.50')
+    expect(wrapper.text()).toContain('mediaPricing.badge')
+    expect(wrapper.find('thead').text()).toContain('mediaPricing.unitsPerRule')
+    expect(wrapper.find('tbody').text()).not.toContain('modelPlaza.table.perRequest')
+    wrapper.unmount()
+  })
+
+  it.each(['image', 'video'] as const)('applies the existing independent %s rate exactly once to media rules', (billingMode) => {
+    const model = tokenModel({ official_pricing: null })
+    model.pricing!.billing_mode = billingMode
+    model.pricing!.media_pricing = { rules: [{ unit: 'request', price: 2 }] }
+    const wrapper = mountTable([model], 0.15, 0.05, {
+      imageRateIndependent: true, imageRateMultiplier: 0.5,
+      videoRateIndependent: true, videoRateMultiplier: 0.5,
+    })
+    expect(wrapper.get('[data-testid="media-pricing-rules"]').text()).toContain('1 / mediaPricing.units.request')
+    const options = wrapper.findAll('[data-testid="media-rate-option"]')
+    expect(options).toHaveLength(3)
+    expect(options[0]!.text()).toContain('mediaPricing.rateGeneral')
+    expect(options[0]!.text()).toContain('0.1 / mediaPricing.units.request')
+    expect(options[1]!.text()).toContain('mediaPricing.rateImage')
+    expect(options[2]!.text()).toContain('mediaPricing.rateVideo')
+    expect(wrapper.findAll('tbody tr td').at(-1)!.text()).toContain('mediaPricing.rateImage0.5x')
+    wrapper.unmount()
+  })
+
+  it('applies user and time multipliers to token rules without changing their units', () => {
+    const model = tokenModel({ official_pricing: null, time_pricing: { timezone: 'Asia/Shanghai', periods: [{ start_time: '00:00:00', end_time: '08:00:00', multiplier: 2 }] } })
+    model.pricing!.media_pricing = { rules: [{ unit: 'token', input_price: 0.000002, image_output_price: 0.00001, prompt_price: 0.02 }] }
+    const wrapper = mountTable([model], 0.8, 0.5)
+    const rules = wrapper.findAll('[data-testid="media-pricing-rules"]')
+    expect(rules).toHaveLength(2)
+    expect(rules[0].text()).toContain('0.000001 / mediaPricing.units.token')
+    expect(rules[0].text()).toContain('+0.01 / mediaPricing.units.request')
+    expect(rules[1].text()).toContain('0.000002 / mediaPricing.units.token')
+    expect(rules[1].text()).toContain('+0.02 / mediaPricing.units.request')
+    wrapper.unmount()
+  })
+
+  it('labels mixed scalar and media units without changing the legacy token price', () => {
+    const media = tokenModel({ name: 'media', official_pricing: null })
+    media.pricing!.media_pricing = { rules: [{ unit: 'image', price: 0.12 }] }
+    const wrapper = mountTable([media, tokenModel()], 1)
+    expect(wrapper.find('thead').text()).toContain('mediaPricing.mixedUnits')
+    expect(wrapper.text()).toContain('$3.00')
+    expect(wrapper.text()).toContain('0.12 / mediaPricing.units.image')
+    wrapper.unmount()
+  })
+
   it.each([
     { enabled: true, multiplier: 1, userRate: 0.05, expected: 1 },
     { enabled: true, multiplier: 0.5, userRate: null, expected: 0.5 },

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminGroup } from '@/types'
 import GroupsView from '@/views/admin/GroupsView.vue'
 import { adminAPI } from '@/api/admin'
+import { mediaPricingFixture, referenceVideoPricingFixture } from '@/__tests__/fixtures/mediaPricing'
 
 const {
   listGroups,
@@ -176,6 +177,89 @@ function mountView() {
 }
 
 describe('GroupsView duplicate action', () => {
+  it.each([mediaPricingFixture, referenceVideoPricingFixture])('creates a group and reads request-level media pricing back: %j', async (fixture) => {
+    let stored: AdminGroup | null = null
+    listGroups.mockImplementation(async () => ({ items: stored ? [stored] : [], total: stored ? 1 : 0, page: 1, page_size: 20, pages: 1 }))
+    vi.mocked(adminAPI.groups.create).mockImplementation(async req => {
+      stored = JSON.parse(JSON.stringify({ ...sourceGroup, ...req })) as AdminGroup
+      return stored
+    })
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text() === 'admin.groups.createGroup')!.trigger('click')
+      await flushPromises()
+      await wrapper.get('#create-group-form input[type="text"]').setValue('New media group')
+      await wrapper.findAll('button').find(button => button.text() === 'admin.groups.modelPricing.add')!.trigger('click')
+      const card = wrapper.findComponent({ name: 'PricingEntryCard' })
+      expect(card.props('entry').media_pricing).toBeNull()
+      card.vm.$emit('update', { ...card.props('entry'), models: ['media-example'], billing_mode: 'image' })
+      await wrapper.vm.$nextTick()
+      await wrapper.get('[data-testid="media-pricing-json"]').setValue('{')
+      await wrapper.get('#create-group-form').trigger('submit')
+      expect(adminAPI.groups.create).not.toHaveBeenCalled()
+      await wrapper.get('[data-testid="media-pricing-json"]').setValue(JSON.stringify(fixture))
+      await wrapper.get('#create-group-form').trigger('submit')
+      await flushPromises()
+      expect(adminAPI.groups.create).toHaveBeenCalledWith(expect.objectContaining({ model_pricing: [expect.objectContaining({ media_pricing: fixture })] }))
+      await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+      await flushPromises()
+      expect(JSON.parse(wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]').element.value)).toEqual(fixture)
+    } finally { wrapper.unmount() }
+  })
+
+  it('edits, saves, reloads and clears every media rule field through the actual group form', async () => {
+    let stored = {
+      ...sourceGroup,
+      model_pricing: [{
+        platform: 'openai', models: ['media-example'], billing_mode: 'image',
+        input_price: null, output_price: null, cache_write_price: null, cache_read_price: null,
+        image_input_price: null, image_output_price: null, per_request_price: null,
+        intervals: [], time_pricing: null, media_pricing: mediaPricingFixture,
+      }],
+    }
+    listGroups.mockImplementation(async () => ({ items: [structuredClone(stored)], total: 1, page: 1, page_size: 20, pages: 1 }))
+    updateGroup.mockImplementation(async (_id, req) => {
+      stored = JSON.parse(JSON.stringify({ ...stored, ...req }))
+      return structuredClone(stored)
+    })
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      const open = async () => {
+        await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+        await flushPromises()
+      }
+      await open()
+      const editor = () => wrapper.get<HTMLTextAreaElement>('[data-testid="media-pricing-json"]')
+      expect(JSON.parse(editor().element.value)).toEqual(mediaPricingFixture)
+      const edited = structuredClone(mediaPricingFixture)
+      edited.extra_input_image_price = 0
+      edited.free_input_images = 0
+      edited.rules[0].price = 0.25
+      edited.rules[1].conditions!.audio = true
+      await editor().setValue(JSON.stringify(edited))
+      await wrapper.get('#edit-group-form').trigger('submit')
+      await flushPromises()
+      expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({ model_pricing: [expect.objectContaining({ media_pricing: edited, per_request_price: null })] }))
+      expect(stored.model_pricing[0].media_pricing).toEqual(edited)
+      await open()
+      expect(JSON.parse(editor().element.value)).toEqual(edited)
+      await editor().setValue('{')
+      await wrapper.get('#edit-group-form').trigger('submit')
+      expect(updateGroup).toHaveBeenCalledTimes(1)
+      expect(showError).toHaveBeenCalledWith(expect.stringContaining('mediaPricing.validation.json'))
+      await editor().setValue('')
+      await wrapper.get('#edit-group-form').trigger('submit')
+      await flushPromises()
+      expect(updateGroup).toHaveBeenLastCalledWith(42, expect.objectContaining({ model_pricing: [expect.objectContaining({ media_pricing: null })] }))
+      await open()
+      expect(editor().element.value).toBe('')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   beforeEach(() => {
     authState.isSimpleMode = false
     localStorage.clear()
