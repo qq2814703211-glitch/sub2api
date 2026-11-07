@@ -31,9 +31,19 @@ func isOpenAIImagesForceResponses(ctx context.Context) bool {
 func usesCodexDirectImages(model string) bool {
 	switch strings.TrimSpace(model) {
 	case "gpt-image-1.5", "gpt-image-2",
-		"gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
 		"gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
-		"gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08":
+		"gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08",
+		"gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
+		return true
+	default:
+		return false
+	}
+}
+
+// 2.6 must not fall back to the Responses image tool on endpoint errors.
+func isGPTImage26Model(model string) bool {
+	switch strings.TrimSpace(model) {
+	case "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
 		return true
 	default:
 		return false
@@ -98,11 +108,20 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 	if parsed.FrameCount != nil {
 		payload["frame_count"] = *parsed.FrameCount
 	}
-	if parsed.FrameDurationMS != nil {
-		payload["frame_duration_ms"] = *parsed.FrameDurationMS
+	if parsed.FrameDurationMs != nil {
+		payload["frame_duration_ms"] = *parsed.FrameDurationMs
 	}
 	if parsed.SVG != nil {
 		payload["svg"] = parsed.SVG
+	} else if parsed.SVGModel != "" || parsed.SVGReasoningEffort != "" {
+		svg := make(map[string]any, 2)
+		if parsed.SVGModel != "" {
+			svg["model"] = parsed.SVGModel
+		}
+		if parsed.SVGReasoningEffort != "" {
+			svg["reasoning"] = map[string]string{"effort": parsed.SVGReasoningEffort}
+		}
+		payload["svg"] = svg
 	}
 	if parsed.Stream {
 		payload["stream"] = true
@@ -111,6 +130,9 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 	endpoint := "/images/generations"
 	if parsed.IsEdits() {
 		endpoint = "/images/edits"
+		if (parsed.MarkupUpload != nil || parsed.Markup != "") && parsed.HasMask {
+			return nil, "", fmt.Errorf("markup cannot be combined with mask")
+		}
 		images := make([]map[string]string, 0, len(parsed.InputImageURLs)+len(parsed.Uploads))
 		for _, imageURL := range parsed.InputImageURLs {
 			if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
@@ -123,6 +145,27 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 				return nil, "", err
 			}
 			images = append(images, map[string]string{"image_url": url})
+		}
+		if parsed.MarkupUpload != nil {
+			markup, err := openAIImageUploadToDataURL(*parsed.MarkupUpload)
+			if err != nil {
+				return nil, "", err
+			}
+			payload["markup"] = map[string]string{"image_url": markup}
+		} else if strings.TrimSpace(parsed.Markup) != "" {
+			markup := gjson.Parse(parsed.Markup)
+			if !gjson.Valid(parsed.Markup) || !markup.IsObject() {
+				return nil, "", fmt.Errorf("markup must be an image reference object or uploaded PNG")
+			}
+			imageURL, fileID := markup.Get("image_url"), markup.Get("file_id")
+			if (imageURL.Exists() && imageURL.Type != gjson.String) || (fileID.Exists() && fileID.Type != gjson.String) || ((strings.TrimSpace(imageURL.String()) == "") == (strings.TrimSpace(fileID.String()) == "")) {
+				return nil, "", fmt.Errorf("markup requires exactly one of image_url or file_id")
+			}
+			if strings.TrimSpace(imageURL.String()) != "" {
+				payload["markup"] = map[string]string{"image_url": imageURL.String()}
+			} else {
+				payload["markup"] = map[string]string{"file_id": fileID.String()}
+			}
 		}
 		if len(images) == 0 {
 			return nil, "", fmt.Errorf("image input is required")

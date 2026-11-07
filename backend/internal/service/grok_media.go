@@ -37,16 +37,25 @@ const (
 	grokMediaMaxEditSourceImages = 3
 )
 
+func isGrokVideoCreateEndpoint(endpoint GrokMediaEndpoint) bool {
+	switch endpoint {
+	case GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions, CompatibleVideoEndpointCreate, SeedanceEndpointCreate:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e GrokMediaEndpoint) RequiresRequestBody() bool {
 	return !e.IsVideoLookupRequest()
 }
 
 func (e GrokMediaEndpoint) IsVideoLookupRequest() bool {
-	return e == GrokMediaEndpointVideoStatus || e == GrokMediaEndpointVideoContent || e == SeedanceEndpointStatus || e == SeedanceEndpointDelete
+	return e == GrokMediaEndpointVideoStatus || e == GrokMediaEndpointVideoContent || e == SeedanceEndpointStatus || e == SeedanceEndpointDelete || e == CompatibleVideoEndpointStatus
 }
 
 func (e GrokMediaEndpoint) IsGenerationRequest() bool {
-	if e == SeedanceEndpointCreate {
+	if e == SeedanceEndpointCreate || e == CompatibleVideoEndpointCreate {
 		return true
 	}
 	switch e {
@@ -72,6 +81,7 @@ type GrokMediaRequestInfo struct {
 	MaskImageURL      string
 	Uploads           []OpenAIImagesUpload
 	MaskUpload        *OpenAIImagesUpload
+	MediaUsage        *MediaUsage
 }
 
 func (r GrokMediaRequestInfo) ModerationBody() []byte {
@@ -124,7 +134,7 @@ func ExtractGrokMediaModel(contentType string, body []byte) string {
 }
 
 func ParseGrokMediaRequest(contentType string, body []byte) GrokMediaRequestInfo {
-	info := GrokMediaRequestInfo{N: 1}
+	info := GrokMediaRequestInfo{N: 1, MediaUsage: extractMediaRequestUsageBody(contentType, body)}
 	if gjson.ValidBytes(body) {
 		parseGrokMediaJSONRequest(body, &info)
 	} else {
@@ -396,12 +406,13 @@ func (s *OpenAIGatewayService) SelectMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
-	VideoResolution      string `json:"video_resolution,omitempty"`
-	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
-	OriginalModel        string `json:"original_model,omitempty"`
+	Model                string      `json:"model"`
+	BillingModel         string      `json:"billing_model,omitempty"`
+	UpstreamModel        string      `json:"upstream_model,omitempty"`
+	VideoResolution      string      `json:"video_resolution,omitempty"`
+	VideoDurationSeconds int         `json:"video_duration_seconds,omitempty"`
+	OriginalModel        string      `json:"original_model,omitempty"`
+	MediaUsage           *MediaUsage `json:"media_usage,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
@@ -521,7 +532,9 @@ func (s *OpenAIGatewayService) LoadGrokVideoPendingBilling(
 	return &pending, nil
 }
 
-// ClaimGrokVideoBilling returns an owner token for a short async fallback billing lease.
+// ClaimGrokVideoBilling returns an owner token when this poll acquires the lease.
+// After a crash, recovery requires another status/content poll after expiry;
+// the lease does not schedule retries or replace durable billing deduplication.
 func (s *OpenAIGatewayService) ClaimGrokVideoBilling(
 	ctx context.Context,
 	requestID string,
@@ -535,14 +548,14 @@ func (s *OpenAIGatewayService) ClaimGrokVideoBilling(
 		return "", fmt.Errorf("grok video billing claim key is invalid")
 	}
 	owner := uuid.NewString()
-	claimed, err := s.cache.ClaimGrokVideoBilled(ctx, key, owner, 2*time.Minute)
+	claimed, err := s.cache.ClaimGrokVideoBilled(ctx, key, owner, grokVideoBilledClaimTTL(s.cfg))
 	if err != nil || !claimed {
 		return "", err
 	}
 	return owner, nil
 }
 
-// ReleaseGrokVideoBilling clears only the failed caller's lease.
+// ReleaseGrokVideoBilling clears only the caller's lease, never a later worker's.
 func (s *OpenAIGatewayService) ReleaseGrokVideoBilling(
 	ctx context.Context,
 	requestID string,
@@ -684,7 +697,14 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 	if responseID == "" {
 		responseID = strings.TrimSpace(requestID)
 	}
+	media := &MediaUsage{Count: 1, DurationSeconds: mediaPositiveNumber(gjson.GetBytes(statusBody, "video.duration"))}
+	media = MergeMediaUsage(media, extractMediaReferenceResponse(gjson.ParseBytes(statusBody)))
+	media.Count = 1
+	if pending != nil {
+		media = MergeMediaUsage(pending.MediaUsage, media)
+	}
 	return &OpenAIForwardResult{
+		MediaUsage:           media,
 		ResponseID:           responseID,
 		Model:                model,
 		BillingModel:         billingModel,
@@ -843,6 +863,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		ImageSize:            usage.ImageSize,
 		ImageInputSize:       usage.ImageInputSize,
 		ImageOutputSizes:     usage.ImageOutputSizes,
+		MediaUsage:           usage.MediaUsage,
 		VideoCount:           usage.VideoCount,
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
@@ -850,7 +871,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	if endpoint == GrokMediaEndpointVideoStatus {
 		result.VideoDurationSeconds = actualGrokVideoSeconds(respBody)
 	}
-	if endpoint == GrokMediaEndpointVideosGenerations || endpoint == GrokMediaEndpointVideosEdits || endpoint == GrokMediaEndpointVideosExtensions {
+	if isGrokVideoCreateEndpoint(endpoint) {
 		result.DeferredHTTPStatus = resp.StatusCode
 		result.DeferredHTTPBody = append([]byte(nil), respBody...)
 		result.DeferredHTTPHeaders = resp.Header.Clone()
@@ -990,6 +1011,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.Model = billed.Model
 		result.BillingModel = billed.BillingModel
 		result.UpstreamModel = billed.UpstreamModel
+		result.MediaUsage = billed.MediaUsage
 		result.VideoCount = billed.VideoCount
 		result.VideoResolution = billed.VideoResolution
 		result.VideoDurationSeconds = actualGrokVideoSeconds(statusBody)
@@ -1458,14 +1480,18 @@ type grokMediaUsageMetadata struct {
 	VideoCount           int
 	VideoResolution      string
 	VideoDurationSeconds int
+	MediaUsage           *MediaUsage
 }
 
 func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMediaRequestInfo, responseBody []byte) grokMediaUsageMetadata {
 	usage, _ := extractOpenAIUsageFromJSONBytes(responseBody)
-	meta := grokMediaUsageMetadata{Usage: usage}
+	meta := grokMediaUsageMetadata{Usage: usage, MediaUsage: cloneMediaUsage(requestInfo.MediaUsage)}
 	switch endpoint {
 	case GrokMediaEndpointImagesGenerations, GrokMediaEndpointImagesEdits:
-		meta.ImageCount = countOpenAIResponseImageOutputsFromJSONBytes(responseBody)
+		counter := newOpenAIImageOutputCounter()
+		counter.AddJSONResponse(responseBody)
+		meta.MediaUsage = counter.MediaUsage(requestInfo.MediaUsage)
+		meta.ImageCount = counter.Count()
 		meta.ImageSize = requestInfo.SizeTier
 		meta.ImageInputSize = requestInfo.Size
 		meta.ImageOutputSizes = collectOpenAIResponseImageOutputSizesFromJSONBytes(responseBody)
@@ -1483,6 +1509,7 @@ func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMedi
 				meta.ResponseID = billed.ResponseID
 				meta.Model = billed.Model
 				meta.BillingModel = billed.BillingModel
+				meta.MediaUsage = billed.MediaUsage
 				meta.VideoCount = billed.VideoCount
 				meta.VideoResolution = billed.VideoResolution
 				meta.VideoDurationSeconds = billed.VideoDurationSeconds
@@ -1662,7 +1689,6 @@ func (s *OpenAIGatewayService) CommitDeferredMediaCreateResponse(c *gin.Context,
 	}
 	writeGrokMediaResponse(c, &http.Response{StatusCode: result.DeferredHTTPStatus, Header: result.DeferredHTTPHeaders}, result.DeferredHTTPBody, s.responseHeaderFilter)
 }
-
 func writeGrokMediaContentResponse(c *gin.Context, resp *http.Response) error {
 	if c == nil || resp == nil || resp.Body == nil {
 		return fmt.Errorf("grok media content response is incomplete")

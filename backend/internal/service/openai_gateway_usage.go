@@ -350,7 +350,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// Async Grok video: always use the stable task id for dedup (status + content polls
 	// share one bill). Context-local client/local IDs would otherwise create a new row
 	// per poll if Redis claim is lost.
-	if result.VideoCount > 0 {
+	if result.VideoCount > 0 || strings.HasPrefix(result.ResponseID, "seedance:") || strings.HasPrefix(result.ResponseID, "compat-video:") {
 		if stable := StableGrokVideoBillingRequestID(firstNonEmpty(
 			strings.TrimPrefix(strings.TrimSpace(result.RequestID), "grok-video:"),
 			strings.TrimSpace(result.ResponseID),
@@ -432,7 +432,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.ActualCost = cost.ActualCost
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
-	if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
+	if (isVideoUsage || strings.HasPrefix(result.ResponseID, "seedance:") || strings.HasPrefix(result.ResponseID, "compat-video:")) && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
@@ -488,11 +488,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
-		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		if err := applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost, pricingAt,
 			accountStatsLongContextPricingEnabled(longContextBillingGate) && !modelLongContextExempt,
-		)
+			result.MediaUsage,
+		); err != nil {
+			return err
+		}
 	}
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
@@ -528,6 +531,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
+		// A leased async video can be retried by a later poll. Do not let an
+		// unsettled log occupy usage_logs' unique task key before that retry:
+		// its successful log would otherwise be ignored by ON CONFLICT.
 		if strings.TrimSpace(result.BillingClaimOwner) != "" {
 			return billingErr
 		}
@@ -600,6 +606,67 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	if result != nil && strings.HasPrefix(result.ResponseID, "compat-video:") {
+		resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey)
+		if resolved == nil {
+			return nil, fmt.Errorf("compatible video requires configured pricing for %s", billingModel)
+		}
+		if resolved.Mode == BillingModeToken && tokens.OutputTokens <= 0 {
+			return nil, fmt.Errorf("compatible video completion is missing token usage for %s", billingModel)
+		}
+		// This new protocol has no Grok default tier or eight-second fallback.
+		// Preserve exact usage even for an existing scalar configured card.
+		if resolved.channelPricing == nil || resolved.channelPricing.MediaPricing == nil {
+			if result.MediaUsage == nil {
+				return nil, fmt.Errorf("compatible video completion is missing media usage")
+			}
+			media := result.MediaUsage
+			units := float64(media.Count)
+			mediaMultiplier := videoMultiplier
+			if resolved.Mode == BillingModeVideo {
+				if media.DurationSeconds <= 0 {
+					return nil, fmt.Errorf("compatible video completion is missing duration")
+				}
+				units *= media.DurationSeconds
+			}
+			if resolved.Mode == BillingModeToken {
+				mediaMultiplier = multiplier
+			}
+			return s.billingService.CalculateCostUnified(CostInput{
+				Ctx: ctx, Model: billingModel, GroupID: apiKey.GroupID, Group: apiKey.Group,
+				Tokens: tokens, MediaUsage: media, RequestCount: media.Count, UsageUnits: units, SizeTier: media.Resolution,
+				RateMultiplier: mediaMultiplier, PricingAt: pricingAt, Resolver: s.resolver, Resolved: resolved,
+			})
+		}
+	}
+	// Explicit multidimensional cards must reach the unified engine before
+	// scalar image/video shortcuts. Missing dimensions must return its error,
+	// never fall through to a cheaper legacy rate.
+	if result != nil {
+		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
+			resolved.channelPricing != nil && resolved.channelPricing.MediaPricing != nil {
+			mediaMultiplier := multiplier
+			if resolved.Mode != BillingModeToken {
+				if result.VideoCount > 0 || strings.HasPrefix(result.ResponseID, "seedance:") || strings.HasPrefix(result.ResponseID, "compat-video:") {
+					mediaMultiplier = videoMultiplier
+				} else if result.ImageEndpoint || result.ImageCount > 0 {
+					mediaMultiplier = imageMultiplier
+				}
+			}
+			return s.billingService.CalculateCostUnified(CostInput{
+				Ctx: ctx, Model: billingModel, GroupID: apiKey.GroupID, Group: apiKey.Group,
+				Tokens: tokens, MediaUsage: result.MediaUsage, RequestCount: 1,
+				RateMultiplier: mediaMultiplier, PricingAt: pricingAt, ServiceTier: serviceTier,
+				ReasoningEffort: optionalStringValue(result.ReasoningEffort),
+				Resolver:        s.resolver, Resolved: resolved,
+				LongContextBillingEnabled:      longContextBillingGate,
+				DisableModelLongContextPricing: modelLongContextExempt,
+			})
+		}
+		if result.ImageEndpoint && result.MediaUsage != nil && result.MediaUsage.Count == 0 {
+			return &CostBreakdown{BillingMode: string(BillingModeImage)}, nil
+		}
+	}
 	if result != nil && result.WebSearchCalls > 0 {
 		// Codex alpha/search 网页搜索按次计费：上游不返回 usage/token 字段，单价只取
 		// 分组覆盖价（nil 时默认 0.01 = 官方 $10/1000 次），不参与渠道级模型定价。

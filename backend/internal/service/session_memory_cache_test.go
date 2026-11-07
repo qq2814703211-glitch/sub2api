@@ -195,6 +195,60 @@ func TestSessionMemoryCacheConcurrentClose(t *testing.T) {
 	require.Zero(t, cache.bytes)
 }
 
+func TestSessionMemoryCacheOwnsClonedValue(t *testing.T) {
+	cache := &sessionMemoryCache{}
+	t.Cleanup(cache.Close)
+	original := &sessionEntry{uuid: "original", expiresAt: time.Now().Add(time.Hour)}
+	cache.Store("session", original)
+	original.uuid = "mutated by caller"
+	original.expiresAt = time.Now().Add(-time.Hour)
+	value, ok := cache.Load("session")
+	require.True(t, ok)
+	require.NotSame(t, original, value)
+	cloned, ok := value.(*sessionEntry)
+	require.True(t, ok)
+	require.Equal(t, "original", cloned.uuid)
+}
+
+func TestSessionMemoryCacheCompareAndDelete(t *testing.T) {
+	cache := &sessionMemoryCache{}
+	t.Cleanup(cache.Close)
+	value := &sessionEntry{uuid: "value", expiresAt: time.Now().Add(time.Hour)}
+	cache.Store("ns|u:one", value)
+	observed, ok := cache.Load("ns|u:one")
+	require.True(t, ok)
+
+	// Store clones pointers: even a refresh with identical fields is a distinct
+	// entry and must not be removed by a stale pointer observation.
+	cache.Store("ns|u:one", value)
+	require.False(t, cache.CompareAndDelete("ns|u:one", observed))
+	current, ok := cache.Load("ns|u:one")
+	require.True(t, ok)
+	require.True(t, cache.CompareAndDelete("ns|u:one", current))
+	require.False(t, cache.CompareAndDelete("ns|u:one", current))
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	require.Empty(t, cache.entries)
+	require.Empty(t, cache.prefixes)
+	require.Zero(t, cache.lru.Len())
+	require.Zero(t, cache.bytes)
+}
+
+func TestSessionMemoryCacheZeroExpirySurvivesCleanup(t *testing.T) {
+	cache := &sessionMemoryCache{}
+	t.Cleanup(cache.Close)
+	cache.Store("ns|u:one", &sessionEntry{uuid: "permanent"})
+	cache.mu.Lock()
+	cache.timer.Stop()
+	cache.mu.Unlock()
+	cache.sweepExpired()
+	_, ok := cache.Load("ns|u:one")
+	require.True(t, ok)
+	_, matched, ok := cache.longestDigestPrefix("ns|", "u:one-a:two")
+	require.True(t, ok)
+	require.Equal(t, "u:one", matched)
+}
+
 func BenchmarkDigestSessionLookupMiss(b *testing.B) {
 	for _, n := range []int{100, 1000, 5000} {
 		chain := strings.TrimSuffix(strings.Repeat("u:0123456789abc-", n), "-")

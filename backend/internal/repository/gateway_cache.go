@@ -175,7 +175,7 @@ func (c *gatewayCache) SetGrokVideoPendingBilling(ctx context.Context, key strin
 		return errors.New("invalid grok video pending billing payload")
 	}
 	if ttl <= 0 {
-		ttl = 24 * time.Hour
+		ttl = 15 * 24 * time.Hour
 	}
 	return c.rdb.Set(ctx, grokVideoPendingBillingPrefix+key, payload, ttl).Err()
 }

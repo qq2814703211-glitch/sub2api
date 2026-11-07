@@ -106,6 +106,7 @@ type ChannelModelPricing struct {
 	PerRequestPrice            *float64            `json:"per_request_price"`
 	Intervals                  []PricingInterval   `json:"intervals"`
 	TimePricing                *ChannelTimePricing `json:"time_pricing,omitempty"`
+	MediaPricing               *MediaPricing       `json:"media_pricing,omitempty"`
 	CreatedAt                  time.Time           `json:"created_at,omitempty"`
 	UpdatedAt                  time.Time           `json:"updated_at,omitempty"`
 }
@@ -212,6 +213,7 @@ func (p *ChannelModelPricing) GetTierByLabel(label string) *PricingInterval {
 // Clone 返回 ChannelModelPricing 的拷贝（切片和映射独立，价格指针字段共享，调用方只读安全）
 func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	cp := p
+	cp.MediaPricing = p.MediaPricing.Clone()
 	cp.ReasoningEffortMultipliers = maps.Clone(p.ReasoningEffortMultipliers)
 	if p.Models != nil {
 		cp.Models = make([]string, len(p.Models))
@@ -231,6 +233,17 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 		}
 	}
 	return cp
+}
+
+func cloneModelPricingEntries(entries []ChannelModelPricing) []ChannelModelPricing {
+	if entries == nil {
+		return nil
+	}
+	out := make([]ChannelModelPricing, len(entries))
+	for i := range entries {
+		out[i] = entries[i].Clone()
+	}
+	return out
 }
 
 // Clone 返回 Channel 的深拷贝

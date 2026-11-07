@@ -680,6 +680,11 @@ func validateChannelConfig(pricing []ChannelModelPricing, mapping map[string]map
 // validatePricingEntries 校验定价条目（冲突检测 + 区间校验 + 计费模式校验），
 // 同时用于主渠道定价和 account_stats_pricing_rules 的内部定价。
 func validatePricingEntries(pricing []ChannelModelPricing) error {
+	for _, p := range pricing {
+		if err := ValidateMediaPricing(p.MediaPricing); err != nil {
+			return infraerrors.BadRequest("INVALID_MEDIA_PRICING", fmt.Sprintf("models %v: %v", p.Models, err))
+		}
+	}
 	if err := validateNoConflictingModels(pricing); err != nil {
 		return err
 	}
@@ -724,7 +729,7 @@ func validatePricingTimePricing(pricing []ChannelModelPricing) error {
 			continue
 		}
 		mode := pricing[i].BillingMode
-		if mode != "" && mode != BillingModeToken {
+		if pricing[i].MediaPricing == nil && mode != "" && mode != BillingModeToken {
 			return infraerrors.BadRequest("TIME_PRICING_UNSUPPORTED_MODE", "time pricing only supports token billing mode")
 		}
 		if err := validateChannelTimePricing(config); err != nil {
@@ -768,7 +773,7 @@ func validatePricingBillingMode(pricing []ChannelModelPricing) error {
 
 func checkBillingModeRequirements(p ChannelModelPricing) error {
 	if p.BillingMode == BillingModePerRequest || p.BillingMode == BillingModeImage || p.BillingMode == BillingModeVideo {
-		if p.PerRequestPrice == nil && len(p.Intervals) == 0 {
+		if p.MediaPricing == nil && p.PerRequestPrice == nil && len(p.Intervals) == 0 {
 			return infraerrors.BadRequest(
 				"BILLING_MODE_MISSING_PRICE",
 				"per-request price or intervals required for per_request/image billing mode",

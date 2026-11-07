@@ -142,16 +142,37 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, fmt.Errorf("seedance create response missing task ID")
 		}
 		result.ResponseID = SeedanceTaskKey(id)
+		result.MediaUsage = MergeMediaUsage(ExtractMediaRequestUsage(body), extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
 	}
 	if endpoint == SeedanceEndpointStatus {
 		result.ResponseID = taskID
 		applySeedanceVideoStatus(result, responseBody)
+		// Completion settlement gates on UpstreamTerminalEvent, so mirror the
+		// parsed status into it instead of leaving the field empty.
+		result.UpstreamTerminalEvent = result.VideoStatus
+		// Media dimensions count only a real, successful artifact: the billing
+		// path requires MediaUsage.Count > 0, so a succeeded status without a
+		// video URL must never become billable metadata.
+		result.MediaUsage = &MediaUsage{}
+		if result.VideoStatus == "succeeded" &&
+			strings.TrimSpace(gjson.GetBytes(responseBody, "content.video_url").String()) != "" &&
+			!mediaResponseHasError(gjson.ParseBytes(responseBody)) {
+			result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
+			result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
+			result.MediaUsage.Count = 1
+		}
 	}
 	if endpoint == SeedanceEndpointCreate {
 		if err := runVideoBeforePublish(ctx, result); err != nil {
 			return nil, err
 		}
 	}
-	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	if endpoint == SeedanceEndpointCreate {
+		result.DeferredHTTPStatus = resp.StatusCode
+		result.DeferredHTTPBody = append([]byte(nil), responseBody...)
+		result.DeferredHTTPHeaders = resp.Header.Clone()
+	} else {
+		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+	}
 	return result, nil
 }
