@@ -204,6 +204,11 @@
                 </button>
               </div>
 
+              <!-- Surface which credential will pay before the request goes out. -->
+              <p v-if="rewriteUsesGenerationKey" class="text-[11px] text-amber-600 dark:text-amber-400">
+                {{ t('imagegen.rewriteKeyFallbackHint') }}
+              </p>
+
               <p v-if="editStatus" class="text-xs text-gray-500 dark:text-dark-400">{{ editStatus }}</p>
             </div>
           </div>
@@ -224,11 +229,17 @@ import { useTemplateCatalog } from './templateCatalog'
 const props = defineProps<{
   open: boolean
   customTemplates: ImageTemplate[]
+  /**
+   * Rewrite model, mirrored from the shared rewrite config so editing it here
+   * and in the settings card stays one value.
+   */
   rewriteModel: string
   rewriting: boolean
   editStatus: string
   /** Prompt handed back by the parent after an AI rewrite. */
   rewrittenPrompt: string
+  /** True when the rewrite will bill the image token because none is dedicated. */
+  rewriteUsesGenerationKey?: boolean
 }>()
 
 const emit = defineEmits<{

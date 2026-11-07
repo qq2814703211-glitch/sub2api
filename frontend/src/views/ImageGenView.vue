@@ -56,6 +56,18 @@
             </div>
           </section>
 
+          <!-- AI rewrite settings: its own credential, separate from the image key -->
+          <RewriteSettings
+            :config="rewriteConfig"
+            :uses-generation-key="rewriteUsesGenerationKey"
+            @update:enabled="setRewriteEnabled"
+            @update:api-key="setRewriteApiKey"
+            @update:base-url="setRewriteBaseUrl"
+            @update:protocol="setRewriteProtocol"
+            @update:model="setRewriteModel"
+            @update:effort="setRewriteEffort"
+          />
+
           <!-- Prompt + retouch + references -->
           <section class="card">
             <div class="card-body space-y-3">
@@ -498,6 +510,7 @@
       :open="templateDrawerOpen"
       :custom-templates="customTemplates"
       :rewrite-model="rewriteModel"
+      :rewrite-uses-generation-key="rewriteUsesGenerationKey"
       :rewriting="rewriting"
       :edit-status="rewriteStatus"
       :rewritten-prompt="rewrittenPrompt"
@@ -505,7 +518,7 @@
       @apply="onApplyTemplate"
       @delete-custom="onDeleteCustomTemplate"
       @rewrite="onRewrite"
-      @update:rewrite-model="rewriteModel = $event"
+      @update:rewrite-model="setRewriteModel"
     />
   </AppLayout>
 </template>
@@ -518,6 +531,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import ReferencePicker from '@/features/imagegen/ReferencePicker.vue'
 import RetouchWorkbench from '@/features/imagegen/RetouchWorkbench.vue'
+import RewriteSettings from '@/features/imagegen/RewriteSettings.vue'
 import TemplateDrawer from '@/features/imagegen/TemplateDrawer.vue'
 import { clearHistoryImages, writeRawHistory } from '@/features/imagegen/storage'
 import { ACCEPTED_IMAGE_TYPES, copyImage, dataUrlToFile } from '@/features/imagegen/api'
@@ -547,6 +561,15 @@ const {
   compression,
   style,
   rewriteModel,
+  // AI rewrite config — separate credential/protocol/model/effort
+  rewriteConfig,
+  rewriteUsesGenerationKey,
+  setRewriteEnabled,
+  setRewriteApiKey,
+  setRewriteBaseUrl,
+  setRewriteProtocol,
+  setRewriteModel,
+  setRewriteEffort,
   isCustomSize,
   persistKey,
   retouchSelections,
