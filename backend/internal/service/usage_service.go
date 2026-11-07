@@ -405,8 +405,15 @@ func (s *UsageService) GetAPIKeyModelStats(ctx context.Context, apiKeyID int64, 
 }
 
 // GetAPIKeyDailyUsage returns daily usage stats for a user's API key.
+//
+// userID is validated by the caller (the handler proves the key belongs to the
+// requesting user) but is deliberately NOT passed into the trend query. Adding
+// it as a second predicate gives the planner a competing single-column index
+// (idx_usage_logs_user_id) and it picks that one, which on a large key means
+// reading the whole user's history instead of one key's — measured 8.9s vs 4.9s
+// for the same 5.7M-row key. api_key_id alone is both sufficient and selective.
 func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time) ([]usagestats.APIKeyDailyUsagePoint, error) {
-	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, "day", userID, apiKeyID, 0, 0, "", nil, nil, nil)
+	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, "day", 0, apiKeyID, 0, 0, "", nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get api key daily usage: %w", err)
 	}
