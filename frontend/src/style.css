@@ -192,7 +192,10 @@
   .dark .input[type='time'],
   .dark .input[type='datetime-local'],
   .dark .input[type='month'],
-  .dark .input[type='week'] {
+  .dark .input[type='week'],
+  .dark .input[type='number'],
+  .dark .input[type='search'],
+  .dark .input[type='color'] {
     color-scheme: dark;
   }
 
