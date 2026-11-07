@@ -644,10 +644,14 @@ type UsageLog struct {
 
 	CacheCreation5mTokens int `json:"cache_creation_5m_tokens"`
 	CacheCreation1hTokens int `json:"cache_creation_1h_tokens"`
+	// OpenAI 缓存写入 TTL 分档（30 分钟 / 12 小时），与 Anthropic 的 5m/1h 分列。
+	CacheWrite30mTokens int `json:"cache_write_30m_tokens"`
+	CacheWrite12hTokens int `json:"cache_write_12h_tokens"`
 
 	InputCost                 float64 `json:"input_cost"`
 	OutputCost                float64 `json:"output_cost"`
 	CacheCreationCost         float64 `json:"cache_creation_cost"`
+	CacheWriteTTLCost         float64 `json:"cache_write_ttl_cost"`
 	CacheReadCost             float64 `json:"cache_read_cost"`
 	TotalCost                 float64 `json:"total_cost"`
 	ActualCost                float64 `json:"actual_cost"`

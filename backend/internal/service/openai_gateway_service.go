@@ -228,6 +228,10 @@ type OpenAIUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	// CacheWrite30mTokens / CacheWrite12hTokens 是 OpenAI 缓存写入的 TTL 分档
+	// （30 分钟 / 12 小时）。与 Anthropic 的 5m/1h 分档是两套口径，见 ADR 0011。
+	CacheWrite30mTokens   int `json:"cache_write_30m_tokens,omitempty"`
+	CacheWrite12hTokens   int `json:"cache_write_12h_tokens,omitempty"`
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
 }
 
