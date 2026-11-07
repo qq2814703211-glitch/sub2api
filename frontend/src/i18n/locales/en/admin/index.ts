@@ -8,7 +8,6 @@ import audit from './audit'
 import modelPricingSync from './modelPricingSync'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
-import requestCapture from './requestCapture'
 
 export default {
   ...overview,
@@ -21,5 +20,4 @@ export default {
   ...modelPricingSync,
   ...promptAudit,
   ...plugins,
-  ...requestCapture,
 }

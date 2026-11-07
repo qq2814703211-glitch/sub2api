@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -94,7 +93,6 @@ func readRequestBodyWithBudget(req *http.Request) (requestBodyBuffer, error) {
 		return requestBodyBuffer{}, err
 	}
 	if preread, ok := req.Body.(*PrereadBody); ok {
-		requestcapture.FromContext(req.Context()).ClientRequest(preread.Bytes(), req.Header.Get("Content-Type"), req.Header)
 		return requestBodyBuffer{data: preread.Bytes()}, nil
 	}
 
@@ -122,7 +120,6 @@ func readRequestBodyWithBudget(req *http.Request) (requestBodyBuffer, error) {
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
-		requestcapture.FromContext(req.Context()).ClientRequest(raw.data, req.Header.Get("Content-Type"), req.Header)
 		return raw, nil
 	}
 
@@ -136,7 +133,6 @@ func readRequestBodyWithBudget(req *http.Request) (requestBodyBuffer, error) {
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded.data))
 
-	requestcapture.FromContext(req.Context()).ClientRequest(decoded.data, req.Header.Get("Content-Type"), req.Header)
 	return decoded, nil
 }
 
