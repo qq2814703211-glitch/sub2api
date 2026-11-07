@@ -72,8 +72,7 @@ func TestUpdateOpenCodeGoUsageSnapshotWritesSnapshotOnly(t *testing.T) {
 // 供通用 Update 路径做 OpenCode 受管键的原子回填。
 func openCodeGoMergeMockColumns() []string {
 	return []string{
-		"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged",
-		"enabled", "rate_sync_enabled", "snapshot",
+		"ollama_group_unchanged", "ollama_proxy_unchanged",
 		"ollama_session", "ollama_auto", "ollama_snapshot",
 		"opencode_group_unchanged", "opencode_auto", "opencode_snapshot",
 		"restore_epoch", "shared_generation",
@@ -190,9 +189,9 @@ func TestLockAndMergeAccountProbeExtraPreservesOpenCodeGoManagedState(t *testing
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(tt.account.ID, tt.account.Platform, tt.account.Type, string(credentials), nil).
 				WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumns()).
-					AddRow(false, false, tt.proxyUnchanged, nil, nil, nil, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot, nil, nil, nil, nil, nil))
+					AddRow(false, tt.proxyUnchanged, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot, nil, nil, nil, nil, nil))
 
-			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, tt.account, nil, nil)
+			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, tt.account)
 			require.NoError(t, err)
 			if tt.wantAuto == nil {
 				require.NotContains(t, got, service.OpenCodeGoUsageAutoRefreshExtraKey)

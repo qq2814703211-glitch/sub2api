@@ -3031,8 +3031,6 @@ func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMu
 		if rate := oauthSchedulingRateMultiplier; rate != nil && *rate >= 0 && !math.IsNaN(*rate) && !math.IsInf(*rate, 0) {
 			return *rate, true
 		}
-	} else if rate, ok := openAIFreshUpstreamBillingRate(account, now); ok {
-		return rate, true
 	}
 	rate := account.BillingRateMultiplier()
 	return rate, !math.IsNaN(rate) && !math.IsInf(rate, 0)
@@ -3059,29 +3057,6 @@ func (o openAILegacyUpstreamRateOrder) compare(a, b *Account) int {
 		return -1
 	}
 	return 1
-}
-
-func openAIFreshUpstreamBillingRate(account *Account, now time.Time) (float64, bool) {
-	if !isUpstreamBillingProbeAccount(account) {
-		return 0, false
-	}
-	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
-	if snapshot == nil || (snapshot.Status != UpstreamBillingProbeStatusOK && snapshot.Status != UpstreamBillingProbeStatusFailed) ||
-		snapshot.ReceivedAt == nil || snapshot.ReceivedAt.IsZero() {
-		return 0, false
-	}
-	receivedAt := *snapshot.ReceivedAt
-	freshUntil := snapshot.FreshUntil
-	if freshUntil == nil && snapshot.Status == UpstreamBillingProbeStatusOK {
-		interval := snapshot.NextProbeAt.Sub(receivedAt)
-		if interval > 0 {
-			freshUntil = probeTimePtr(receivedAt.Add(2 * interval))
-		}
-	}
-	if freshUntil == nil || !freshUntil.After(receivedAt) || now.Before(receivedAt) || now.After(*freshUntil) {
-		return 0, false
-	}
-	return upstreamBillingRateAt(snapshot.Data, now)
 }
 
 func openAIQuotaHeadroomFactor(account *Account, now time.Time) float64 {

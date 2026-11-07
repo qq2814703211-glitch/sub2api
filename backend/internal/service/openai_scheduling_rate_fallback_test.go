@@ -11,28 +11,6 @@ import (
 
 func TestOpenAISchedulingRateFallback(t *testing.T) {
 	now := time.Now()
-	for _, tt := range []struct {
-		name   string
-		status string
-		age    time.Duration
-		probe  float64
-		want   float64
-	}{
-		{"fresh snapshot wins", UpstreamBillingProbeStatusOK, time.Minute, 0.6, 0.6},
-		{"fresh snapshot survives failed refresh", UpstreamBillingProbeStatusFailed, time.Minute, 0.6, 0.6},
-		{"expired snapshot falls back", UpstreamBillingProbeStatusOK, 3 * time.Hour, 0.6, 0.3},
-		{"future snapshot falls back", UpstreamBillingProbeStatusOK, -time.Hour, 0.6, 0.3},
-		{"invalid snapshot falls back", UpstreamBillingProbeStatusOK, time.Minute, -1, 0.3},
-		{"zero snapshot remains valid", UpstreamBillingProbeStatusOK, time.Minute, 0, 0},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			account := upstreamCostTestAccount(1, tt.status, tt.probe, now.Add(-tt.age), time.Hour)
-			account.RateMultiplier = floatPtr(0.3)
-			rate, ok := openAISchedulingRate(account, now, floatPtr(0.9))
-			require.True(t, ok)
-			require.Equal(t, tt.want, rate)
-		})
-	}
 
 	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth} {
 		t.Run(accountType+" without probe or override", func(t *testing.T) {
