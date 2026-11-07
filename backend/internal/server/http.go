@@ -99,17 +99,6 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	manager, captureErr := settingService.InitializeRequestCapture(db)
-	if captureErr != nil {
-		log.Printf("Warning: request capture storage unavailable: %v", captureErr)
-	}
-	if handlers != nil && handlers.Admin != nil && handlers.Admin.Account != nil {
-		handlers.Admin.RequestCapture = handlers.Admin.Account.CaptureHandler(manager, settingService)
-		if handlers.Admin.Setting != nil {
-			handlers.Admin.Setting.ConfigureCaptureStepUp(handlers.Admin.RequestCapture)
-		}
-	}
-
 	router := SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, usageInflight)
 	if sharedRuntime != nil && handlers != nil && handlers.Admin != nil {
 		sharedRuntime.Bind(settingService, handlers.Admin.Setting)

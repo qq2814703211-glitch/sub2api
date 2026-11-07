@@ -244,7 +244,7 @@ func writeDiagnosticWSClient(ctx context.Context, conn interface {
 	Write(context.Context, coderws.MessageType, []byte) error
 }, kind coderws.MessageType, payload []byte) error {
 	start := time.Now()
-	err := WriteCapturedWSClient(ctx, conn, kind, payload)
+	err := conn.Write(ctx, kind, payload)
 	d := wsDiagnostics(ctx)
 	if d == nil {
 		return err
