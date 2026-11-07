@@ -7,9 +7,14 @@ services:
     command: ["/app/sub2api"]
     environment:
       BACKGROUND_JOBS_ENABLED: "false"
+      REDIS_DB: "15"
       SUB2API_DIAGNOSTIC_SOCKET: /run/submem-green/memory.sock
-    ports:
-      - "127.0.0.1:18092:8080"
-    volumes:
+    volumes: !override
       - sub2api_data:/app/data
       - /root/submem-20261013-budget/socket-sub2-green:/run/submem-green
+    ports: !override
+      - "127.0.0.1:18092:8080"
+    networks: !override
+      sub2api-network:
+        aliases: !override
+          - sub2api-0043-green
