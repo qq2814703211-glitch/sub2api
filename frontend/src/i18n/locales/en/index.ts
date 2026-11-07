@@ -12,8 +12,10 @@ import videoBilling from './videoBilling'
 import admin from './admin'
 import misc from './misc'
 import tickets from './tickets'
+import mediaPricing from './mediaPricing'
 
 export default {
+  mediaPricing,
   adminAccessKeys,
   mcp,
   videoBilling,

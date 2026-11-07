@@ -172,7 +172,7 @@ func openAIWSEventShouldParseUsage(eventType string) bool {
 }
 
 func openAIWSMessageShouldParseUsage(eventType string, message []byte) bool {
-	return openAIWSEventShouldParseUsage(eventType) && bytes.Contains(message, []byte(`"usage"`))
+	return openAIWSEventShouldParseUsage(eventType) && openAIPayloadHasUsage(message)
 }
 
 func parseOpenAIWSEventEnvelope(message []byte) (eventType string, responseID string, response gjson.Result) {
@@ -199,15 +199,12 @@ func openAIWSMessageLikelyContainsToolCalls(message []byte) bool {
 }
 
 func parseOpenAIWSResponseUsageFromCompletedEvent(message []byte, usage *OpenAIUsage) {
-	if usage == nil || len(message) == 0 || !bytes.Contains(message, []byte(`"usage"`)) {
+	if usage == nil || len(message) == 0 || !openAIPayloadHasUsage(message) {
 		return
 	}
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(message); ok {
 		if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(message, "")) {
-			if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
-				return
-			}
-			*usage = parsedUsage
+			replaceOpenAITerminalUsage(usage, parsedUsage)
 		} else {
 			mergeOpenAIUsageNonZero(usage, parsedUsage)
 		}

@@ -229,6 +229,8 @@ type OpenAIUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// Immutable request-local component snapshots; never serialized/persisted.
+	hostedSnapshot *openAIHostedUsageSnapshot `json:"-"`
 }
 
 // OpenAIForwardResult represents the result of forwarding
@@ -304,6 +306,8 @@ type OpenAIForwardResult struct {
 	SearchCount int
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
+	// MediaUsage is protocol-derived metadata, including successful outputs only.
+	MediaUsage *MediaUsage `json:"media_usage,omitempty"`
 
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool
@@ -522,8 +526,8 @@ type OpenAIGatewayService struct {
 	openAIModelsCache                   openAIModelsCache
 	// Bounded cache retains the existing sticky TTL and refresh-safe deletion.
 	openaiCompatSessionResponses        sessionMemoryCache
-	openaiCompatAnthropicDigestSessions sessionMemoryCache
 	openaiCompatSessionResponseWrites   atomic.Uint64
+	openaiCompatAnthropicDigestSessions sessionMemoryCache
 	openaiCompatDigestSessionWrites     atomic.Uint64
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，
 	// 记录最近一次向该会话下发 x-codex-turn-state 的铸造账号，供出站守卫
