@@ -917,7 +917,7 @@ const hiddenColumns = reactive<Set<string>>(new Set())
 
 // Default hidden columns (columns hidden by default on first load)
 const DEFAULT_HIDDEN_COLUMNS = [
-  'notes', 'groups', 'subscriptions', 'usage', 'concurrency',
+  'notes', 'groups', 'subscriptions', 'usage',
   'usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity',
   'balance_platform_quota'
 ]
@@ -932,10 +932,16 @@ const HIDDEN_COLUMNS_KEY = 'user-hidden-columns'
 // 并在 VERSION_NEW_HIDDEN_COLUMNS 中登记该版本新增的 key。
 // 这样老用户升级后这些新列会被自动隐藏一次，而不会影响他们对其它老列的偏好。
 const COLUMN_SETTINGS_VERSION_KEY = 'user-column-settings-version'
-const COLUMN_SETTINGS_VERSION = 3
+const COLUMN_SETTINGS_VERSION = 4
 const VERSION_NEW_HIDDEN_COLUMNS: Record<number, string[]> = {
   2: ['usage_anthropic', 'usage_openai', 'usage_gemini', 'usage_antigravity'],
   3: ['balance_platform_quota']
+}
+// 反向迁移：历史上默认隐藏、现在改为默认可见的列。
+// 老用户的 localStorage 里存着「隐藏」记录，不主动删掉他们就永远看不到。
+// 只在该用户尚未升级到对应版本时执行一次，之后用户在列设置里的手动选择仍然生效。
+const VERSION_NEW_VISIBLE_COLUMNS: Record<number, string[]> = {
+  4: ['concurrency']
 }
 
 // Load saved column settings
@@ -953,6 +959,10 @@ const loadSavedColumns = () => {
       if (storedVersion < COLUMN_SETTINGS_VERSION) {
         let mutated = false
         for (let v = storedVersion + 1; v <= COLUMN_SETTINGS_VERSION; v++) {
+          // 改为默认可见的列：从 hiddenColumns 里移除，老用户才会真正看到。
+          for (const key of VERSION_NEW_VISIBLE_COLUMNS[v] ?? []) {
+            if (hiddenColumns.delete(key)) mutated = true
+          }
           for (const key of VERSION_NEW_HIDDEN_COLUMNS[v] ?? []) {
             if (REMOVED_COLUMNS.has(key) || FORCED_VISIBLE_COLUMNS.has(key)) continue
             if (!hiddenColumns.has(key)) {
