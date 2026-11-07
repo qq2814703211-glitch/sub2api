@@ -23,11 +23,31 @@ type channelMonitorV3Repository struct {
 	// v2 提供已经跑通的 usage_logs 分桶聚合。V3 只借用它的查询实现，不借用它的
 	// 配置与门控：调用的入口都显式传入 V3 派生的 scope（见 getV3Matrix）。
 	v2 *channelMonitorV2Repository
+	// groupDaily 是 usage_group_daily 的读侧。nil 表示没有接入（测试或未装配），
+	// 此时缓存率查询完全走原来的 usage_logs 全表扫描路径。
+	groupDaily service.UsageGroupDailyReader
+	// groupDailyErr 记录汇总表探测/读取失败的原因，供诊断与日志使用。
+	// 失败不影响页面：读侧会回落到原查询。
+	groupDailyErr error
 }
 
 // NewChannelMonitorV3Repository 创建 V3 仓库。
+//
+// 分组日汇总读侧在这里直接装配：它与 V3 仓库共用同一个 *sql.DB，没有额外依赖，
+// 所以不需要调用方额外传参。表不存在或未回填时 RollupUsable 返回 false，读侧
+// 自动回落到直接扫 usage_logs。
 func NewChannelMonitorV3Repository(db *sql.DB) service.ChannelMonitorV3Repository {
-	return &channelMonitorV3Repository{db: db, v2: &channelMonitorV2Repository{db: db}}
+	repo := &channelMonitorV3Repository{db: db, v2: &channelMonitorV2Repository{db: db}}
+	if db != nil {
+		repo.groupDaily = newUsageGroupDailyRollupRepositoryWithSQL(db)
+	}
+	return repo
+}
+
+// WithGroupDailyReader 装配分组日汇总读侧。返回自身便于链式调用。
+func (r *channelMonitorV3Repository) WithGroupDailyReader(reader service.UsageGroupDailyReader) *channelMonitorV3Repository {
+	r.groupDaily = reader
+	return r
 }
 
 const channelMonitorV3ConfigColumns = `version, enabled, groups, probe, cache_average_window_days, updated_at, updated_by`
@@ -254,6 +274,12 @@ func (r *channelMonitorV3Repository) ListMonitorableGroups(ctx context.Context) 
 // 这是 ADR 0009 的实现：探针桶的缓存率来自真实流量，而不是探针自己。没有任何
 // 真实 token 的分组不会出现在结果里，调用方据此把该桶的缓存率标为未知。
 // 探针请求本身会被 usageLogProbeExcludeUL 排除，不会污染均值。
+//
+// 性能：直接扫 usage_logs 时，这条查询在生产（1763 万行、全部带 group_id，
+// 索引无法裁剪）实测 19,714ms —— 它扫全库只为算出每分组一个比率。汇总表可用
+// 时改走 usage_group_daily（同日区间 0.117ms，快约 16.8 万倍），今天那段仍由
+// usage_logs 现算，所以不会返回陈旧的日桶。汇总表不可用（未回填/时区漂移/
+// 被关掉）时完全回落到下面的原查询，行为与引入汇总表之前逐字相同。
 func (r *channelMonitorV3Repository) GroupCacheRates(
 	ctx context.Context,
 	groupIDs []int64,
@@ -265,6 +291,19 @@ func (r *channelMonitorV3Repository) GroupCacheRates(
 	}
 	if windowDays <= 0 {
 		windowDays = service.ChannelMonitorV3DefaultCacheAverageWindowDays
+	}
+	if r.groupDaily != nil {
+		usable, usableErr := r.groupDaily.RollupUsable(ctx)
+		if usableErr != nil {
+			// 汇总表探测失败不能阻断监控页面：记下原因后走原路径。
+			r.groupDailyErr = usableErr
+		} else if usable {
+			rates, readErr := r.groupDaily.CacheRates(ctx, groupIDs, windowDays, time.Now())
+			if readErr == nil {
+				return rates, nil
+			}
+			r.groupDailyErr = readErr
+		}
 	}
 	const q = `
 		SELECT ul.group_id,

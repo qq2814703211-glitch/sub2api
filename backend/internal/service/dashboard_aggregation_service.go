@@ -31,6 +31,9 @@ const (
 
 	dashboardAggregationKeyUsageDailyBackfillLeaderLockKey = "dashboard:aggregation:key-usage-daily-backfill:leader"
 	dashboardAggregationKeyUsageDailyBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
+	// 分组日汇总用独立锁：一个维度的同步失败不该拖住另一个。
+	dashboardAggregationGroupDailyBackfillLeaderLockKey = "dashboard:aggregation:group-daily-backfill:leader"
+	dashboardAggregationGroupDailyBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
 )
 
 var (
@@ -126,6 +129,13 @@ func (s *DashboardAggregationService) Start() {
 	s.timingWheel.ScheduleRecurring("dashboard:key-usage-daily", interval, func() {
 		s.runScheduledKeyUsageDailySync()
 	})
+	// 分组日汇总与键日汇总同一套语义、同一个间隔，但各自独立的 leader lock：
+	// 一个维度的同步失败不该拖住另一个。它服务 monitor V3 的「30 天缓存率均值」，
+	// 那条查询在 1763 万行的生产上直接扫全库要 19.7 秒。
+	s.timingWheel.ScheduleRecurring("dashboard:group-usage-daily", interval, func() {
+		s.runScheduledGroupDailySync()
+	})
+	go s.runStartupGroupDailySync()
 	logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业启动 (interval=%v, lookback=%ds)", interval, s.cfg.LookbackSeconds)
 	if !s.cfg.BackfillEnabled {
 		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 回填已禁用，如需补齐保留窗口以外历史数据请手动回填")
@@ -353,6 +363,42 @@ func (s *DashboardAggregationService) runStartupKeyUsageDailySync() {
 	defer release()
 	if err := s.syncKeyUsageDailyRollups(ctx, time.Now().UTC()); err != nil {
 		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 启动键日汇总同步失败: %v", err)
+	}
+}
+
+// runScheduledGroupDailySync 周期性把「昨天」发布进 usage_group_daily。
+//
+// 关掉开关后这里会立刻空转（Sync 读 state 就返回），不需要重启进程；读侧同时
+// 立即回落到直接扫 usage_logs。也就是说「关开关」是秒级生效的降级手段。
+func (s *DashboardAggregationService) runScheduledGroupDailySync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationTimeout)
+	defer cancel()
+	if err := s.syncGroupDailyRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 分组日汇总同步失败: %v", err)
+	}
+}
+
+// syncGroupDailyRollups 把已关闭的自然日发布进 usage_group_daily。
+//
+// 与键日汇总同一套语义：只发布「今天以前」的日，今天由读侧用 usage_logs 现算。
+func (s *DashboardAggregationService) syncGroupDailyRollups(ctx context.Context, now time.Time) error {
+	repo, ok := s.repo.(UsageGroupDailyRollupRepository)
+	if !ok {
+		return nil
+	}
+	return repo.Sync(ctx, now)
+}
+
+func (s *DashboardAggregationService) runStartupGroupDailySync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
+	defer cancel()
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationGroupDailyBackfillLeaderLockKey, s.instanceID, dashboardAggregationGroupDailyBackfillLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+	if err := s.syncGroupDailyRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 启动分组日汇总同步失败: %v", err)
 	}
 }
 
