@@ -66,7 +66,7 @@
       </div>
 
       <template v-else-if="data">
-        <!-- Totals -->
+        <!-- Totals: today headline plus the selected range -->
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
             <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -76,18 +76,18 @@
               class="mt-1 font-mono text-xl font-semibold tabular-nums text-gray-900 dark:text-white"
               data-testid="key-usage-today-cost"
             >
-              {{ todayCost ?? '—' }}
+              {{ todayHasUsage ? formatUsd(data.today.actual_cost) : '—' }}
             </div>
             <p
-              v-if="!todayPoint"
+              v-if="!todayHasUsage"
               class="mt-1 text-xs text-gray-500 dark:text-gray-400"
               data-testid="key-usage-today-empty"
             >
               {{ t('keys.usageDialog.noTodayRecord') }}
             </p>
             <div v-else class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ formatNumber(todayPoint?.requests) }} {{ t('keys.usageDialog.requests') }} ·
-              {{ formatNumber(todayPoint?.total_tokens) }} {{ t('keys.usageDialog.tokens') }}
+              {{ formatNumber(data.today.requests) }} {{ t('keys.usageDialog.requests') }} ·
+              {{ formatNumber(data.today.total_tokens) }} {{ t('keys.usageDialog.tokens') }}
             </div>
           </div>
           <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
@@ -98,11 +98,15 @@
               class="mt-1 font-mono text-xl font-semibold tabular-nums text-gray-900 dark:text-white"
               data-testid="key-usage-range-cost"
             >
-              {{ formatUsd(totals.actual_cost) }}
+              {{ formatUsd(data.range.actual_cost) }}
             </div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {{ formatNumber(totals.requests) }} {{ t('keys.usageDialog.requests') }} ·
-              {{ formatNumber(totals.total_tokens) }} {{ t('keys.usageDialog.tokens') }}
+              {{ formatNumber(data.range.requests) }} {{ t('keys.usageDialog.requests') }} ·
+              {{ formatNumber(data.range.total_tokens) }} {{ t('keys.usageDialog.tokens') }}
+            </div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-testid="key-usage-range-cache">
+              {{ t('keys.usageDialog.cacheRead') }} {{ formatNumber(data.range.cache_read_tokens) }} ·
+              {{ t('keys.usageDialog.cacheWrite') }} {{ formatNumber(data.range.cache_write_tokens) }}
             </div>
           </div>
         </div>
@@ -122,6 +126,12 @@
                   {{ t('keys.usageDialog.tokens') }}
                 </th>
                 <th class="px-3 py-2 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {{ t('keys.usageDialog.cacheRead') }}
+                </th>
+                <th class="px-3 py-2 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {{ t('keys.usageDialog.cacheWrite') }}
+                </th>
+                <th class="px-3 py-2 text-right text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   {{ t('keys.usageDialog.actualCost') }}
                 </th>
               </tr>
@@ -136,6 +146,12 @@
                 </td>
                 <td class="px-3 py-2 text-right font-mono tabular-nums text-gray-700 dark:text-gray-300">
                   {{ formatNumber(row.total_tokens) }}
+                </td>
+                <td class="px-3 py-2 text-right font-mono tabular-nums text-gray-500 dark:text-gray-400">
+                  {{ formatNumber(row.cache_read_tokens) }}
+                </td>
+                <td class="px-3 py-2 text-right font-mono tabular-nums text-gray-500 dark:text-gray-400">
+                  {{ formatNumber(row.cache_write_tokens) }}
                 </td>
                 <td class="px-3 py-2 text-right font-mono font-medium tabular-nums text-gray-900 dark:text-white">
                   {{ formatUsd(row.actual_cost) }}
@@ -168,7 +184,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { usageAPI } from '@/api'
-import type { ApiKeyDailyUsagePoint, ApiKeyDailyUsageResponse } from '@/api/usage'
+import type { ApiKeyDailyUsagePoint, ApiKeyUsageResponse } from '@/api/usage'
 import type { ApiKey } from '@/types'
 import { maskApiKey } from '@/utils/maskApiKey'
 
@@ -189,7 +205,7 @@ const presets = computed<{ key: PresetKey; label: string }[]>(() => [
 ])
 
 const preset = ref<PresetKey>('today')
-const data = ref<ApiKeyDailyUsageResponse | null>(null)
+const data = ref<ApiKeyUsageResponse | null>(null)
 const loading = ref(false)
 const error = ref(false)
 let requestVersion = 0
@@ -202,29 +218,18 @@ const dailyRows = computed<ApiKeyDailyUsagePoint[]>(() =>
   [...(data.value?.items ?? [])].sort((a, b) => b.date.localeCompare(a.date))
 )
 
-const totals = computed(() =>
-  (data.value?.items ?? []).reduce(
-    (sum, row) => ({
-      requests: sum.requests + (row.requests ?? 0),
-      total_tokens: sum.total_tokens + (row.total_tokens ?? 0),
-      actual_cost: sum.actual_cost + (row.actual_cost ?? 0)
-    }),
-    { requests: 0, total_tokens: 0, actual_cost: 0 }
-  )
-)
-
-// The API returns end_date as the last day of the requested window, i.e. today
-// in the requested timezone. Using it keeps the "today" card aligned with the
-// range instead of the browser's possibly different local date.
-const todayPoint = computed(
-  () => (data.value?.items ?? []).find((row) => row.date === data.value?.end_date) ?? null
-)
-
-// No row for today is not the same as a real zero charge. Only a present row with
-// an actual_cost of 0 may render "$0.0000"; a missing row renders a dash instead.
-const todayCost = computed(() =>
-  todayPoint.value?.actual_cost == null ? null : formatUsd(todayPoint.value.actual_cost)
-)
+// The summary is computed server-side from the indexed api_key_id aggregate, so
+// the dialog no longer re-adds the trend rows in the browser. That also means a
+// day the trend skipped (no log rows) still counts in the range total.
+//
+// "Today" is its own one-day aggregate: the range preset "today" spans exactly
+// one day, but the 7d/30d presets also need a today headline. A zero-cost day
+// with real requests must not be confused with a day that has no row at all.
+const todayHasUsage = computed(() => {
+  const today = data.value?.today
+  if (!today) return false
+  return today.requests > 0 || today.total_tokens > 0 || today.actual_cost > 0
+})
 
 const rangeText = computed(() =>
   t('keys.usageDialog.range', {
@@ -263,7 +268,7 @@ async function loadUsage() {
   error.value = false
   data.value = null
   try {
-    const result = await usageAPI.getMyApiKeyDailyUsage(
+    const result = await usageAPI.getMyApiKeyUsage(
       props.apiKey.id,
       PRESET_DAYS[preset.value],
       { timezone: timezone.value, signal: request.signal }

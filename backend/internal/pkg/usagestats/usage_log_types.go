@@ -307,6 +307,22 @@ type UsageStats struct {
 	EndpointPaths            []EndpointStat `json:"endpoint_paths,omitempty"`
 }
 
+// APIKeyUsageSummary is the sanitized aggregate counter block for one API key
+// over a bounded [start, end) window. It is what the key-usage dialog shows
+// above the daily trend: totals only, no per-model or per-endpoint breakdown,
+// so it stays a single indexed aggregate instead of a table scan.
+type APIKeyUsageSummary struct {
+	Date             string  `json:"date,omitempty"`
+	Requests         int64   `json:"requests"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	Cost             float64 `json:"cost"`
+	ActualCost       float64 `json:"actual_cost"`
+}
+
 // PlatformUsage 表示某用户/某 API key 在单个"有效平台"维度的用量明细。
 // Platform 取值与 ops 路径口径一致：优先 groups.platform，否则 accounts.platform。
 type PlatformUsage struct {

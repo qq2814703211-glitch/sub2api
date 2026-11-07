@@ -428,6 +428,34 @@ func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID
 	return points, nil
 }
 
+// GetAPIKeyUsageSummary returns the sanitized aggregate counters for one API
+// key inside [startTime, endTime).
+//
+// Callers must verify the API key belongs to the requesting user first; the
+// repository query is keyed by api_key_id only (idx_usage_logs_api_key_created_at)
+// and deliberately avoids the wider endpoint-breakdown aggregate.
+//
+// This is the fast path behind the key-usage dialog's totals. The daily trend
+// endpoint (GetAPIKeyDailyUsage) has to group by TO_CHAR(created_at), which the
+// pre-aggregated rollup cannot serve for a single key — so the summary was split
+// out instead of widening that query.
+func (s *UsageService) GetAPIKeyUsageSummary(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.APIKeyUsageSummary, error) {
+	stats, err := s.usageRepo.GetAPIKeyStatsAggregated(ctx, apiKeyID, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("get api key usage summary: %w", err)
+	}
+	return &usagestats.APIKeyUsageSummary{
+		Requests:         stats.TotalRequests,
+		InputTokens:      stats.TotalInputTokens,
+		OutputTokens:     stats.TotalOutputTokens,
+		CacheReadTokens:  stats.TotalCacheReadTokens,
+		CacheWriteTokens: stats.TotalCacheCreationTokens,
+		TotalTokens:      stats.TotalTokens,
+		Cost:             stats.TotalCost,
+		ActualCost:       stats.TotalActualCost,
+	}, nil
+}
+
 // GetBatchAPIKeyUsageStats returns today/total actual_cost for given api keys.
 func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error) {
 	if s.keyUsage != nil {

@@ -722,3 +722,79 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 		"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
 	})
 }
+
+// GetMyAPIKeyUsage handles the current user's per-key usage panel: the today
+// totals, the selected-range totals and the daily trend in one call.
+// GET /api/v1/user/api-keys/:id/usage?days=30&timezone=Asia/Shanghai
+//
+// "today" is a separate one-day aggregate rather than a slice of the range: a
+// 30-day range ends tomorrow, so today cannot be derived from it. Both summaries
+// go through GetAPIKeyStatsAggregated, which is served by
+// idx_usage_logs_api_key_created_at, unlike the daily trend's TO_CHAR grouping.
+func (h *UsageHandler) GetMyAPIKeyUsage(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	apiKeyID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid API key ID")
+		return
+	}
+
+	days, ok := parseAPIKeyDailyUsageDays(c.DefaultQuery("days", ""))
+	if !ok {
+		response.BadRequest(c, "Invalid days, allowed range is 1-90")
+		return
+	}
+
+	if h.apiKeyService == nil {
+		response.InternalError(c, "API key service is not configured")
+		return
+	}
+
+	apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), apiKeyID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if apiKey.UserID != subject.UserID {
+		response.Forbidden(c, "Not authorized to access this API key's usage")
+		return
+	}
+
+	userTZ := c.Query("timezone")
+	startTime, endTime := apiKeyDailyUsageRange(days, userTZ)
+	todayStart := timezone.StartOfDayInUserLocation(timezone.NowInUserLocation(userTZ), userTZ)
+
+	rangeSummary, err := h.usageService.GetAPIKeyUsageSummary(c.Request.Context(), apiKeyID, startTime, endTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	todaySummary, err := h.usageService.GetAPIKeyUsageSummary(c.Request.Context(), apiKeyID, todayStart, todayStart.AddDate(0, 0, 1))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	todaySummary.Date = todayStart.Format("2006-01-02")
+
+	items, err := h.usageService.GetAPIKeyDailyUsage(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"api_key_id": apiKeyID,
+		"days":       days,
+		"start_date": startTime.Format("2006-01-02"),
+		"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
+		"timezone":   userTZ,
+		"today":      todaySummary,
+		"range":      rangeSummary,
+		"items":      items,
+	})
+}

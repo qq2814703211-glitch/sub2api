@@ -102,6 +102,33 @@ export interface ApiKeyDailyUsageResponse {
   end_date: string
 }
 
+/**
+ * Aggregate counter block for one API key. Both the "today" headline and the
+ * selected-range total use this shape.
+ */
+export interface ApiKeyUsageSummary {
+  date?: string
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+  actual_cost: number
+}
+
+export interface ApiKeyUsageResponse {
+  api_key_id: number
+  days: number
+  start_date: string
+  end_date: string
+  timezone: string
+  today: ApiKeyUsageSummary
+  range: ApiKeyUsageSummary
+  items: ApiKeyDailyUsagePoint[]
+}
+
 export interface UsageDashboardSnapshotV2Params extends TrendParams {
   include_trend?: boolean
   include_model_stats?: boolean
@@ -317,6 +344,29 @@ export async function getMyApiKeyDailyUsage(
   return data
 }
 
+/**
+ * Get the full per-key usage panel in one call: today totals, range totals and
+ * the daily trend.
+ *
+ * Prefer this over calling getMyApiKeyDailyUsage twice. The totals come from an
+ * indexed api_key_id aggregate, while the daily trend keeps its own grouping
+ * query; the panel needs both, and this endpoint issues them together.
+ */
+export async function getMyApiKeyUsage(
+  apiKeyId: number,
+  days: number = 30,
+  options?: { timezone?: string; signal?: AbortSignal }
+): Promise<ApiKeyUsageResponse> {
+  const { data } = await apiClient.get<ApiKeyUsageResponse>(
+    `/user/api-keys/${apiKeyId}/usage`,
+    {
+      params: { days, ...(options?.timezone ? { timezone: options.timezone } : {}) },
+      signal: options?.signal
+    }
+  )
+  return data
+}
+
 export async function getDashboardSnapshotV2(
   params?: UsageDashboardSnapshotV2Params
 ): Promise<UsageDashboardSnapshotV2Response> {
@@ -387,6 +437,7 @@ export const usageAPI = {
   getDashboardTrend,
   getDashboardModels,
   getMyApiKeyDailyUsage,
+  getMyApiKeyUsage,
   getDashboardSnapshotV2,
   getDashboardApiKeysUsage,
   // Error requests
