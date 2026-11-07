@@ -45,7 +45,6 @@ vi.mock('@/api/admin', () => ({
       getBatchUsage,
       getById,
       duplicate: duplicateAccount,
-      getUpstreamBillingProbeSettings: () => Promise.resolve({ enabled: true, interval_minutes: 30 }),
       createSparkShadow,
       delete: vi.fn(),
       batchClearError: vi.fn(),
