@@ -209,7 +209,7 @@ func (l *openAIWSConnLease) WriteJSONWithContextTimeout(ctx context.Context, val
 	if err != nil {
 		return err
 	}
-	err = captureWSLeaseWrite(ctx, l.accountID, l.HandshakeHeaders(), value, func() error { return conn.writeJSONWithTimeout(ctx, value, timeout) })
+	err = conn.writeJSONWithTimeout(ctx, value, timeout)
 	if col := requesttiming.From(ctx); col != nil {
 		if raw, ok := value.(json.RawMessage); ok {
 			col.WSFrame(true, len(raw), false, err)
@@ -223,7 +223,7 @@ func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) err
 	if err != nil {
 		return err
 	}
-	return captureWSLeaseWrite(ctx, l.accountID, l.HandshakeHeaders(), value, func() error { return conn.writeJSON(value, ctx) })
+	return conn.writeJSON(value, ctx)
 }
 
 func (l *openAIWSConnLease) ReadMessage(timeout time.Duration) ([]byte, error) {
@@ -239,7 +239,7 @@ func (l *openAIWSConnLease) ReadMessageContext(ctx context.Context) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return captureWSLeaseRead(ctx, func() ([]byte, error) { return conn.readMessage(ctx) })
+	return conn.readMessage(ctx)
 }
 
 func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, timeout time.Duration) ([]byte, error) {
@@ -247,7 +247,7 @@ func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, t
 	if err != nil {
 		return nil, err
 	}
-	payload, err := captureWSLeaseRead(ctx, func() ([]byte, error) { return conn.readMessageWithContextTimeout(ctx, timeout) })
+	payload, err := conn.readMessageWithContextTimeout(ctx, timeout)
 	if col := requesttiming.From(ctx); col != nil {
 		col.WSFrame(false, len(payload), openAIWSPassthroughStartsSemanticOutput(payload), err)
 	}
@@ -2138,10 +2138,8 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
-	finishCapture := captureOpenAIWSHandshake(ctx, req.Account.ID, req.WSURL)
 	dialCtx, finishDiagnosticHandshake := requesttiming.StartHandshake(ctx, req.Account.ID)
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(dialCtx, req.WSURL, headers, req.ProxyURL)
-	finishCapture(status, handshakeHeaders, err)
 	if err == nil {
 		finishDiagnosticHandshake(http.StatusSwitchingProtocols, nil)
 	} else {
