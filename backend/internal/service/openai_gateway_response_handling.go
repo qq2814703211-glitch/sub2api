@@ -1255,7 +1255,7 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 	// Usage is absent from nearly every delta event. Avoid full JSON validation
 	// and four gjson path scans on that hot path while retaining progressive
 	// usage from compatible upstreams on any event type.
-	if !bytes.Contains(data, []byte(`"usage"`)) {
+	if !openAIPayloadHasUsage(data) {
 		return
 	}
 	parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data)
@@ -1263,21 +1263,18 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 		return
 	}
 	if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(data, eventType)) {
-		if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
-			return
-		}
-		*usage = parsedUsage
+		replaceOpenAITerminalUsage(usage, parsedUsage)
 		return
 	}
 	mergeOpenAIUsageNonZero(usage, parsedUsage)
 }
 
 // Compatible Responses upstreams may report usage before the terminal event.
-// Retain those non-zero fields as a fallback. A terminal usage with any billed
-// tokens is authoritative as a whole; an all-zero terminal does not erase a
-// non-zero progressive observation from the same turn.
+// Retain those non-zero fields as a fallback. Base-model terminal usage with
+// billed tokens replaces its own fallback; hosted-tool aggregates are independent
+// snapshots. Omitted components do not erase a prior observation from this turn.
 func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
-	if dst == nil {
+	if dst == nil || mergeOpenAIHostedUsage(dst, src, false) {
 		return
 	}
 	if src.InputTokens > 0 {
@@ -1377,6 +1374,11 @@ func logOpenAISuccessMissingUsage(ctx context.Context, c *gin.Context, account *
 	).Warn("openai_usage.success_missing_usage")
 }
 
+// Both base and hosted-tool usage can be reported independently.
+func openAIPayloadHasUsage(body []byte) bool {
+	return bytes.Contains(body, []byte(`"usage"`)) || bytes.Contains(body, []byte(`"tool_usage"`))
+}
+
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return OpenAIUsage{}, false
@@ -1395,8 +1397,16 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 		{usagePath: "data.response.usage", imageUsagePath: "data.response.tool_usage.image_gen"},
 	}
 	for _, candidate := range candidates {
-		if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, candidate.usagePath)); ok {
-			mergeHostedImageGenToolUsage(gjson.GetBytes(body, candidate.imageUsagePath), &usage)
+		usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, candidate.usagePath))
+		imageGen := gjson.GetBytes(body, candidate.imageUsagePath)
+		if ok || imageGen.IsObject() {
+			if imageGen.IsObject() {
+				var image OpenAIUsage
+				mergeHostedImageGenToolUsage(imageGen, &image)
+				snapshot := &openAIHostedUsageSnapshot{base: usage, image: image, hasBase: ok, hasImage: true}
+				usage = sumOpenAIUsageComponents(usage, image)
+				usage.hostedSnapshot = snapshot
+			}
 			return usage, true
 		}
 	}
@@ -1430,20 +1440,50 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 	return true
 }
 
+// tool_usage.image_gen is independent of base model usage and already sums
+// all image calls (OpenAI Response.ToolUsage). Merge one response snapshot,
+// never individual output items or SSE deltas on top of that aggregate.
 func mergeHostedImageGenToolUsage(imageGen gjson.Result, usage *OpenAIUsage) {
-	if !imageGen.Exists() || !imageGen.IsObject() {
+	if usage == nil || !imageGen.IsObject() {
 		return
 	}
-	if usage.ImageOutputTokens == 0 {
-		if v := imageGen.Get("output_tokens_details.image_tokens").Int(); v > 0 {
-			usage.ImageOutputTokens = int(v)
-		}
+	count := func(path string) int {
+		v, _ := boundedJSONNonNegativeInt(imageGen.Get(path))
+		return v
 	}
-	if usage.ImageInputTokens == 0 {
-		if v := imageGen.Get("input_tokens_details.image_tokens").Int(); v > 0 {
-			usage.ImageInputTokens = int(v)
-		}
+	input := count("input_tokens")
+	output := count("output_tokens")
+	imageInput := min(count("input_tokens_details.image_tokens"), input)
+	imageOutput := min(count("output_tokens_details.image_tokens"), output)
+	// Missing output details do not prove every tool output token is an image.
+	// Keep the total; only explicitly classified tokens use the image rate.
+	cache := imageGen.Get("cached_tokens")
+	details := imageGen.Get("cached_tokens_details")
+	imageCache, textCache := 0, 0
+	if details.IsObject() {
+		imageCache = count("cached_tokens_details.cached_image_tokens")
+		textCache = count("cached_tokens_details.cached_text_tokens")
+	} else if !cache.Exists() {
+		// Older compatible image usage uses the Images API nested spelling.
+		details = imageGen.Get("input_tokens_details.cached_tokens_details")
+		imageCache = count("input_tokens_details.cached_tokens_details.image_tokens")
+		textCache = count("input_tokens_details.cached_tokens_details.text_tokens")
 	}
+	if !cache.Exists() && !imageGen.Get("cached_tokens_details").IsObject() {
+		cache = imageGen.Get("input_tokens_details.cached_tokens")
+	}
+	cached, _ := boundedJSONNonNegativeInt(cache)
+	if !cache.Exists() && details.IsObject() {
+		cached = min(imageCache, input)
+		cached += min(textCache, input-cached)
+	}
+	cached = min(cached, input)
+	imageCache = min(imageCache, imageInput, cached)
+	*usage = sumOpenAIUsageComponents(*usage, OpenAIUsage{
+		InputTokens: input, OutputTokens: output,
+		ImageInputTokens: imageInput, ImageOutputTokens: imageOutput,
+		CacheReadInputTokens: cached, ImageCacheReadTokens: imageCache,
+	})
 }
 
 func extractOpenAIResponseIDFromJSONBytes(body []byte) string {
@@ -1555,11 +1595,11 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		return OpenAIUsage{}, false
 	}
 	inputTokens := value.Get("input_tokens").Int()
-	if inputTokens == 0 {
+	if !value.Get("input_tokens").Exists() {
 		inputTokens = value.Get("prompt_tokens").Int()
 	}
 	outputTokens := value.Get("output_tokens").Int()
-	if outputTokens == 0 {
+	if !value.Get("output_tokens").Exists() {
 		outputTokens = value.Get("completion_tokens").Int()
 	}
 	// xAI reports visible output separately from reasoning_tokens; OpenAI
@@ -1579,19 +1619,26 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	// 此时只按 cached_tokens 计缓存读，不臆造写入分档（ADR 0011）。
 	cacheWrite30mTokens, cacheWrite12hTokens := openAICacheWriteTTLTokensFromUsage(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
-	if imageOutputTokens == 0 {
+	if !value.Get("output_tokens_details.image_tokens").Exists() {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
 	}
 	// 图片输入 token（如 gpt-image-2 的 /v1/images/edits 带图请求），
 	// 上游在 input_tokens_details.image_tokens 单独回传，用于图/文输入分价计费。
 	// 普通文本请求该字段为 0，走原路径行为不变。
-	imageInputTokens := firstPositiveGJSONInt(
-		value.Get("input_tokens_details.image_tokens"),
-		value.Get("prompt_tokens_details.image_tokens"),
-	)
+	imageInputTokens := int(value.Get("input_tokens_details.image_tokens").Int())
+	if !value.Get("input_tokens_details.image_tokens").Exists() {
+		imageInputTokens = int(value.Get("prompt_tokens_details.image_tokens").Int())
+	}
+	cachedDetails := value.Get("input_tokens_details.cached_tokens_details")
+	if !cachedDetails.Exists() {
+		cachedDetails = value.Get("prompt_tokens_details.cached_tokens_details")
+	}
+	imageCached, _ := boundedJSONNonNegativeInt(cachedDetails.Get("image_tokens"))
+	imageCached = min(imageCached, max(imageInputTokens, 0), max(cacheReadTokens, 0))
 	return OpenAIUsage{
 		InputTokens:              int(inputTokens),
 		ImageInputTokens:         imageInputTokens,
+		ImageCacheReadTokens:     imageCached,
 		OutputTokens:             int(outputTokens),
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cacheReadTokens,
@@ -1783,7 +1830,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
-			*usage = parsedUsage
+			replaceOpenAITerminalUsage(usage, parsedUsage)
 		}
 		// When the terminal event has an empty output array, reconstruct
 		// output from accumulated delta events so the client gets full content.

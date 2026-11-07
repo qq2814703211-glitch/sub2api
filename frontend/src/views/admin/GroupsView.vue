@@ -4540,11 +4540,14 @@ import {
   videoModelPriceFamilyRows,
 } from "./groupsVideoModelPricing";
 
+import { mediaPricingToForm, formMediaPricingToAPI, validateMediaPricing } from "@/utils/mediaPricing";
+
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
 
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
+  media_pricing: null,
   billing_mode: "token",
   input_price: null,
   output_price: null,
@@ -4568,6 +4571,7 @@ const groupPricingFromAPI = (
   (pricing || []).map((entry) => ({
     models: entry.models || [],
     billing_mode: entry.billing_mode || "token",
+    media_pricing: mediaPricingToForm(entry.media_pricing),
     input_price: perTokenToMTok(entry.input_price),
     output_price: perTokenToMTok(entry.output_price),
     cache_write_price: perTokenToMTok(entry.cache_write_price),
@@ -4593,6 +4597,7 @@ const groupPricingToAPI = (
       platform,
       models: entry.models,
       billing_mode: entry.billing_mode,
+      media_pricing: formMediaPricingToAPI(entry.media_pricing),
       input_price: mTokToPerToken(entry.input_price),
       output_price: mTokToPerToken(entry.output_price),
       cache_write_price: mTokToPerToken(entry.cache_write_price),
@@ -6087,6 +6092,17 @@ const validateProfitControlForm = (form: ProfitControlFormState): boolean => {
   return true;
 };
 
+const validateGroupMediaPricing = (pricing: PricingFormEntry[]): boolean => {
+  for (const entry of pricing) {
+    const error = validateMediaPricing(entry.media_pricing, t);
+    if (error) {
+      appStore.showError(`${entry.models.join(", ") || t("admin.channels.form.unnamed")}: ${error}`);
+      return false;
+    }
+  }
+  return true;
+};
+
 const validateGroupReasoningMultipliers = (pricing: PricingFormEntry[]): boolean => {
   for (const entry of pricing) {
     const error = validateReasoningEffortMultipliers(entry.reasoning_effort_multipliers, t);
@@ -6098,14 +6114,13 @@ const validateGroupReasoningMultipliers = (pricing: PricingFormEntry[]): boolean
   return true;
 };
 
-// 分组价卡同样能带分时倍率；后端 TIME_PRICING_UNSUPPORTED_MODE 只允许 token 模式，
-// 这里先在界面上拦下，否则按次计费的卡填了时段会在保存时直接 400。
+// 与后端一致：token 卡及启用媒体规则的价卡都允许分时倍率。
 const validateGroupTimePricing = (pricing: PricingFormEntry[]): boolean => {
   for (const entry of pricing) {
     if (!entry.time_pricing?.periods?.length) continue;
     const modelLabel =
       entry.models.join(", ") || t("admin.channels.form.unnamed");
-    if (entry.billing_mode && entry.billing_mode !== "token") {
+    if (entry.billing_mode && entry.billing_mode !== "token" && !formMediaPricingToAPI(entry.media_pricing)) {
       appStore.showError(
         t("admin.groups.modelPricing.timePricingTokenOnly", {
           models: modelLabel,
@@ -6137,6 +6152,7 @@ const handleCreateGroup = async () => {
   if (!validateProfitControlForm(createForm)) {
     return;
   }
+  if (!validateGroupMediaPricing(createForm.model_pricing)) return;
   if (!validateGroupReasoningMultipliers(createForm.model_pricing)) return;
   if (!validateGroupTimePricing(createForm.model_pricing)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
@@ -6480,6 +6496,7 @@ const handleUpdateGroup = async () => {
   if (!validateProfitControlForm(editForm)) {
     return;
   }
+  if (!validateGroupMediaPricing(editForm.model_pricing)) return;
   if (!validateGroupReasoningMultipliers(editForm.model_pricing)) return;
   if (!validateGroupTimePricing(editForm.model_pricing)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。

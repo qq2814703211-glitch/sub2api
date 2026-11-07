@@ -398,9 +398,14 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		m.Pricing = groupPricing
 		// 分组模型级固定价就是实收价，不能再被分组图片兜底档位覆盖。
 		// 否则模型广场会显示 image_price_1k/2k/4k，而实际按 model_pricing 扣费。
-		if groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest {
+		if groupPricing.MediaPricing != nil || groupPricing.BillingMode == BillingModeImage || groupPricing.BillingMode == BillingModePerRequest {
+			m.TimePricing = resolvedTimePricingSchedule(&ResolvedPricing{Source: PricingSourceGroup, channelPricing: groupPricing})
 			return
 		}
+	}
+	if m.Pricing != nil && m.Pricing.MediaPricing != nil {
+		m.TimePricing = resolvedTimePricingSchedule(&ResolvedPricing{Source: PricingSourceChannel, channelPricing: m.Pricing})
+		return
 	}
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
@@ -428,6 +433,7 @@ func plazaPricingFromSchedule(raw *ChannelModelPricing, sched *ContextPricingSch
 		out.ImageInputPrice = raw.ImageInputPrice
 		out.ImageOutputPrice = raw.ImageOutputPrice
 		out.PerRequestPrice = raw.PerRequestPrice
+		out.MediaPricing = raw.MediaPricing.Clone()
 		out.ReasoningEffortMultipliers = reasoningEffortMultipliersFromPricing(raw)
 	}
 	first := sched.Tiers[0]
@@ -465,7 +471,7 @@ func plazaIntervalsFromTiers(tiers []ContextPricingTier) []PricingInterval {
 // 分组未配任何图片价、或定价非图片模式时原样返回。返回克隆，不修改入参
 // （渠道定价指针指向缓存共享数据）。
 func plazaImageDisplayPricing(p *ChannelModelPricing, g *Group) *ChannelModelPricing {
-	if p == nil || g == nil || p.BillingMode != BillingModeImage {
+	if p == nil || g == nil || p.MediaPricing != nil || p.BillingMode != BillingModeImage {
 		return p
 	}
 	if g.ImagePrice1K == nil && g.ImagePrice2K == nil && g.ImagePrice4K == nil {

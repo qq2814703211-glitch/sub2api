@@ -321,7 +321,7 @@ func openAIImageOutputMIMEType(outputFormat string) string {
 		return "image/webp"
 	case "gif":
 		return "image/gif"
-	case "svg":
+	case "svg", "svg+xml":
 		return "image/svg+xml"
 	default:
 		return "image/png"
@@ -363,7 +363,7 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}
-	if parsed.MarkupImageURL != "" || parsed.MarkupUpload != nil || parsed.SVG != nil || parsed.FrameCount != nil || parsed.FrameDurationMS != nil {
+	if parsed.MarkupImageURL != "" || parsed.MarkupUpload != nil || parsed.SVG != nil || parsed.FrameCount != nil || parsed.FrameDurationMs != nil {
 		return nil, fmt.Errorf("markup, SVG author options and GIF frame controls require the native Images endpoint")
 	}
 	prompt := strings.TrimSpace(parsed.Prompt)
@@ -1192,8 +1192,13 @@ func (s *OpenAIGatewayService) parseOpenAIImagesSSEUsageBytes(data []byte, usage
 	if usage == nil || !gjson.ValidBytes(data) || gjson.GetBytes(data, "type").String() != "response.completed" {
 		return
 	}
-	if toolUsage, ok := openAIImagesToolUsageFromGJSON(gjson.GetBytes(data, "response.tool_usage.image_gen")); ok {
+	imageGen := gjson.GetBytes(data, "response.tool_usage.image_gen")
+	if toolUsage, ok := openAIImagesToolUsageFromGJSON(imageGen); ok {
 		*usage = toolUsage
+	} else if imageGen.IsObject() && usage.hostedSnapshot != nil {
+		// Dedicated Images retains its atomic fallback contract: malformed or
+		// incomplete tool records must not partially change the base fallback.
+		*usage = usage.hostedSnapshot.base
 	}
 }
 
@@ -1922,7 +1927,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
 		respBody = s.redactAgentIdentitySensitiveBody(upstreamCtx, account, respBody)
-		if direct && !requiresCodexDirectImages(upstreamModel) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
+		if direct && !isGPTImage26Model(upstreamModel) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
 			return s.forwardOpenAIImagesOAuth(withOpenAIImagesForceResponses(ctx), c, account, parsed, channelMappedModel)
 		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {

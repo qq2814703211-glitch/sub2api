@@ -41,8 +41,11 @@ var DefaultModels = []Model{
 	{ID: "gpt-image-2", Object: "model", Created: 1738368000, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2"},
 	{ID: "gpt-image-2.5-flare", Object: "model", Created: 1788825600, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.5 Flare"},
 	{ID: "gpt-image-2.5-sunburst", Object: "model", Created: 1788825600, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.5 Sunburst"},
-	{ID: "gpt-image-2.6-flare", Object: "model", Created: 1793750400, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.6 Flare"},
-	{ID: "gpt-image-2.6-sunburst", Object: "model", Created: 1793750400, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.6 Sunburst"},
+	// Created records local catalog addition, not an asserted upstream release date.
+	// The bare family ID is retained for administrator-defined model mappings.
+	{ID: "gpt-image-2.6", Object: "model", Created: 1793836800, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.6 (custom alias)"},
+	{ID: "gpt-image-2.6-flare", Object: "model", Created: 1793836800, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.6 Flare"},
+	{ID: "gpt-image-2.6-sunburst", Object: "model", Created: 1793836800, OwnedBy: "openai", Type: "model", DisplayName: "GPT Image 2.6 Sunburst"},
 }
 
 // DefaultModelIDs returns the default model ID list

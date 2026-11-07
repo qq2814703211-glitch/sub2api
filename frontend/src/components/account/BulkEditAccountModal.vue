@@ -1772,6 +1772,7 @@ const openAIEndpointCapabilityOptions = computed<
 >(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
   { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'video_generations', label: t('admin.accounts.openai.capabilityVideoGenerations') },
   { value: 'seedance', label: 'Seedance (Ark)' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
@@ -1782,7 +1783,7 @@ const openAIResponsesModeApplicable = computed(
 )
 
 const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'video_generations', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
   return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
 }
@@ -1987,7 +1988,9 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (applyOpenAIEndpointCapabilities) {
     credentials.openai_capabilities =
-      openAIEndpointCapabilities.value.length === 2 && !openAIEndpointCapabilities.value.includes('seedance')
+      openAIEndpointCapabilities.value.length === 2 &&
+      openAIEndpointCapabilities.value.includes('chat_completions') &&
+      openAIEndpointCapabilities.value.includes('embeddings')
         ? null
         : [...openAIEndpointCapabilities.value]
     credentialsChanged = true

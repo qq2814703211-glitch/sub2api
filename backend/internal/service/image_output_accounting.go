@@ -9,18 +9,22 @@ import (
 )
 
 type openAIImageOutputCounter struct {
-	seen         map[string]struct{}
-	seenSizes    map[string]string
-	seenOrder    []string
-	dataSizes    []string
-	count        int
-	maxDataCount int
+	seen           map[string]struct{}
+	seenSizes      map[string]string
+	seenOrder      []string
+	dataSizes      []string
+	seenMedia      map[string]MediaUsage
+	dataMedia      []MediaUsage
+	count          int
+	maxDataCount   int
+	referenceUsage *MediaUsage
 }
 
 func newOpenAIImageOutputCounter() *openAIImageOutputCounter {
 	return &openAIImageOutputCounter{
 		seen:      make(map[string]struct{}),
 		seenSizes: make(map[string]string),
+		seenMedia: make(map[string]MediaUsage),
 	}
 }
 
@@ -57,7 +61,11 @@ func (c *openAIImageOutputCounter) AddJSONResponse(body []byte) {
 	if c == nil || len(body) == 0 || !gjson.ValidBytes(body) {
 		return
 	}
+	if mediaResponseHasError(gjson.ParseBytes(body)) {
+		return
+	}
 	c.addDataArray(gjson.GetBytes(body, "data"))
+	c.referenceUsage = MergeMediaUsage(c.referenceUsage, extractMediaReferenceResponse(gjson.ParseBytes(body)))
 	c.addOutputArray(gjson.GetBytes(body, "output"))
 	c.addOutputArray(gjson.GetBytes(body, "response.output"))
 }
@@ -67,9 +75,17 @@ func (c *openAIImageOutputCounter) AddSSEData(data []byte) {
 		return
 	}
 	root := gjson.ParseBytes(data)
+	if mediaResponseHasError(root) {
+		return
+	}
 	c.addDataArray(root.Get("data"))
+	c.referenceUsage = MergeMediaUsage(c.referenceUsage, extractMediaReferenceResponse(root))
 	eventType := strings.TrimSpace(root.Get("type").String())
 	switch eventType {
+	case "image_generation.partial_succeeded":
+		// Ark emits one final output per image_index; partial_failed and
+		// OpenAI partial_image previews are not successful outputs.
+		c.addImageOutputItem(root)
 	case "response.output_item.done":
 		c.addImageOutputItem(root.Get("item"))
 	case "response.completed", "response.done":
@@ -101,8 +117,9 @@ func (c *openAIImageOutputCounter) addDataArray(data gjson.Result) {
 	items := data.Array()
 	imageCount := 0
 	sizes := make([]string, 0, len(items))
+	media := make([]MediaUsage, 0, len(items))
 	for _, item := range items {
-		if !item.IsObject() {
+		if !item.IsObject() || mediaResponseHasError(item) {
 			continue
 		}
 		hasImageOutput := strings.TrimSpace(item.Get("url").String()) != "" ||
@@ -111,12 +128,14 @@ func (c *openAIImageOutputCounter) addDataArray(data gjson.Result) {
 			continue
 		}
 		imageCount++
+		media = append(media, imageOutputMediaUsage(item))
 		if size := strings.TrimSpace(item.Get("size").String()); size != "" {
 			sizes = append(sizes, size)
 		}
 	}
-	if imageCount > c.maxDataCount {
+	if imageCount >= c.maxDataCount {
 		c.maxDataCount = imageCount
+		c.dataMedia = media
 	}
 	if len(sizes) > 0 {
 		c.dataSizes = sizes
@@ -134,11 +153,14 @@ func (c *openAIImageOutputCounter) addOutputArray(output gjson.Result) {
 }
 
 func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
-	if !item.Exists() || !item.IsObject() {
+	if !item.Exists() || !item.IsObject() || mediaResponseHasError(item) {
+		return
+	}
+	if status := item.Get("status").String(); status != "" && status != "completed" {
 		return
 	}
 	itemType := strings.TrimSpace(item.Get("type").String())
-	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
+	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" && itemType != "image_generation.partial_succeeded" {
 		return
 	}
 	if strings.Contains(strings.ToLower(item.Raw), "partial_image") {
@@ -155,6 +177,9 @@ func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		return
 	}
 	key := strings.TrimSpace(item.Get("id").String())
+	if index := item.Get("image_index"); itemType == "image_generation.partial_succeeded" && index.Type == gjson.Number {
+		key = "ark-image:" + index.Raw
+	}
 	if key == "" {
 		key = strings.TrimSpace(item.Get("call_id").String())
 	}
@@ -165,13 +190,17 @@ func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		return
 	}
 	size := strings.TrimSpace(item.Get("size").String())
+	media := imageOutputMediaUsage(item)
 	if _, exists := c.seen[key]; exists {
+		previous := c.seenMedia[key]
+		c.seenMedia[key] = *MergeMediaUsage(&previous, &media)
 		if size != "" && strings.TrimSpace(c.seenSizes[key]) == "" {
 			c.seenSizes[key] = size
 		}
 		return
 	}
 	c.seen[key] = struct{}{}
+	c.seenMedia[key] = media
 	c.seenOrder = append(c.seenOrder, key)
 	if size != "" {
 		c.seenSizes[key] = size
