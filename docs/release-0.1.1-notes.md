@@ -62,3 +62,23 @@ keys 页与 monitor V3 的慢查询都是「用量表全表扫描 + 大排序」
 - 预聚表首启会自动回填已关闭的历史日；回填完成前读侧走原查询，结果不受影响
 - 预聚可随时关闭（`usage_key_daily_state.enabled` / `usage_group_daily_state.enabled`），
   关闭后毫秒级回落原查询，无需重启
+
+### 已知代价：兜底路径比优化前慢
+
+生产用于兜底的覆盖索引 `idx_usage_logs_apikey_created_cover` 是 6 列 INCLUDE
+（`input_tokens` / `output_tokens` / `cache_creation_tokens` / `cache_read_tokens` /
+`total_cost` / `actual_cost`），而 keys 页汇总还要读 `duration_ms`，这一列不在索引里。
+
+生产实测（`api_key_id=1001110`，30 天，1763 万行库）：
+
+| 路径 | 耗时 |
+|---|---|
+| 预聚表（当前生产实际走的） | 0.287 ms |
+| 兜底直扫 usage_logs | 6,982 ms |
+
+也就是说预聚正常时用户感受是亚毫秒级；一旦预聚不可用（未回填 / 时区漂移 / 被关闭），
+会回落到秒级，且比引入预聚前更慢，因为多了一列 `duration_ms` 的回表。
+
+不重建索引的理由：迁移 918 写的宽版含 `duration_ms`（7 列），但该索引在生产已存在同名
+6 列版，`CREATE INDEX ... IF NOT EXISTS` 会撞名跳过。补这一列要重建 1139 MB 索引，
+而它只影响兜底路径。真要补，做法是 `DROP` 后让迁移重建，或另建一条新名字的索引。
