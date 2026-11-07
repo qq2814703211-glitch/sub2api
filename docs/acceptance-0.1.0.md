@@ -49,14 +49,63 @@ postgres `127.0.0.1:5433`，redis `127.0.0.1:6380`，独立 project 与卷。
 `TestInflightEstimate_AccountMappingNoDBAndBoundedMemory`、`TestGPT26*`、
 `TestGetMyAPIKeyUsage*`。属测试间资源竞争，非功能回归。
 
-## 未验收 / 需另行决定
+## 已补验的两项（此前标为「未验收」）
 
-- **models.dev 同步的端到端写入**：同步是后端定时任务，默认 `enabled:false`、
-  `override_file` 为空。路由只暴露只读的 `/status` 与 `/history`，没有手动触发接口。
-  行为由单测覆盖（`TestModelPricingSync_SuccessfulWriteReplacesAtomically`、
-  `TestModelPricingSync_NeverOverridesManualPricing` 等 8 个），但**未在本地栈上
-  真实启用跑过一次**。要在本机验证需改配置启用同步并等一个周期。
-- **V3 监控的真实探针**：配置默认关闭、无 endpoint/api key，未做真实探测。
+### models.dev 同步端到端（在本地栈真实跑通）
+
+给 `docker-compose.local-acceptance.yml` 配上 `PRICING_OVERRIDE_FILE` 后重启，
+启动即同步一轮：
+
+- 日志：`model pricing sync applied {"changes": 1435, "models": 479}`
+- 产出 `/app/data/pricing.override.json`，76,717 字节、479 个模型，
+  字段形状为 `input_cost_per_token` / `output_cost_per_token` /
+  `cache_read_input_token_cost` / `cache_creation_input_token_cost`
+- 容器可直连 `https://models.dev/api.json`
+
+**同步过程中发现并修复了一个真 bug。** 归属判据原本只看「字段名是否出现在
+变更史里」，而真实顺序常常是同步先写入、运营后改价。实测把
+`amazon.nova-micro-v1:0.input_cost_per_token` 手工设成 `9.99e-07` 后重启，
+同步把它改回了 `3.5e-08`（日志 `changes: 1`，历史表留下
+`old=9.99e-07 → new=3.5e-08`）。
+
+改为比对**值**：仓库用 `DISTINCT ON (model, field) ... ORDER BY applied_at DESC`
+返回上次同步写入的 `new_value`，当前值与之相等才允许跟随官方价。修复后同一场景
+复验 `PRESERVED`，且该模型在历史表里**没有**新增记录（说明整模型被正确跳过），
+同时其他模型照常同步（1435 变更 / 479 模型）。
+
+新增 `TestModelPricingSync_ManualEditAfterPriorSyncSurvives`（预置变更史）。
+现有 8 个同步测试全部建立在空变更史上，覆盖不到这个顺序。已做反向对照：
+把判据退回旧版该用例失败，恢复后通过。
+
+补充事实：`override_file` 没有人工编辑接口，只有同步任务会写它；运营真正的
+手动定价位置是分组价卡，解析顺序是先查价卡、命中则不读全局覆盖层。
+
+### V3 探针真实探测（在本地栈真实跑通）
+
+- 该路由的 endpoint 校验硬要求 `https`（V1 遗留规则），`http://127.0.0.1:8080`
+  会被 `CHANNEL_MONITOR_ENDPOINT_SCHEME` 拒绝
+- 配置保存是乐观锁，`version` 过期会返回 409
+- 用 `https://api.openai.com/v1` + `gpt-4o-mini` 保存成功：
+  `enabled=true, groups=1, api_key_set=true`
+- `POST /admin/channel-monitor-v3/probe` → `http=200 {"ok":true}`
+- 样本表 `channel_monitor_v3_probe_samples` 写入 1 行：
+  `group_id=1, model='', status=failed, checked_at=02:39:06`
+  —— 假 key 导致 failed 是正确结果，证明探针确实发出了请求并落库
+- 监控分组只在本页勾选，未触碰模型白名单或价卡
+
+### 交付项 9（缓存率不写 100%）的代码级证据
+
+`applyV3ProbeFallbackToMatrix` 里 `cacheRate` 是 `*float64`，只有
+`GroupCacheRates(groupIDs, CacheAverageWindowDays)` 在 30 天真实流量里查到值才赋值，
+否则保持 nil。`probeSamplesToMetricsWithCacheRate` 仅在
+`cacheRate != nil && 0 <= *cacheRate <= 1` 时填 `CacheRate` 并置
+`CacheRateKnown=true`；否则 `CacheRate=0`、`CacheRateKnown=false`（前端显「—」）。
+任何分支都不会写入 100%。对应 10 个单测全过，含
+`TestChannelMonitorV3ProbeBucketHasNoCacheRateWithoutRealTraffic`
+与 `TestChannelMonitorV3ProbeBucketUsesRealTrafficCacheAverage`。
+
+## 仍需你决定
+
 - **`work_mem` 调优**：见 ADR 0012，属生产参数变更，未实施。
 
 ## 已完成的视觉验收（浏览器实际渲染 + 截图判读）
