@@ -46,8 +46,10 @@ func NewEmailQueueService(emailService *EmailService, workers int) *EmailQueueSe
 		workers:      workers,
 	}
 
-	// 启动工作协程
-	service.start()
+	// Start workers only on the traffic-serving instance.
+	if BackgroundJobsEnabled() {
+		service.start()
+	}
 
 	return service
 }

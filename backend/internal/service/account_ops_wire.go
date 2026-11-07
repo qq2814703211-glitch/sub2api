@@ -23,6 +23,8 @@ func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsReposit
 			return e == nil && c.Enabled && c.MonitorEnabled
 		}
 	}
-	svc.Start()
+	if BackgroundJobsEnabled() {
+		svc.Start()
+	}
 	return svc
 }
