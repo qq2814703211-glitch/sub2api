@@ -1,0 +1,73 @@
+{
+  "id": 10,
+  "name": "synthetic-group",
+  "description": "",
+  "platform": "openai",
+  "subscription_type": "",
+  "rate_multiplier": 0.5,
+  "peak_rate_enabled": false,
+  "peak_start": "",
+  "peak_end": "",
+  "peak_rate_multiplier": 0,
+  "is_exclusive": false,
+  "image_rate_independent": false,
+  "image_rate_multiplier": 0,
+  "video_rate_independent": false,
+  "video_rate_multiplier": 0,
+  "long_context_pricing_enabled": false,
+  "models": [
+    {
+      "name": "review-media",
+      "platform": "openai",
+      "pricing": {
+        "billing_mode": "token",
+        "input_price": null,
+        "output_price": null,
+        "cache_write_price": null,
+        "cache_write_1h_price": null,
+        "cache_read_price": null,
+        "image_input_price": null,
+        "image_output_price": null,
+        "per_request_price": null,
+        "intervals": [],
+        "media_pricing": {
+          "rules": [
+            {
+              "name": "fixture",
+              "unit": "image",
+              "conditions": {},
+              "price": 2
+            }
+          ]
+        },
+        "time_pricing": {
+          "timezone": "UTC",
+          "periods": [
+            {
+              "start_time": "00:00:00",
+              "end_time": "23:59:59",
+              "multiplier": 3
+            }
+          ]
+        }
+      },
+      "official_pricing": null,
+      "time_pricing": {
+        "timezone": "UTC",
+        "periods": [
+          {
+            "start_time": "00:00:00",
+            "end_time": "23:59:59",
+            "multiplier": 3
+          }
+        ]
+      },
+      "media_rate_options": [
+        {
+          "request_type": "all",
+          "multiplier": 0.5
+        }
+      ]
+    }
+  ]
+}
