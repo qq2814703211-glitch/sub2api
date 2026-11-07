@@ -53,6 +53,7 @@ func newGatewayRoutesTestRouterWithConfig(cfg *config.Config, platform ...string
 		nil,
 		nil,
 		cfg,
+		nil, // 在途登记表：路由测试不验证登记
 	)
 
 	return router

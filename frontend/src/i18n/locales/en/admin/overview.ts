@@ -634,6 +634,17 @@ export default {
         created: 'Created',
         actions: 'Actions'
       },
+      inflight: {
+        title: 'Requests in flight',
+        subtitle: 'Per-group breakdown of requests currently being handled. Refresh for the latest state.',
+        expandHint: "Show this user's in-flight requests",
+        empty: 'This user has no request in flight',
+        ungrouped: 'No group',
+        requestsUnit: 'requests',
+        modelPending: 'Model not resolved yet',
+        startedAt: 'Earliest started {time}',
+        sinceHint: 'Earliest request started {time}'
+      },
       today: 'Today',
       total: 'Last 30d',
       sortBy: 'Sort By',
@@ -926,6 +937,21 @@ export default {
       accountsUnit: 'accounts',
       rateAndAccounts: '{rate}x rate · {count} accounts',
       accountsCount: '{count} accounts',
+      activeUsers: {
+        badge: 'Active now',
+        title: 'Users active right now',
+        titleWithGroup: 'Users active right now in "{name}"',
+        description:
+          'Users with a request currently in flight. A request stops counting the moment it finishes — this is not the session count.',
+        empty: 'No user is using this group right now',
+        loadFailed: 'Failed to load the active user list',
+        columns: {
+          user: 'User',
+          email: 'Email',
+          inflight: 'In flight',
+          models: 'Models'
+        }
+      },
       rateLabel: 'rate',
       accountFilters: {
         title: 'Account Filter Controls',

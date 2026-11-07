@@ -25,6 +25,9 @@ type GroupHandler struct {
 	adminService         service.AdminService
 	dashboardService     *service.DashboardService
 	groupCapacityService *service.GroupCapacityService
+	// usageInflightService 提供分组「实时使用中的用户」名单（GET /groups/:id/active-users）。
+	// 与 groupCapacityService 的 active_users 计数同源（在途登记表），与会话无关。
+	usageInflightService *service.UsageInflightService
 	cfg                  *config.Config
 }
 
@@ -101,6 +104,21 @@ func NewGroupHandlerWithConfig(adminService service.AdminService, dashboardServi
 		dashboardService:     dashboardService,
 		groupCapacityService: groupCapacityService,
 		cfg:                  cfg,
+	}
+}
+
+// SetUsageInflightService attaches the inflight aggregation service that backs
+// both GET /groups/:id/active-users and the active_users field of the capacity
+// summary. Setter rather than constructor parameter keeps the existing handler
+// wiring and test doubles unchanged.
+func (h *GroupHandler) SetUsageInflightService(usageInflight *service.UsageInflightService) {
+	if h == nil {
+		return
+	}
+	h.usageInflightService = usageInflight
+	// active_users 与名单必须来自同一个聚合服务，否则徽标和名单会对不上。
+	if h.groupCapacityService != nil {
+		h.groupCapacityService.WithUsageInflight(usageInflight)
 	}
 }
 

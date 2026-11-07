@@ -458,15 +458,44 @@ export async function getUsageSummary(): Promise<
   return data
 }
 
+export interface GroupCapacitySummary {
+  group_id: number
+  concurrency_used: number
+  concurrency_max: number
+  sessions_used: number
+  sessions_max: number
+  rpm_used: number
+  rpm_max: number
+  /**
+   * 此刻有请求正在处理的用户数（COUNT(DISTINCT user_id)，按在途请求登记表聚合）。
+   * 与会话数 sessions_used 是两条互不相干的路径：请求一结束就不算。
+   */
+  active_users: number
+}
+
 /**
- * Get capacity summary (concurrency/sessions/RPM) for all active groups
+ * Get capacity summary (concurrency/sessions/RPM/active users) for all active groups
  */
-export async function getCapacitySummary(): Promise<
-  { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
-> {
-  const { data } = await apiClient.get<
-    { group_id: number; concurrency_used: number; concurrency_max: number; sessions_used: number; sessions_max: number; rpm_used: number; rpm_max: number }[]
-  >('/admin/groups/capacity-summary')
+export async function getCapacitySummary(): Promise<GroupCapacitySummary[]> {
+  const { data } = await apiClient.get<GroupCapacitySummary[]>('/admin/groups/capacity-summary')
+  return data
+}
+
+/** 分组「实时使用中」用户名单条目。 */
+export interface GroupActiveUser {
+  user_id: number
+  username: string
+  email: string
+  inflight_count: number
+  models: string[]
+}
+
+/**
+ * Get the users that currently have requests in flight in a group.
+ * 口径：此刻有请求正在处理，而不是「最近一段时间用过」。
+ */
+export async function getGroupActiveUsers(id: number): Promise<GroupActiveUser[]> {
+  const { data } = await apiClient.get<GroupActiveUser[]>(`/admin/groups/${id}/active-users`)
   return data
 }
 
@@ -498,7 +527,8 @@ export const groupsAPI = {
   batchSetGroupRPMOverrides,
   updateSortOrder,
   getUsageSummary,
-  getCapacitySummary
+  getCapacitySummary,
+  getGroupActiveUsers,
 }
 
 export default groupsAPI
