@@ -173,7 +173,11 @@ func TestGetMyAPIKeyDailyUsageAggregatesByDayForOwnedKey(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, usageRepo.called)
 	require.Equal(t, "day", usageRepo.granularity)
-	require.Equal(t, int64(42), usageRepo.userID)
+	// The trend query deliberately does NOT take a user id: ownership is proven
+	// above via apiKeyRepo, and passing user_id as a second predicate makes the
+	// planner pick idx_usage_logs_user_id over the covering index (measured
+	// 8.9s vs 4.9s on a 5.7M-row key). So 0 here is the intended contract.
+	require.Equal(t, int64(0), usageRepo.userID)
 	require.Equal(t, int64(7), usageRepo.apiKeyID)
 	require.True(t, usageRepo.startTime.Before(usageRepo.endTime))
 
