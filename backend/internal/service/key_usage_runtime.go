@@ -17,8 +17,13 @@ func ProvideKeyUsageRuntime(db *sql.DB) *keyusage.Runtime {
 	return runtime
 }
 
-func ProvideUsageService(repo UsageLogRepository, users UserRepository, client *dbent.Client, invalidator APIKeyAuthCacheInvalidator, runtime *keyusage.Runtime) *UsageService {
+func ProvideUsageService(repo UsageLogRepository, users UserRepository, client *dbent.Client, invalidator APIKeyAuthCacheInvalidator, runtime *keyusage.Runtime, keyDaily UsageKeyDailyRollupRepository) *UsageService {
 	s := NewUsageService(repo, users, client, invalidator)
 	s.keyUsage = runtime
+	// keyDaily 同时满足 UsageKeyDailyReader（读）与 UsageKeyDailyRollupRepository
+	// （写/回填）。这里只持有读侧接口：读路径不该有能力触发回填。
+	if keyDaily != nil {
+		s.keyDaily = keyDaily
+	}
 	return s
 }
