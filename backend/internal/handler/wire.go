@@ -148,7 +148,9 @@ func ProvideOpenAIGatewayHandler(
 ) *OpenAIGatewayHandler {
 	gatewayService.SetVideoBillingJobs(videoJobs)
 	gatewayService.SetVideoBillingAuthCache(apiKeyService)
-	gatewayService.StartVideoBillingWorker()
+	if service.BackgroundJobsEnabled() {
+		gatewayService.StartVideoBillingWorker()
+	}
 	gatewayService.SetPluginManager(pluginManager)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)

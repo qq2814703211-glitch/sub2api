@@ -1,0 +1,15 @@
+{
+  "services": {
+    "sub2api": {
+      "image": "sha256:832c7a09779d072393731056bac97cafa9d94177f149cfc0b7cf8d69c8a9a475",
+      "environment": {
+        "SUB2API_DIAGNOSTIC_SOCKET": "/run/submem/memory.sock",
+        "GOMEMLIMIT": "6GiB",
+        "XAI_GROK_CLI_VERSION": "${XAI_GROK_CLI_VERSION:-1.0.70}"
+      },
+      "volumes": [
+        "/root/submem-20261013-budget/socket-sub2:/run/submem"
+      ]
+    }
+  }
+}
