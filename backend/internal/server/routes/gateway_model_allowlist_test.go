@@ -45,6 +45,7 @@ func newGatewayRoutesTestRouterWithGroup(group *service.Group) *gin.Engine {
 				TextMaxBodySize: 1024 * 1024,
 			},
 		},
+		nil, // 在途登记表：路由测试不验证登记，传 nil 即可（中间件对 nil store 直接放行）
 	)
 	return router
 }
@@ -69,7 +70,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	source := string(routeSource)
 
 	// rootRoute helper：apiKeyAuth 之后、compositeTarget 之前。
-	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)`))
+	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`))
 	require.Regexp(t, rootHelper, source,
 		"root alias helper must place the allowlist between apiKeyAuth and compositeTarget")
 
@@ -94,13 +95,47 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	}
 
 	// codexDirect 链是一条 Use 调用，直接断言顺序。
-	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic)`))
+	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`))
 	require.Regexp(t, codexDirect, source, "codexDirect chain must mount the allowlist after auth and before compositeTarget")
 
 	// 所有带 apiKeyAuth 的根路径路由必须收敛到 rootRoute，避免漏挂。
 	stray := regexp.MustCompile(`\br\.(GET|POST|PUT|PATCH|DELETE)\("[^"]+",[^(]*apiKeyAuth`)
 	require.NotRegexp(t, stray, source,
 		"root alias routes must use rootRoute so the allowlist cannot be forgotten")
+}
+
+// TestGatewayRoutesUsageInflightMountedOnEveryGatewayRoute 用源码断言锁住
+// 在途请求登记的挂载点：每条网关链都必须在分组解析/改写之后、handler 之前登记，
+// 否则「实时使用中」的人数会漏掉整条链的流量。
+func TestGatewayRoutesUsageInflightMountedOnEveryGatewayRoute(t *testing.T) {
+	routeSource, err := os.ReadFile("gateway.go")
+	require.NoError(t, err)
+	source := string(routeSource)
+
+	// rootRoute 助手与 codexDirect 链是一条 Use 调用，直接断言顺序。
+	require.Regexp(t, regexp.MustCompile(regexp.QuoteMeta(
+		`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`)),
+		source, "root alias helper must mount the inflight tracker after group resolution")
+	require.Regexp(t, regexp.MustCompile(regexp.QuoteMeta(
+		`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`)),
+		source, "codexDirect chain must mount the inflight tracker")
+
+	chains := []struct {
+		group string
+		prev  string
+	}{
+		{group: "gateway", prev: "gateway.Use(requireGroupAnthropic)"},
+		{group: "gemini", prev: "gemini.Use(requireGroupGoogle)"},
+		{group: "antigravityV1", prev: "antigravityV1.Use(requireGroupAnthropic)"},
+		{group: "antigravityV1Beta", prev: "antigravityV1Beta.Use(requireGroupGoogle)"},
+	}
+	for _, chain := range chains {
+		re := regexp.MustCompile(
+			regexp.QuoteMeta(chain.prev) +
+				`\s*\n\s*` + regexp.QuoteMeta(chain.group+".Use(usageInflightMW)"))
+		require.Regexp(t, re, source,
+			"%s chain must mount the inflight tracker right after group resolution", chain.group)
+	}
 }
 
 // TestGatewayRoutesGroupModelAllowlistBlocksCompositeModelBeforeRewrite asserts

@@ -102,6 +102,7 @@ func newKeyBillingRouteTestRouter(runMode string) (*gin.Engine, *keyBillingRoute
 		nil,
 		nil,
 		cfg,
+		nil, // 在途登记表：路由测试不验证登记
 	)
 	return router, rateRepo, apiKey.Key
 }
