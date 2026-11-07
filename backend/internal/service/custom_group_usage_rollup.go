@@ -9,6 +9,9 @@ import (
 
 const groupUsageDateFormat = "2006-01-02"
 
+// GroupUsageDateFormat 是日桶使用的日期格式，供仓储层拼错误信息时复用。
+const GroupUsageDateFormat = groupUsageDateFormat
+
 // GroupUsageRollupRepository 是分组日汇总的可选持久化能力。
 type GroupUsageRollupRepository interface {
 	SyncGroupUsageRollups(ctx context.Context, todayStart time.Time) error
