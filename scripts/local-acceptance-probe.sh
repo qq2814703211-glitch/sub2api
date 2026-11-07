@@ -107,12 +107,17 @@ do
 done
 
 echo
-echo "=== 5. single-key usage fast path (this branch) ==="
-# The panel endpoint must exist and be bounded. A 400 for a bogus key is the
-# correct answer: it proves the route is wired and validates input.
+echo "=== 5. single-key usage endpoint is wired and answers with real data ==="
+# A bare 404 proves nothing: there is no api_key id=1 in a fresh stack, so the
+# honest assertion is "the route rejects an unknown key with 404 rather than
+# 401/405/500". Seeding is what makes the 200 path meaningful, and the helper
+# script scripts/verify-single-key-usage.sh does that end-to-end.
 usage_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${auth[@]}" \
-  "$BASE/api/v1/user/api-keys/1/usage?days=30")
-echo "  /api/v1/user/api-keys/1/usage?days=30 -> http=$usage_code"
+  "$BASE/api/v1/user/api-keys/999999999/usage?days=30")
+check "GET /user/api-keys/:id/usage rejects an unknown key (route is wired)" \
+  "$([ "$usage_code" = "404" ] && echo 1 || echo 0)" "http=$usage_code"
+# And the seeded key must actually return aggregates; run
+# scripts/verify-single-key-usage.sh after seeding to see today/range/items.
 
 echo
 echo "=== 6. capacity surface (this branch) ==="
@@ -131,7 +136,9 @@ tk=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${auth[@]}" "$BASE/ap
 check "GET /admin/tickets" "$([ "$tk" = "200" ] && echo 1 || echo 0)" "http=$tk"
 
 echo
-echo "=== 8. lanes not yet merged into this branch ==="
+echo "=== 8. lanes merged into this branch ==="
+# These used to report "PENDING" while the lanes were separate worktrees. They
+# are merged now, so a non-2xx here is a real regression, not a roadmap note.
 for probe in \
   "/api/v1/admin/channel-monitor-v3/config|V3 independent monitor config" \
   "/api/v1/admin/model-pricing-sync/history|models.dev pricing sync history" \
@@ -140,7 +147,7 @@ do
   path="${probe%%|*}"
   label="${probe##*|}"
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${auth[@]}" "$BASE$path")
-  pending_check "$label" "$code"
+  check "$label" "$([ "$code" = "200" ] && echo 1 || echo 0)" "http=$code"
 done
 
 echo
