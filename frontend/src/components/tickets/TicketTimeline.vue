@@ -1,26 +1,27 @@
 <template>
-  <div ref="root" class="ticket-timeline" role="log" :aria-live="admin ? 'polite' : 'polite'" @scroll="onScroll">
-    <div v-if="hasMore" class="flex justify-center py-2">
-      <button
-        type="button"
-        class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-60 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-300 dark:hover:bg-dark-700"
-        :disabled="loadingOlder"
-        @click="emit('older')"
-      >
+  <div
+    ref="root"
+    class="min-h-0 flex-1 basis-auto overflow-y-auto overscroll-contain px-4 py-4 sm:px-5"
+    role="log"
+    aria-live="polite"
+    @scroll="onScroll"
+  >
+    <div v-if="hasMore" class="flex justify-center pb-3">
+      <button type="button" class="btn btn-secondary btn-sm" :disabled="loadingOlder" @click="emit('older')">
         {{ loadingOlder ? t('tickets.loadingOlder') : t('tickets.loadOlder') }}
       </button>
     </div>
 
     <template v-for="message in messages" :key="message.id">
       <div v-if="message.kind === 'event'" class="my-3 flex justify-center">
-        <span class="max-w-full rounded-full bg-gray-100 px-3 py-1 text-center text-xs text-gray-500 dark:bg-dark-700 dark:text-dark-300">
+        <span class="max-w-full rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-center text-xs text-gray-500 dark:border-dark-800 dark:bg-dark-800/60 dark:text-dark-300">
           {{ eventText(message) }}
         </span>
       </div>
       <article v-else class="mb-4 flex" :class="message.author_role === 'admin' ? 'justify-start' : 'justify-end'">
         <div class="max-w-[85%] sm:max-w-[75%]">
-          <div class="mb-1 flex items-center gap-2 text-[11px] text-gray-400" :class="message.author_role === 'admin' ? '' : 'justify-end'">
-            <span class="font-medium text-gray-500 dark:text-dark-300">
+          <div class="mb-1 flex items-center gap-2 text-xs text-gray-500 dark:text-dark-400" :class="message.author_role === 'admin' ? '' : 'justify-end'">
+            <span class="font-medium text-gray-700 dark:text-gray-300">
               {{ message.author_role === 'admin' ? t('tickets.support') : (message.author_name || t('tickets.you')) }}
             </span>
             <time :datetime="message.created_at">{{ formatDate(message.created_at) }}</time>
@@ -28,8 +29,8 @@
           <div
             class="whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-relaxed"
             :class="message.author_role === 'admin'
-              ? 'rounded-tl-sm bg-white text-gray-800 shadow-sm ring-1 ring-gray-200 dark:bg-dark-800 dark:text-dark-100 dark:ring-dark-700'
-              : 'rounded-tr-sm bg-primary-600 text-white'"
+              ? 'rounded-tl-sm border border-gray-200 bg-gray-50 text-gray-800 dark:border-dark-800 dark:bg-dark-800 dark:text-gray-100'
+              : 'rounded-tr-sm bg-primary-700 text-white dark:bg-primary-700'"
           >{{ message.content }}</div>
         </div>
       </article>
@@ -109,13 +110,3 @@ async function restorePosition(position: { scrollTop: number; scrollHeight: numb
 
 defineExpose({ scrollToBottom, capturePosition, restorePosition })
 </script>
-
-<style scoped>
-.ticket-timeline {
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 1rem 1.25rem;
-}
-</style>
