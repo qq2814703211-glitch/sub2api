@@ -141,6 +141,7 @@ docs/*
 docs/adr/*
 !docs/adr/*.md
 !docs/agent-resource-safety.md
+!docs/moego-json-batching.md
 !docs/admin-api-keys.md
 !docs/mcp.md
 !docs/PAYMENT.md
