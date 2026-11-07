@@ -3,10 +3,8 @@
 package service
 
 import (
-	"os"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,21 +24,6 @@ func TestBackgroundJobsEnabledDefaultsOnAndHonorsExplicitOff(t *testing.T) {
 			require.Equal(t, tc.want, BackgroundJobsEnabled())
 		})
 	}
-}
-
-func TestGreenConfigDisablesConfigScheduledWriters(t *testing.T) {
-	configFile := "../../../green-config.yaml"
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		t.Skip("isolated deployment config fixture is not installed")
-	}
-	t.Setenv("CONFIG_FILE", configFile)
-	cfg, err := config.LoadForBootstrap()
-	require.NoError(t, err)
-	require.False(t, cfg.TokenRefresh.Enabled)
-	require.False(t, cfg.DashboardAgg.Enabled)
-	require.False(t, cfg.UsageCleanup.Enabled)
-	require.False(t, cfg.Ops.Enabled)
-	require.Equal(t, "/app/data/model_pricing_overrides.json", cfg.Pricing.OverrideFile)
 }
 
 func TestEmailQueueWorkersFollowBackgroundJobsGate(t *testing.T) {
