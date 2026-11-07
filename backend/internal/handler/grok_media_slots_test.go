@@ -123,7 +123,7 @@ type grokMediaSlotBindings struct {
 	owner   int64
 	writes  int
 	key     string
-	billed  map[string]bool
+	billed  map[string]string
 	pending map[string][]byte
 }
 
@@ -158,15 +158,21 @@ func (s *grokMediaSlotBindings) DeleteSessionAccountID(context.Context, int64, s
 	return nil
 }
 
-func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key string, _ time.Duration) (bool, error) {
+func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key, owner string, _ time.Duration) (bool, error) {
 	if s.billed == nil {
-		s.billed = make(map[string]bool)
+		s.billed = make(map[string]string)
 	}
-	if s.billed[key] {
+	if s.billed[key] != "" {
 		return false, nil
 	}
-	s.billed[key] = true
+	s.billed[key] = owner
 	return true, nil
+}
+func (s *grokMediaSlotBindings) ReleaseGrokVideoBilled(_ context.Context, key, owner string) error {
+	if s.billed[key] == owner {
+		delete(s.billed, key)
+	}
+	return nil
 }
 
 type grokMediaSlotRepo struct {
