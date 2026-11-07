@@ -1,13 +1,13 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import KeyUsageDialog from '../KeyUsageDialog.vue'
-import type { ApiKeyDailyUsagePoint, ApiKeyDailyUsageResponse } from '@/api/usage'
+import type { ApiKeyDailyUsagePoint, ApiKeyUsageResponse, ApiKeyUsageSummary } from '@/api/usage'
 import type { ApiKey } from '@/types'
 
-const { getDailyUsage } = vi.hoisted(() => ({ getDailyUsage: vi.fn() }))
+const { getKeyUsage } = vi.hoisted(() => ({ getKeyUsage: vi.fn() }))
 
 vi.mock('@/api', () => ({
-  usageAPI: { getMyApiKeyDailyUsage: getDailyUsage }
+  usageAPI: { getMyApiKeyUsage: getKeyUsage }
 }))
 
 const messages: Record<string, string> = {
@@ -25,6 +25,9 @@ const messages: Record<string, string> = {
   'keys.usageDialog.tokens': 'tokens',
   'keys.usageDialog.date': 'Date',
   'keys.usageDialog.actualCost': 'Actual charge',
+  'keys.usageDialog.cacheRead': 'Cache read',
+  'keys.usageDialog.cacheWrite': 'Cache write',
+  'keys.usageDialog.listCost': 'List price',
   'keys.usageDialog.empty': 'No usage recorded in this period',
   'keys.usageDialog.failed': 'Failed to load usage',
   'keys.usageDialog.retry': 'Retry',
@@ -94,6 +97,20 @@ function makeKey(id: number, name = `key-${id}`): ApiKey {
   }
 }
 
+function summary(overrides: Partial<ApiKeyUsageSummary> = {}): ApiKeyUsageSummary {
+  return {
+    requests: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    total_tokens: 0,
+    cost: 0,
+    actual_cost: 0,
+    ...overrides
+  }
+}
+
 function point(date: string, overrides: Partial<ApiKeyDailyUsagePoint> = {}): ApiKeyDailyUsagePoint {
   return {
     date,
@@ -111,13 +128,23 @@ function point(date: string, overrides: Partial<ApiKeyDailyUsagePoint> = {}): Ap
 
 function response(
   items: ApiKeyDailyUsagePoint[],
-  range: { days?: number; start?: string; end?: string } = {}
-): ApiKeyDailyUsageResponse {
+  opts: {
+    days?: number
+    start?: string
+    end?: string
+    today?: Partial<ApiKeyUsageSummary>
+    range?: Partial<ApiKeyUsageSummary>
+  } = {}
+): ApiKeyUsageResponse {
   return {
-    items,
-    days: range.days ?? 1,
-    start_date: range.start ?? '2026-11-05',
-    end_date: range.end ?? '2026-11-05'
+    api_key_id: 7,
+    days: opts.days ?? 1,
+    start_date: opts.start ?? '2026-11-05',
+    end_date: opts.end ?? '2026-11-05',
+    timezone: 'America/New_York',
+    today: summary(opts.today),
+    range: summary(opts.range),
+    items
   }
 }
 
@@ -132,7 +159,7 @@ async function openDialog(apiKey: ApiKey = makeKey(7, 'primary-key')) {
 
 describe('KeyUsageDialog', () => {
   beforeEach(() => {
-    getDailyUsage.mockReset()
+    getKeyUsage.mockReset()
     vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
       locale: 'en-US',
       calendar: 'gregory',
@@ -145,14 +172,14 @@ describe('KeyUsageDialog', () => {
     vi.restoreAllMocks()
   })
 
-  it('requests the opened key for today with the browser timezone and shows actual cost', async () => {
-    const pending = deferred<ApiKeyDailyUsageResponse>()
-    getDailyUsage.mockReturnValueOnce(pending.promise)
+  it('requests the opened key for today with the browser timezone and shows the server summary', async () => {
+    const pending = deferred<ApiKeyUsageResponse>()
+    getKeyUsage.mockReturnValueOnce(pending.promise)
 
     const wrapper = await openDialog()
 
-    expect(getDailyUsage).toHaveBeenCalledTimes(1)
-    const [apiKeyId, days, options] = getDailyUsage.mock.calls[0]
+    expect(getKeyUsage).toHaveBeenCalledTimes(1)
+    const [apiKeyId, days, options] = getKeyUsage.mock.calls[0]
     expect(apiKeyId).toBe(7)
     expect(days).toBe(1)
     expect(options.timezone).toBe('America/New_York')
@@ -160,7 +187,10 @@ describe('KeyUsageDialog', () => {
     expect(wrapper.find('[data-testid="key-usage-loading"]').exists()).toBe(true)
 
     pending.resolve(
-      response([point('2026-11-05', { requests: 4, total_tokens: 42, actual_cost: 0.25, cost: 88.8 })])
+      response([point('2026-11-05', { requests: 4, total_tokens: 42, actual_cost: 0.25, cost: 88.8 })], {
+        today: { requests: 4, total_tokens: 42, actual_cost: 0.25, cost: 88.8 },
+        range: { requests: 4, total_tokens: 42, actual_cost: 0.25, cost: 88.8 }
+      })
     )
     await flushPromises()
 
@@ -172,19 +202,72 @@ describe('KeyUsageDialog', () => {
     expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.2500')
     expect(wrapper.findAll('[data-testid="key-usage-row"]')).toHaveLength(1)
     expect(wrapper.find('[data-testid="key-usage-loading"]').exists()).toBe(false)
+    // The list price must never be presented as the charge.
     expect(wrapper.text()).not.toContain('$88.8000')
   })
 
-  it('switches to 30 days, sums actual cost and tokens, and sorts days newest first', async () => {
-    getDailyUsage
-      .mockResolvedValueOnce(response([point('2026-11-05', { actual_cost: 1, requests: 1, total_tokens: 10 })]))
+  it('uses the server range summary rather than re-adding trend rows', async () => {
+    // The trend intentionally under-reports here: the server aggregate is the
+    // authority, and a day the trend skipped must still count in the total.
+    getKeyUsage.mockResolvedValueOnce(
+      response(
+        [
+          point('2026-10-07', { actual_cost: 0.5, requests: 2, total_tokens: 20 }),
+          point('2026-11-05', { actual_cost: 0.25, requests: 1, total_tokens: 5 })
+        ],
+        {
+          days: 30,
+          start: '2026-10-07',
+          end: '2026-11-05',
+          today: { requests: 1, total_tokens: 5, actual_cost: 0.25 },
+          range: { requests: 99, total_tokens: 2500, actual_cost: 7.5, cache_read_tokens: 400, cache_write_tokens: 40 }
+        }
+      )
+    )
+
+    const wrapper = await openDialog()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$7.5000')
+    expect(wrapper.get('[data-testid="key-usage-today-cost"]').text()).toBe('$0.2500')
+    // Totals come from the summary, not from 0.5 + 0.25.
+    expect(wrapper.text()).not.toContain('$0.7500')
+    expect(wrapper.text()).toContain('99 requests')
+    expect(wrapper.text()).toContain('2,500 tokens')
+  })
+
+  it('shows cache read and cache write totals for the range', async () => {
+    getKeyUsage.mockResolvedValueOnce(
+      response([], {
+        range: { requests: 3, total_tokens: 60, cache_read_tokens: 1234, cache_write_tokens: 567, actual_cost: 0.5 },
+        today: { requests: 1, total_tokens: 20, actual_cost: 0.1 }
+      })
+    )
+
+    const wrapper = await openDialog()
+    await flushPromises()
+
+    const cache = wrapper.get('[data-testid="key-usage-range-cache"]').text()
+    expect(cache).toContain('Cache read 1,234')
+    expect(cache).toContain('Cache write 567')
+  })
+
+  it('switches to 30 days and sorts days newest first', async () => {
+    getKeyUsage
+      .mockResolvedValueOnce(response([point('2026-11-05', { actual_cost: 1 })], { today: { requests: 1, actual_cost: 1 } }))
       .mockResolvedValueOnce(
         response(
           [
             point('2026-10-07', { actual_cost: 0.5, requests: 2, total_tokens: 20 }),
             point('2026-11-05', { actual_cost: 0.25, requests: 1, total_tokens: 5 })
           ],
-          { days: 30, start: '2026-10-07', end: '2026-11-05' }
+          {
+            days: 30,
+            start: '2026-10-07',
+            end: '2026-11-05',
+            today: { requests: 1, total_tokens: 5, actual_cost: 0.25 },
+            range: { requests: 3, total_tokens: 25, actual_cost: 0.75 }
+          }
         )
       )
 
@@ -193,7 +276,7 @@ describe('KeyUsageDialog', () => {
     await wrapper.get('[data-testid="key-usage-preset-30d"]').trigger('click')
     await flushPromises()
 
-    expect(getDailyUsage).toHaveBeenLastCalledWith(
+    expect(getKeyUsage).toHaveBeenLastCalledWith(
       7,
       30,
       expect.objectContaining({ timezone: 'America/New_York' })
@@ -207,23 +290,27 @@ describe('KeyUsageDialog', () => {
   })
 
   it('requests the 7-day window when the 7-day preset is selected', async () => {
-    getDailyUsage.mockResolvedValue(response([]))
+    getKeyUsage.mockResolvedValue(response([]))
     const wrapper = await openDialog()
     await flushPromises()
 
     await wrapper.get('[data-testid="key-usage-preset-7d"]').trigger('click')
     await flushPromises()
 
-    expect(getDailyUsage).toHaveBeenLastCalledWith(
+    expect(getKeyUsage).toHaveBeenLastCalledWith(
       7,
       7,
       expect.objectContaining({ timezone: 'America/New_York', signal: expect.any(AbortSignal) })
     )
   })
 
-  it('distinguishes zero usage from an empty period', async () => {
-    getDailyUsage.mockResolvedValueOnce(
-      response([point('2026-11-05', { requests: 0, total_tokens: 0, actual_cost: 0, cost: 0 })])
+  it('distinguishes a real zero-usage day from a day with no record', async () => {
+    // A day that reported zero tokens and zero cost is still a real day.
+    getKeyUsage.mockResolvedValueOnce(
+      response([point('2026-11-05', { requests: 0, total_tokens: 0, actual_cost: 0, cost: 0 })], {
+        today: { requests: 1, total_tokens: 0, actual_cost: 0 },
+        range: { requests: 1, total_tokens: 0, actual_cost: 0 }
+      })
     )
     let wrapper = await openDialog()
     await flushPromises()
@@ -235,7 +322,8 @@ describe('KeyUsageDialog', () => {
     expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.0000')
 
     wrapper.unmount()
-    getDailyUsage.mockResolvedValueOnce(response([]))
+    // No rows and a zeroed today aggregate is a period with nothing in it.
+    getKeyUsage.mockResolvedValueOnce(response([]))
     wrapper = await openDialog()
     await flushPromises()
 
@@ -246,11 +334,14 @@ describe('KeyUsageDialog', () => {
   })
 
   it('shows a dash and a no-record hint when the window has rows but not for today', async () => {
-    getDailyUsage.mockResolvedValueOnce(
-      response(
-        [point('2026-11-02', { actual_cost: 0.4, requests: 2, total_tokens: 30 })],
-        { days: 7, start: '2026-10-30', end: '2026-11-05' }
-      )
+    getKeyUsage.mockResolvedValueOnce(
+      response([point('2026-11-02', { actual_cost: 0.4, requests: 2, total_tokens: 30 })], {
+        days: 7,
+        start: '2026-10-30',
+        end: '2026-11-05',
+        today: { requests: 0, total_tokens: 0, actual_cost: 0 },
+        range: { requests: 2, total_tokens: 30, actual_cost: 0.4 }
+      })
     )
     const wrapper = await openDialog()
     await flushPromises()
@@ -264,9 +355,14 @@ describe('KeyUsageDialog', () => {
   })
 
   it('shows an error and reloads on retry', async () => {
-    getDailyUsage
+    getKeyUsage
       .mockRejectedValueOnce(new Error('network down'))
-      .mockResolvedValueOnce(response([point('2026-11-05', { actual_cost: 0.3 })]))
+      .mockResolvedValueOnce(
+        response([point('2026-11-05', { actual_cost: 0.3 })], {
+          today: { requests: 1, actual_cost: 0.3 },
+          range: { requests: 1, actual_cost: 0.3 }
+        })
+      )
 
     const wrapper = await openDialog()
     await flushPromises()
@@ -283,26 +379,31 @@ describe('KeyUsageDialog', () => {
   })
 
   it('aborts the previous preset request and ignores its late response', async () => {
-    const slowToday = deferred<ApiKeyDailyUsageResponse>()
-    const fastRange = deferred<ApiKeyDailyUsageResponse>()
-    getDailyUsage.mockReturnValueOnce(slowToday.promise).mockReturnValueOnce(fastRange.promise)
+    const slowToday = deferred<ApiKeyUsageResponse>()
+    const fastRange = deferred<ApiKeyUsageResponse>()
+    getKeyUsage.mockReturnValueOnce(slowToday.promise).mockReturnValueOnce(fastRange.promise)
 
     const wrapper = await openDialog()
     await wrapper.get('[data-testid="key-usage-preset-30d"]').trigger('click')
 
-    const firstSignal = getDailyUsage.mock.calls[0][2].signal as AbortSignal
+    const firstSignal = getKeyUsage.mock.calls[0][2].signal as AbortSignal
     expect(firstSignal.aborted).toBe(true)
 
     fastRange.resolve(
       response([point('2026-11-05', { actual_cost: 0.5 })], {
         days: 30,
         start: '2026-10-07',
-        end: '2026-11-05'
+        end: '2026-11-05',
+        today: { requests: 1, actual_cost: 0.5 },
+        range: { requests: 1, actual_cost: 0.5 }
       })
     )
     await flushPromises()
 
-    slowToday.resolve(response([point('2026-11-05', { actual_cost: 9.99 })]))
+    slowToday.resolve(response([point('2026-11-05', { actual_cost: 9.99 })], {
+      today: { requests: 1, actual_cost: 9.99 },
+      range: { requests: 1, actual_cost: 9.99 }
+    }))
     await flushPromises()
 
     expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.5000')
@@ -311,20 +412,26 @@ describe('KeyUsageDialog', () => {
   })
 
   it('cancels on close and ignores the closed request when reopened', async () => {
-    const first = deferred<ApiKeyDailyUsageResponse>()
-    const second = deferred<ApiKeyDailyUsageResponse>()
-    getDailyUsage.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const first = deferred<ApiKeyUsageResponse>()
+    const second = deferred<ApiKeyUsageResponse>()
+    getKeyUsage.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
 
     const wrapper = await openDialog()
     await wrapper.setProps({ show: false })
 
-    expect((getDailyUsage.mock.calls[0][2].signal as AbortSignal).aborted).toBe(true)
+    expect((getKeyUsage.mock.calls[0][2].signal as AbortSignal).aborted).toBe(true)
 
     await wrapper.setProps({ show: true })
-    second.resolve(response([point('2026-11-05', { actual_cost: 0.2 })]))
+    second.resolve(response([point('2026-11-05', { actual_cost: 0.2 })], {
+      today: { requests: 1, actual_cost: 0.2 },
+      range: { requests: 1, actual_cost: 0.2 }
+    }))
     await flushPromises()
 
-    first.resolve(response([point('2026-11-05', { actual_cost: 8 })]))
+    first.resolve(response([point('2026-11-05', { actual_cost: 8 })], {
+      today: { requests: 1, actual_cost: 8 },
+      range: { requests: 1, actual_cost: 8 }
+    }))
     await flushPromises()
 
     expect(wrapper.get('[data-testid="key-usage-range-cost"]').text()).toBe('$0.2000')
@@ -332,20 +439,26 @@ describe('KeyUsageDialog', () => {
   })
 
   it('cancels the previous key and keeps the newly selected key response', async () => {
-    const firstKey = deferred<ApiKeyDailyUsageResponse>()
-    const secondKey = deferred<ApiKeyDailyUsageResponse>()
-    getDailyUsage.mockReturnValueOnce(firstKey.promise).mockReturnValueOnce(secondKey.promise)
+    const firstKey = deferred<ApiKeyUsageResponse>()
+    const secondKey = deferred<ApiKeyUsageResponse>()
+    getKeyUsage.mockReturnValueOnce(firstKey.promise).mockReturnValueOnce(secondKey.promise)
 
     const wrapper = await openDialog(makeKey(1, 'first-key'))
     await wrapper.setProps({ apiKey: makeKey(2, 'second-key') })
 
-    expect(getDailyUsage).toHaveBeenLastCalledWith(2, 1, expect.objectContaining({ timezone: 'America/New_York' }))
-    expect((getDailyUsage.mock.calls[0][2].signal as AbortSignal).aborted).toBe(true)
+    expect(getKeyUsage).toHaveBeenLastCalledWith(2, 1, expect.objectContaining({ timezone: 'America/New_York' }))
+    expect((getKeyUsage.mock.calls[0][2].signal as AbortSignal).aborted).toBe(true)
 
-    secondKey.resolve(response([point('2026-11-05', { actual_cost: 0.3 })]))
+    secondKey.resolve(response([point('2026-11-05', { actual_cost: 0.3 })], {
+      today: { requests: 1, actual_cost: 0.3 },
+      range: { requests: 1, actual_cost: 0.3 }
+    }))
     await flushPromises()
 
-    firstKey.resolve(response([point('2026-11-05', { actual_cost: 5 })]))
+    firstKey.resolve(response([point('2026-11-05', { actual_cost: 5 })], {
+      today: { requests: 1, actual_cost: 5 },
+      range: { requests: 1, actual_cost: 5 }
+    }))
     await flushPromises()
 
     expect(wrapper.get('[data-testid="key-usage-key-name"]').text()).toBe('second-key')

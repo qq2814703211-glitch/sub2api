@@ -151,11 +151,23 @@ const displayBars = computed<TimelineBar[]>(() => {
   const real = [...props.buckets]
     .sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
     .slice(-props.length)
-  // Missing slots sit at the right (NOW) end: the window is bucket-aligned so the
-  // trailing slot is the current partial bucket, which is the one that can be
-  // empty right after a refresh. Padding at the front would wrongly show the gap
-  // as old history and shift every real bar one slot to the past.
+  // Missing slots sit at the LEFT (past) end. The axis under this component reads
+  // "past → now", so the newest bucket must stay flush against the right edge; if
+  // the gap were padded on the right (as it used to be), a channel with only a few
+  // filled buckets would render its newest bar somewhere in the middle of the card
+  // while the axis still claimed the right edge was now. A trailing empty slot can
+  // only be the current partial bucket, and the server supplies that as a real row.
   const bars: TimelineBar[] = []
+  const missing = Math.max(0, props.length - real.length)
+  for (let index = 0; index < missing; index += 1) {
+    bars.push({
+      key: `empty-${index}`,
+      ...STATUS_STYLE.unknown,
+      // No tooltip: an empty slot means the range has not been filled yet, and a
+      // hover card reading "-" on every field would look like a broken channel.
+      title: '',
+    })
+  }
 
   for (const bucket of real) {
     const state = bucket.health.overall === 'healthy' || bucket.health.overall === 'warning' || bucket.health.overall === 'critical'
@@ -180,16 +192,6 @@ const displayBars = computed<TimelineBar[]>(() => {
     })
   }
 
-  const missing = Math.max(0, props.length - real.length)
-  for (let index = 0; index < missing; index += 1) {
-    bars.push({
-      key: `empty-${index}`,
-      ...STATUS_STYLE.unknown,
-      // No tooltip: an empty slot means the range has not been filled yet, and a
-      // hover card reading "-" on every field would look like a broken channel.
-      title: '',
-    })
-  }
   return bars
 })
 
