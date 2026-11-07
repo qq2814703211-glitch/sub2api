@@ -63,6 +63,22 @@ export function formatMonitorPercent(value: number, locale = monitorIntlLocale()
   }).format((value || 0) * 100)}%`
 }
 
+/**
+ * Cache-rate display honouring ADR 0009: a probe-filled bucket carries no cache
+ * reading of its own, so it borrows the group's real-traffic average. When no real
+ * traffic exists the value is unknown, and the UI must show an em dash rather than
+ * inventing 0% or 100%.
+ */
+export function formatMonitorCacheRate(
+  value: number | null | undefined,
+  known: boolean | undefined,
+  locale = monitorIntlLocale(),
+): string {
+  if (known === false) return '—'
+  if (value == null || !Number.isFinite(Number(value))) return '—'
+  return formatMonitorPercent(Number(value), locale)
+}
+
 export function formatMonitorMs(value: number | null | undefined): string {
   if (value == null) return '-'
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`

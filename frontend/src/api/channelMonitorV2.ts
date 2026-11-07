@@ -44,6 +44,12 @@ export interface MonitorMetric {
   cache_rate: number
   cache_rate_numerator: number
   cache_rate_denominator: number
+  /**
+   * False on a probe-filled bucket, where the cache rate is borrowed from the
+   * group's real-traffic average (ADR 0009). Absent / undefined means the rate was
+   * measured on real traffic in this bucket. Render false as "—", never as 0%.
+   */
+  cache_rate_known?: boolean
   ttft: LatencyMetric
   duration: LatencyMetric
   upstream_affected_requests?: number

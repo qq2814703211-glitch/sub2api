@@ -125,6 +125,7 @@ func RegisterAdminRoutes(
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h, settingService)
 		registerChannelMonitorV2Routes(admin, h, settingService)
+		registerChannelMonitorV3Routes(admin, h)
 
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
@@ -895,6 +896,24 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			users.PUT("/:user_id", h.Admin.Affiliate.UpdateUserSettings)
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
 		}
+	}
+}
+
+// registerChannelMonitorV3Routes mounts the standalone V3 admin surface.
+//
+// Deliberately ungated by channel_monitor_enabled / channel_monitor_mode: V3 owns
+// its own switch inside channel_monitor_v3_config (ADR 0008). Operators must be
+// able to configure V3 on a deployment whose V1 monitor is off.
+func registerChannelMonitorV3Routes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Admin.ChannelMonitorV3 == nil {
+		return
+	}
+	monitor := admin.Group("/channel-monitor-v3")
+	{
+		monitor.GET("/config", h.Admin.ChannelMonitorV3.GetConfig)
+		monitor.PUT("/config", h.Admin.ChannelMonitorV3.UpdateConfig)
+		monitor.GET("/groups", h.Admin.ChannelMonitorV3.ListGroups)
+		monitor.POST("/probe", h.Admin.ChannelMonitorV3.ProbeNow)
 	}
 }
 

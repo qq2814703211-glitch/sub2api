@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatLatencyKpiSecondary,
+  formatMonitorCacheRate,
   formatLatencyPrivacy,
   formatMonitorMs,
   formatMonitorNumber,
@@ -133,5 +134,25 @@ describe('monitorFormat accuracy', () => {
     expect(formatLatencyPrivacy(100, 250, 120, 300)).toBe('AVG 120ms · P50 100ms · P90 250ms')
     expect(formatLatencyPrivacy(100, null, null, 300)).toBe('P50 100ms · P95 300ms')
     expect(formatLatencyPrivacy(null, null)).toBe('-')
+  })
+})
+
+describe('formatMonitorCacheRate (ADR 0009)', () => {
+  it('renders an em dash for a probe bucket with no real traffic', () => {
+    // The probe bucket used to report 1/1 = 100%. It must now read as unknown,
+    // because a probe says nothing about the channel's cache behaviour.
+    expect(formatMonitorCacheRate(1, false, 'en-US')).toBe('—')
+    expect(formatMonitorCacheRate(0, false, 'en-US')).toBe('—')
+  })
+
+  it('renders a measured real-traffic rate', () => {
+    expect(formatMonitorCacheRate(0.42, true, 'en-US')).toBe('42.0%')
+    // A real bucket leaves the flag unset: it was measured, not borrowed.
+    expect(formatMonitorCacheRate(0.42, undefined, 'en-US')).toBe('42.0%')
+  })
+
+  it('never falls through to 0% for a missing value', () => {
+    expect(formatMonitorCacheRate(undefined, undefined, 'en-US')).toBe('—')
+    expect(formatMonitorCacheRate(null, true, 'en-US')).toBe('—')
   })
 })
