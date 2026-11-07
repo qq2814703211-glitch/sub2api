@@ -1,0 +1,56 @@
+{
+  "actual_cost": 3,
+  "name": "review-media",
+  "platform": "openai",
+  "pricing": {
+    "platform": "openai",
+    "models": [
+      "review-media"
+    ],
+    "billing_mode": "token",
+    "input_price": null,
+    "output_price": null,
+    "cache_write_price": null,
+    "cache_write_1h_price": null,
+    "cache_read_price": null,
+    "fast_multiplier": null,
+    "flex_multiplier": null,
+    "image_input_price": null,
+    "image_output_price": null,
+    "per_request_price": null,
+    "intervals": null,
+    "time_pricing": {
+      "timezone": "UTC",
+      "periods": [
+        {
+          "start_time": "00:00:00",
+          "end_time": "23:59:59",
+          "multiplier": 3
+        }
+      ]
+    },
+    "media_pricing": {
+      "rules": [
+        {
+          "name": "fixture",
+          "unit": "image",
+          "conditions": {},
+          "price": 2
+        }
+      ]
+    },
+    "created_at": "0001-01-01T00:00:00Z",
+    "updated_at": "0001-01-01T00:00:00Z"
+  },
+  "time_pricing": {
+    "Timezone": "UTC",
+    "WeekdaysOnly": false,
+    "Periods": [
+      {
+        "StartTime": "00:00:00",
+        "EndTime": "23:59:59",
+        "Multiplier": 3
+      }
+    ]
+  }
+}
