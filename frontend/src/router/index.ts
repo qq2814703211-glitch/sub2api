@@ -561,6 +561,20 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    // Standalone V3 configuration surface (ADR 0008). Not nested under the V1/V2
+    // channel-monitor page: V3 has its own switch and its own probe identity.
+    path: '/admin/channel-monitor-v3',
+    name: 'AdminChannelMonitorV3',
+    component: () => import('@/views/admin/ChannelMonitorV3View.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Channel Monitor V3',
+      titleKey: 'channelMonitorV3.admin.title',
+      descriptionKey: 'channelMonitorV3.admin.description'
+    }
+  },
+  {
     path: '/monitor',
     name: 'ChannelStatus',
     component: () => import('@/views/user/ChannelStatusView.vue'),
