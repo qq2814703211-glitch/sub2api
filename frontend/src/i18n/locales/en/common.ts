@@ -163,9 +163,6 @@ export default {
 
   // Navigation
   nav: {
-    opsCenter: 'Operations center',
-    accountOps: 'Account operations',
-    upstreamMonitor: 'Upstream monitor',
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     tickets: 'Tickets',
@@ -220,7 +217,6 @@ export default {
     contentModeration: 'Content Moderation',
     promptAudit: 'Prompt Audit',
     auditLogs: 'Audit Logs',
-    groupCacheTests: 'Cache Tests',
   },
 
   // Auth
