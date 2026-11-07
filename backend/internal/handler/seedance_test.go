@@ -86,6 +86,7 @@ func TestSeedanceHandlerLifecycleAndOwnership(t *testing.T) {
 		billed := prepareSeedanceCompletionBilling(context.Background(), h, key, subject, result.ResponseID, result)
 		if i == 0 {
 			require.NotNil(t, billed)
+			require.NotEmpty(t, billed.BillingClaimOwner)
 			require.Equal(t, "doubao-seedance", billed.BillingModel)
 			require.Equal(t, 12345, billed.Usage.OutputTokens)
 			require.Zero(t, billed.VideoCount)

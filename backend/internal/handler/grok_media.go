@@ -573,18 +573,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, grokMediaScheduleModel(account, routingModel, result), true, nil)
 		if durableVideoJob == nil && isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
-			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
-				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,
-			); err != nil {
-				reqLog.Warn("grok_media.bind_video_request_account_failed",
-					zap.Int64("account_id", account.ID),
-					zap.String("request_id", result.ResponseID),
-					zap.Error(err),
-				)
+			bindingErr := h.gatewayService.BindGrokMediaVideoRequestAccount(requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID)
+			if bindingErr != nil {
+				reqLog.Warn("grok_media.bind_video_request_account_failed", zap.Int64("account_id", account.ID), zap.String("request_id", result.ResponseID), zap.Error(bindingErr))
+				h.errorResponse(c, http.StatusServiceUnavailable, "billing_state_unavailable", "Could not safely persist the async video owner binding")
+				return
 			}
-			// Defer billing until status polling observes video.url. Persist create-time
-			// model/duration/resolution so status can still price if upstream omits them.
-			// Retry once: missing pending causes silent underpricing (status omits resolution).
+			// Persist the create-time pricing snapshot before exposing the task ID.
 			pending := service.GrokVideoPendingBilling{
 				Model:                requestModel,
 				BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
@@ -596,21 +591,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				CreatedAt: videoCreateStartedAt,
 			}
 			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
-				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
-					zap.Int64("account_id", account.ID),
-					zap.String("request_id", result.ResponseID),
-					zap.Error(err),
-				)
-				if err2 := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err2 != nil {
-					// Response body may already be committed; completion path will fail-closed
-					// when pending is still missing and status cannot price duration.
-					reqLog.Error("grok_media.store_video_pending_billing_failed",
-						zap.Int64("account_id", account.ID),
-						zap.String("request_id", result.ResponseID),
-						zap.Error(err2),
-					)
+				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying", zap.Int64("account_id", account.ID), zap.String("request_id", result.ResponseID), zap.Error(err))
+				if retryErr := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); retryErr != nil {
+					reqLog.Error("grok_media.store_video_pending_billing_failed", zap.Int64("account_id", account.ID), zap.String("request_id", result.ResponseID), zap.Error(retryErr))
+					h.errorResponse(c, http.StatusServiceUnavailable, "billing_state_unavailable", "Could not safely persist the async video billing snapshot")
+					return
 				}
 			}
+		}
+		if isGrokVideoCreateEndpoint(endpoint) && result.DeferredHTTPStatus > 0 {
+			// Durable jobs submit their task ID through the pre-publish callback in
+			// the forwarder; the fallback path stores its Redis snapshot above.
+			h.gatewayService.CommitDeferredMediaCreateResponse(c, result)
 		}
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
@@ -748,17 +740,18 @@ func prepareGrokVideoCompletionBilling(
 			zap.String("note", "resolution falls back to default 480p; investigate pending store failures"),
 		)
 	}
-	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
+	owner, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if err != nil {
 		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", taskRequestID), zap.Error(err))
 		return nil
 	}
-	if !claimed {
+	if owner == "" {
 		reqLog.Debug("grok_media.video_billing_already_claimed", zap.String("request_id", taskRequestID))
 		return nil
 	}
 	// Re-merge with pending: resolution is request-only; model/duration fill gaps.
 	merged := *statusResult
+	merged.BillingClaimOwner = owner
 	if pending != nil {
 		if strings.TrimSpace(merged.Model) == "" {
 			merged.Model = firstNonEmptyString(pending.BillingModel, pending.Model, pending.OriginalModel)
@@ -879,22 +872,12 @@ func recordGrokMediaUsage(
 			SessionID:          sessionID,
 			ChannelUsageFields: channelUsageFields,
 		}); err != nil {
-			if videoTaskID != "" {
-				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {
-					reqLog.Warn("grok_media.video_billing_claim_release_failed",
-						zap.String("request_id", videoTaskID),
-						zap.Error(releaseErr),
-					)
+			if videoTaskID != "" && result != nil && strings.TrimSpace(result.BillingClaimOwner) != "" {
+				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID, result.BillingClaimOwner); releaseErr != nil {
+					reqLog.Warn("grok_media.video_billing_claim_release_failed", zap.String("request_id", videoTaskID), zap.Error(releaseErr))
 				}
 			}
-			logger.L().With(
-				zap.String("component", "handler.openai_gateway.grok_media"),
-				zap.Int64("user_id", subject.UserID),
-				zap.Int64("api_key_id", apiKey.ID),
-				zap.Any("group_id", apiKey.GroupID),
-				zap.String("model", requestModel),
-				zap.Int64("account_id", account.ID),
-			).Error("grok_media.record_usage_failed", zap.Error(err))
+			logger.L().With(zap.String("component", "handler.openai_gateway.grok_media"), zap.Int64("user_id", subject.UserID), zap.Int64("api_key_id", apiKey.ID), zap.Any("group_id", apiKey.GroupID), zap.String("model", requestModel), zap.Int64("account_id", account.ID)).Error("grok_media.record_usage_failed", zap.Error(err))
 			reqLog.Debug("grok_media.record_usage_failed", zap.Error(err))
 		}
 	})
