@@ -165,6 +165,19 @@ func RegisterUserRoutes(
 			monitorV2.GET("/errors", h.ChannelMonitorV2.Errors)
 			monitorV2.GET("/users", h.ChannelMonitorV2.Users)
 		}
+
+		// V3 is its own product (ADR 0008): gated only by
+		// channel_monitor_v3_config.enabled, never by channel_monitor_enabled /
+		// channel_monitor_mode. No channelMonitorModeV2Guard here on purpose.
+		if h.ChannelMonitorV3 != nil {
+			monitorV3 := authenticated.Group("/channel-monitor-v3")
+			monitorV3.Use(panelRateLimiter.Heavy())
+			{
+				monitorV3.GET("/status", h.ChannelMonitorV3.Status)
+				monitorV3.GET("/snapshot", h.ChannelMonitorV3.Snapshot)
+				monitorV3.GET("/matrix", h.ChannelMonitorV3.Matrix)
+			}
+		}
 	}
 }
 
