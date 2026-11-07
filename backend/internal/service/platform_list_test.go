@@ -50,19 +50,6 @@ func legacyNormalizeOpenAICompatiblePlatform(platform string) string {
 	return PlatformOpenAI
 }
 
-func legacyIsUpstreamBillingProbeIdentity(platform, accountType string) bool {
-	if accountType != AccountTypeAPIKey {
-		return false
-	}
-	switch platform {
-	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok,
-		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
-		PlatformTypeSafe, PlatformCommandCode, PlatformCline:
-		return true
-	}
-	return false
-}
-
 func legacyIsHeaderOverrideEligible(platform, accountType string) bool {
 	switch platform {
 	case PlatformAnthropic, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline:
@@ -104,8 +91,6 @@ func TestPlatformListDerivedPredicatesMatchLegacy(t *testing.T) {
 		require.Equal(t, legacyNormalizeOpenAICompatiblePlatform(platform), NormalizeOpenAICompatiblePlatform(platform), platform)
 		require.Equal(t, legacyIsOpenAICompatible(platform), (&Account{Platform: platform}).IsOpenAICompatible(), platform)
 		for _, accountType := range platformProbeAccountTypes {
-			require.Equal(t, legacyIsUpstreamBillingProbeIdentity(platform, accountType),
-				IsUpstreamBillingProbeIdentity(platform, accountType), "%s/%s", platform, accountType)
 			require.Equal(t, legacyIsHeaderOverrideEligible(platform, accountType),
 				(&Account{Platform: platform, Type: accountType}).IsHeaderOverrideEligible(), "%s/%s", platform, accountType)
 		}

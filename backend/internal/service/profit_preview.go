@@ -11,14 +11,9 @@ import (
 )
 
 const (
-	ProfitPreviewRateSourceManual        = "manual"
-	ProfitPreviewRateSourceUpstreamProbe = "upstream_probe_sync"
+	ProfitPreviewRateSourceManual = "manual"
 
-	ProfitPreviewWarningProbeMissing     = "probe_snapshot_missing"
-	ProfitPreviewWarningProbeStale       = "probe_snapshot_stale"
-	ProfitPreviewWarningProbeFailed      = "probe_failed"
-	ProfitPreviewWarningProbeUnsupported = "probe_unsupported"
-	ProfitPreviewWarningManualRateOne    = "manual_rate_1_suspected_unmaintained"
+	ProfitPreviewWarningManualRateOne = "manual_rate_1_suspected_unmaintained"
 )
 
 // ProfitPreviewGroupInput 是一个分组的预演输入。
@@ -163,10 +158,7 @@ func previewAccountProfitAdmission(
 		Platform:   account.Platform,
 		RateSource: ProfitPreviewRateSourceManual,
 	}
-	if enabled, _ := account.Extra[UpstreamBillingRateSyncEnabledExtraKey].(bool); enabled {
-		verdict.RateSource = ProfitPreviewRateSourceUpstreamProbe
-		verdict.Warnings = append(verdict.Warnings, profitPreviewProbeWarnings(account, evalAt)...)
-	} else if account.RateMultiplier != nil && *account.RateMultiplier == 1 {
+	if account.RateMultiplier != nil && *account.RateMultiplier == 1 {
 		verdict.Warnings = append(verdict.Warnings, ProfitPreviewWarningManualRateOne)
 	}
 
@@ -190,22 +182,4 @@ func previewAccountProfitAdmission(
 		verdict.RejectedUnderMinD = profitControlOverThreshold(*account.RateMultiplier, thresholdMinD)
 	}
 	return verdict
-}
-
-func profitPreviewProbeWarnings(account *Account, evalAt time.Time) []string {
-	snapshot := decodeUpstreamBillingProbeSnapshot(account.Extra)
-	if snapshot == nil {
-		return []string{ProfitPreviewWarningProbeMissing}
-	}
-	switch snapshot.Status {
-	case UpstreamBillingProbeStatusFailed:
-		return []string{ProfitPreviewWarningProbeFailed}
-	case UpstreamBillingProbeStatusUnsupported:
-		return []string{ProfitPreviewWarningProbeUnsupported}
-	case UpstreamBillingProbeStatusOK:
-		if snapshot.FreshUntil == nil || !evalAt.Before(*snapshot.FreshUntil) {
-			return []string{ProfitPreviewWarningProbeStale}
-		}
-	}
-	return nil
 }

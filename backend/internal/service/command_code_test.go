@@ -168,9 +168,3 @@ func TestAccountTestService_ByInboundProviderSkipsMissingNativeEndpoints(t *test
 	require.Equal(t, "inbound-test-model", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
-
-// 官方主机不做上游计费探测：中转站的计费接口在官方 API 上不存在，只会把 Key 发往官方主机。
-func TestCommandCodeOfficialHostSkipsUpstreamBillingProbe(t *testing.T) {
-	require.True(t, upstreamBillingProbeTargetIsOfficialAPI(DefaultCommandCodeBaseURL))
-	require.True(t, upstreamBillingProbeTargetIsOfficialAPI(DefaultCommandCodeAnthropicBaseURL))
-}

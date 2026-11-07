@@ -282,7 +282,7 @@ func TestOpenCodeGoUsageRefresh200Success(t *testing.T) {
 	account.Extra[OpenCodeGoUsageAutoRefreshExtraKey] = true
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 7)
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestOpenCodeGoUsageRefresh401Unauthorized(t *testing.T) {
 	account.Extra[OpenCodeGoUsageAutoRefreshExtraKey] = true
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{status: http.StatusUnauthorized}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 7)
 	require.NoError(t, err)
@@ -324,7 +324,7 @@ func TestOpenCodeGoUsageRefresh403Forbidden(t *testing.T) {
 	account := openCodeGoUsageAccount(7)
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{status: http.StatusForbidden}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 7)
 	require.NoError(t, err)
@@ -338,7 +338,7 @@ func TestOpenCodeGoUsageRefreshMalformedJSON(t *testing.T) {
 	account := openCodeGoUsageAccount(7)
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{status: http.StatusOK, body: []byte(`{"usage": {broken`)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 7)
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestOpenCodeGoUsageRefreshFailureKeepsPreviousData(t *testing.T) {
 	}
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{status: http.StatusInternalServerError}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	state, err := svc.Refresh(context.Background(), 7)
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestOpenCodeGoUsageRefreshClampsHugeRetryAfter(t *testing.T) {
 		status: http.StatusTooManyRequests,
 		header: http.Header{"Retry-After": []string{"99999999"}},
 	}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 	svc.now = func() time.Time { return now }
 
 	state, err := svc.Refresh(context.Background(), 7)
@@ -444,7 +444,7 @@ func TestOpenCodeGoUsageManualRefreshThrottle(t *testing.T) {
 	}
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 	svc.now = func() time.Time { return now }
 
 	_, err := svc.Refresh(context.Background(), 7)
@@ -464,7 +464,7 @@ func TestOpenCodeGoUsageManualRefreshNotThrottledAfterWindow(t *testing.T) {
 	}
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 	svc.now = func() time.Time { return now }
 
 	state, err := svc.Refresh(context.Background(), 7)
@@ -575,7 +575,7 @@ func TestOpenCodeGoUsageGroupSharesStateAcrossSiblings(t *testing.T) {
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{
 		source.ID: source, sibling.ID: sibling, different.ID: different,
 	}}
-	svc := newOpenCodeGoUsageTestService(t, repo, &openCodeGoUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, &openCodeGoUsageHTTPStub{}, &inMemorySettingRepo{})
 
 	state, err := svc.GetState(context.Background(), sibling.ID)
 	require.NoError(t, err)
@@ -613,7 +613,7 @@ func TestOpenCodeGoUsageSetAutoRefreshAndSnapshotAreGroupScoped(t *testing.T) {
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{
 		first.ID: first, second.ID: second, different.ID: different,
 	}}
-	svc := newOpenCodeGoUsageTestService(t, repo, &openCodeGoUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, &openCodeGoUsageHTTPStub{}, &inMemorySettingRepo{})
 
 	state, err := svc.SetAutoRefresh(context.Background(), second.ID, true)
 	require.NoError(t, err)
@@ -644,7 +644,7 @@ func TestOpenCodeGoUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *te
 		accounts: map[int64]*Account{first.ID: first, second.ID: second},
 		due:      []Account{*first, *second},
 	}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOpenCodeGoUsageSettings: `{"enabled":true,"interval_minutes":15}`,
 	}}
 	started := make(chan struct{})
@@ -687,7 +687,7 @@ func TestOpenCodeGoUsageRefreshRejectsGroupChangeBeforeUpstreamRequest(t *testin
 	base := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{account.ID: account}}
 	repo := &openCodeGoRefreshPreflightIdentityChangeRepo{openCodeGoUsageTestRepo: base}
 	upstream := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := NewOpenCodeGoUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil))
+	svc := NewOpenCodeGoUsageService(repo, upstream, NewSettingService(&inMemorySettingRepo{}, nil))
 	t.Cleanup(svc.Stop)
 
 	_, err := svc.Refresh(context.Background(), account.ID)
@@ -718,7 +718,7 @@ func TestOpenCodeGoUsageRunnerDisablesAutoRefreshAfterIdentityError(t *testing.T
 	account.ProxyID = &missingProxyID
 	account.Proxy = nil
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{14: account}}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOpenCodeGoUsageSettings: `{"enabled":true,"interval_minutes":15}`,
 	}}
 	upstream := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
@@ -739,7 +739,7 @@ func TestOpenCodeGoUsageRunDueRefreshesDueAccounts(t *testing.T) {
 	account.Extra[OpenCodeGoUsageAutoRefreshExtraKey] = true
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	settingsRepo := &upstreamBillingProbeSettingRepo{}
+	settingsRepo := &inMemorySettingRepo{}
 	require.NoError(t, settingsRepo.Set(context.Background(), SettingKeyOpenCodeGoUsageSettings, `{"enabled":true,"interval_minutes":15}`))
 	svc := newOpenCodeGoUsageTestService(t, repo, stub, settingsRepo)
 
@@ -753,7 +753,7 @@ func TestOpenCodeGoUsageRunDueSkipsWhenDisabled(t *testing.T) {
 	account.Extra[OpenCodeGoUsageAutoRefreshExtraKey] = true
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	require.NoError(t, svc.RunDue(context.Background()))
 	require.Equal(t, int64(0), stub.calls.Load())
@@ -923,7 +923,7 @@ func TestScheduleOpenCodeGoUsageActivityOnlyForOpenCode(t *testing.T) {
 }
 
 func TestOpenCodeGoUsageSettingsDefaultOffAndValidation(t *testing.T) {
-	repo := &upstreamBillingProbeSettingRepo{}
+	repo := &inMemorySettingRepo{}
 	settingsService := NewSettingService(repo, nil)
 	settings, err := settingsService.GetOpenCodeGoUsageSettings(context.Background())
 	require.NoError(t, err)
@@ -1000,7 +1000,7 @@ func TestOpenCodeGoUsageRefreshRejectsIneligibleAccount(t *testing.T) {
 	account.Credentials["base_url"] = "https://opencode.ai/v1"
 	repo := &openCodeGoUsageTestRepo{accounts: map[int64]*Account{7: account}}
 	stub := &openCodeGoUsageHTTPStub{body: []byte(openCodeGoUsageFixture)}
-	svc := newOpenCodeGoUsageTestService(t, repo, stub, &upstreamBillingProbeSettingRepo{})
+	svc := newOpenCodeGoUsageTestService(t, repo, stub, &inMemorySettingRepo{})
 
 	_, err := svc.Refresh(context.Background(), 7)
 	require.Error(t, err)
