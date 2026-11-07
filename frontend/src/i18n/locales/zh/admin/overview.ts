@@ -1142,7 +1142,7 @@ export default {
         longContextHint: '勾选后按渠道区间或官方预设阶梯计费；关闭后默认按第一档，账号显式开启时除外。',
         plazaEnabled: '在模型广场按本分组独立展示',
         plazaEnabledHint: '勾选后广场用本分组自己的价卡列出模型；即使没有绑定渠道也会展示（视频 / Image 这类 composite 分组需要开启）。',
-        timePricingTokenOnly: '{models} 设置了分时倍率，但只有按 token 计费的价卡支持分时倍率，请改用 token 模式或清空时段。',
+        timePricingTokenOnly: '{models} 设置了分时倍率，需要按 token 计费或启用媒体计价规则。请配置媒体规则或清空时段。',
         add: '添加模型价格'
       },
       voicePricing: {

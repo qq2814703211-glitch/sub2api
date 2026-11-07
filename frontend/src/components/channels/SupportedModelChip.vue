@@ -12,6 +12,7 @@
       @mouseleave="onLeave"
       @focusin="onEnter"
       @focusout="onLeave"
+      @keydown.esc="hidePopover"
       tabindex="0"
     >
       <PlatformIcon
@@ -26,6 +27,7 @@
         {{ model.platform }}
       </span>
       {{ model.name }}
+      <span v-if="model.pricing?.media_pricing?.rules?.length" class="text-[10px]">{{ t('mediaPricing.badge') }}</span>
     </span>
 
     <!-- Teleport to body so the popover is not clipped by card/overflow-hidden
@@ -36,8 +38,14 @@
         v-show="show"
         ref="popoverEl"
         role="tooltip"
-        class="pointer-events-none fixed z-[99999] w-80 max-w-[min(22rem,calc(100vw-1rem))] rounded-lg border bg-white text-xs shadow-xl dark:bg-dark-800"
-        :class="[popoverBorderClass]"
+        class="fixed z-[99999] max-h-[calc(100vh-2rem)] w-80 max-w-[min(22rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border bg-white text-xs shadow-xl dark:bg-dark-800"
+        @mouseenter="onEnter"
+        @mouseleave="onLeave"
+        :class="[popoverBorderClass, { 'pointer-events-none': !hasMediaPricing }]"
+        :tabindex="hasMediaPricing ? 0 : undefined"
+        @focusin="onEnter"
+        @focusout="onLeave"
+        @keydown.esc="hidePopover"
         :style="popoverStyle"
       >
         <!-- Header：平台主题色背景，含模型名 + 平台徽章 -->
@@ -62,9 +70,11 @@
           <div v-else class="space-y-2 text-gray-700 dark:text-gray-300">
             <div class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t(prefixKey('billingMode')) }}</span>
-              <span>{{ billingModeLabel }}</span>
+              <span>{{ hasMediaPricing ? t('mediaPricing.badge') : billingModeLabel }}</span>
             </div>
 
+            <MediaPricingRules v-if="model.pricing.media_pricing?.rules?.length" :pricing="model.pricing.media_pricing" />
+            <template v-if="!model.pricing.media_pricing?.rules?.length">
             <template v-if="model.pricing.billing_mode === BILLING_MODE_TOKEN">
               <PricingRow
                 :label="t(prefixKey('inputPrice'))"
@@ -165,6 +175,7 @@
                 </div>
               </div>
             </div>
+            </template>
           </div>
         </div>
       </div>
@@ -176,6 +187,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PricingRow from './PricingRow.vue'
+import MediaPricingRules from './MediaPricingRules.vue'
 import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import {
   BILLING_MODE_TOKEN,
@@ -212,6 +224,7 @@ const props = withDefaults(
 )
 
 const effectivePlatform = computed<string>(() => props.model.platform || props.platformHint || '')
+const hasMediaPricing = computed(() => !!props.model.pricing?.media_pricing?.rules?.length)
 
 const { t } = useI18n()
 
@@ -307,7 +320,10 @@ function updatePosition() {
   }
 }
 
+let hideTimer: ReturnType<typeof setTimeout> | undefined
+
 function onEnter() {
+  clearTimeout(hideTimer)
   show.value = true
   nextTick(() => {
     updatePosition()
@@ -317,12 +333,21 @@ function onEnter() {
 }
 
 function onLeave() {
+  if (hasMediaPricing.value) {
+    clearTimeout(hideTimer)
+    hideTimer = setTimeout(hidePopover, 150)
+  } else hidePopover()
+}
+
+function hidePopover() {
+  clearTimeout(hideTimer)
   show.value = false
   window.removeEventListener('scroll', updatePosition, true)
   window.removeEventListener('resize', updatePosition)
 }
 
 onBeforeUnmount(() => {
+  clearTimeout(hideTimer)
   window.removeEventListener('scroll', updatePosition, true)
   window.removeEventListener('resize', updatePosition)
 })

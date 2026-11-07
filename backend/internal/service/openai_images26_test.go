@@ -276,7 +276,7 @@ func TestGPTImage26InvalidNativeOptions(t *testing.T) {
 	for _, options := range []string{
 		`"frame_count":"2"`, `"frame_count":2.5`, `"frame_duration_ms":true`,
 		`"svg":[]`, `"svg":{"reasoning":"high"}`,
-		`"markup":[]`, `"markup":{"file_id":"file-1"}`, `"markup":{}`,
+		`"markup":[]`, `"markup":{}`,
 	} {
 		t.Run(options, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-image-2.6-flare","prompt":"edit","images":[{"image_url":"data:image/png;base64,AA=="}],` + options + `}`)
@@ -288,16 +288,13 @@ func TestGPTImage26InvalidNativeOptions(t *testing.T) {
 	}
 }
 
+// The media lane bills 2.6 through operator-configured cards only: it must not
+// inherit the older gpt-image token rates as a silent fallback.
 func TestGPTImage26BillingWithoutDynamicPricing(t *testing.T) {
 	svc := &BillingService{}
-	for _, model := range []string{"gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
+	for _, model := range []string{"gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
 		p, err := svc.GetModelPricing(model)
-		require.NoError(t, err)
-		require.Equal(t, 5e-6, p.InputPricePerToken)
-		require.Equal(t, 1.25e-6, p.CacheReadPricePerToken)
-		require.Equal(t, 8e-6, p.ImageInputPricePerToken)
-		require.Equal(t, 2e-6, p.ImageCacheReadPricePerToken)
-		require.Equal(t, 30e-6, p.ImageOutputPricePerToken)
-		require.Zero(t, p.OutputPricePerToken)
+		require.Error(t, err)
+		require.Nil(t, p)
 	}
 }

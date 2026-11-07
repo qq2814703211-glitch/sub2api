@@ -1145,7 +1145,7 @@ export default {
         longContextHint: 'When checked, channel intervals or official preset tiers apply. Otherwise the first tier is used unless the account explicitly enables long-context billing.',
         plazaEnabled: 'Show this group separately in the model plaza',
         plazaEnabledHint: 'When checked, the plaza lists this group with its own prices, even if no channel is bound (needed for composite image/video groups).',
-        timePricingTokenOnly: '{models} has time-based multipliers, but only token-billed pricing entries support them. Switch to token mode or clear the periods.',
+        timePricingTokenOnly: '{models} has time-based multipliers, which require token billing or media pricing rules. Configure media rules or clear the periods.',
         add: 'Add model price'
       },
       voicePricing: {

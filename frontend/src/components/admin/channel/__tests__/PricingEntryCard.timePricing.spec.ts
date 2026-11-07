@@ -53,15 +53,15 @@ describe('PricingEntryCard time pricing visibility', () => {
     expect(wrapper.findComponent({ name: 'TimePricingSection' }).exists()).toBe(true)
   })
 
-  it('is hidden for non-token pricing even when explicitly enabled', () => {
+  it('shows existing non-token periods so they can be explicitly cleared', () => {
     const wrapper = shallowMount(PricingEntryCard, {
       props: { entry: createEntry('per_request'), enableTimePricing: true },
     })
 
-    expect(wrapper.findComponent({ name: 'TimePricingSection' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'TimePricingSection' }).exists()).toBe(true)
   })
 
-  it('clears time periods when changing billing mode', () => {
+  it('preserves time periods when changing billing mode', () => {
     const entry = createEntry()
     const wrapper = shallowMount(PricingEntryCard, {
       props: { entry, enableTimePricing: true },
@@ -73,7 +73,6 @@ describe('PricingEntryCard time pricing visibility', () => {
       ...entry,
       billing_mode: 'image',
       intervals: [],
-      time_pricing: { timezone: 'Asia/Shanghai', weekdays_only: false, periods: [] },
     })
     expect(entry.time_pricing.periods).toHaveLength(1)
   })
@@ -157,5 +156,29 @@ describe('PricingEntryCard request multipliers', () => {
       models: ['example-model'], input_price: 3, output_price: 15,
       reasoning_effort_multipliers: { high: 0.5 },
     })
+  })
+})
+
+
+describe('media time pricing preserves endpoint modes and account-stat restrictions', () => {
+  it.each(['image','video','per_request'] as const)('enables %s media schedules and preserves them across billing mode changes', async mode => {
+    const entry = { ...createEntry(mode), media_pricing: { rules: [{ unit:'request' as const, price:0 }] } }
+    const wrapper=shallowMount(PricingEntryCard,{props:{entry,enableTimePricing:true}})
+    expect(wrapper.findComponent({name:'TimePricingSection'}).exists()).toBe(true)
+    wrapper.findComponent({name:'Select'}).vm.$emit('update:modelValue','token')
+    const changed=wrapper.emitted('update')![0]![0] as PricingFormEntry
+    expect(changed.time_pricing).toEqual(entry.time_pricing)
+    expect(changed.media_pricing).toEqual(entry.media_pricing)
+    await wrapper.setProps({entry:changed,enableTimePricing:false})
+    expect(wrapper.findComponent({name:'TimePricingSection'}).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not offer new schedules on legacy non-token cards without media rules', () => {
+    const entry=createEntry('per_request')
+    entry.time_pricing.periods=[]
+    const wrapper=shallowMount(PricingEntryCard,{props:{entry,enableTimePricing:true}})
+    expect(wrapper.findComponent({name:'TimePricingSection'}).exists()).toBe(false)
+    wrapper.unmount()
   })
 })
