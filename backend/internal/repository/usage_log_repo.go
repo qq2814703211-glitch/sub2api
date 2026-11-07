@@ -54,6 +54,26 @@ var dateFormatWhitelist = map[string]string{
 	"month": "YYYY-MM",
 }
 
+// dateTruncUnitWhitelist maps a granularity to the PostgreSQL date_trunc unit
+// used for GROUP BY. Only the two granularities on the hot trend path are
+// listed: date_trunc keeps the grouping key in its native comparable type, so
+// the planner sorts/aggregates timestamps instead of formatted strings.
+//
+// week and month deliberately stay out. Their existing buckets are ISO-week
+// ('IYYY-IW') and calendar-month strings, and date_trunc('week') is
+// Monday-based while week-boundary handling elsewhere is not obviously the same
+// — not worth risking a silent off-by-one on a path nobody measured as slow.
+var dateTruncUnitWhitelist = map[string]string{
+	"hour": "hour",
+	"day":  "day",
+}
+
+// safeDateTruncUnit returns the date_trunc unit for a granularity, or "" when
+// the granularity must keep the TO_CHAR grouping.
+func safeDateTruncUnit(granularity string) string {
+	return dateTruncUnitWhitelist[granularity]
+}
+
 // safeDateFormat 根据白名单获取 dateFormat，未匹配时返回默认值
 func safeDateFormat(granularity string) string {
 	if f, ok := dateFormatWhitelist[granularity]; ok {
