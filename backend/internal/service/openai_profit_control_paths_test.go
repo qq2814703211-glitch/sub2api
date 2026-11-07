@@ -19,7 +19,7 @@ import (
 )
 
 func profitControlWSAccount(id int64, rate float64, now time.Time) Account {
-	account := upstreamCostTestAccount(id, UpstreamBillingProbeStatusOK, rate, now.Add(-time.Minute), 30*time.Minute)
+	account := upstreamCostTestAccount(id, rate)
 	profitControlTestAccountWithRate(account, rate)
 	account.Status = StatusActive
 	account.Schedulable = true
@@ -69,9 +69,8 @@ func TestProfitControl_PreviousResponseStickyVetoKeepsBinding(t *testing.T) {
 
 // legacy 引擎（高级调度器关闭）：候选过滤、全排除错误语义与既有语义一致。
 func TestProfitControl_LegacyEngineFiltersCandidates(t *testing.T) {
-	now := time.Now()
-	cheap := upstreamCostTestAccount(41, UpstreamBillingProbeStatusOK, 0.3, now.Add(-time.Minute), 30*time.Minute)
-	expensive := upstreamCostTestAccount(42, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	cheap := upstreamCostTestAccount(41, 0.3)
+	expensive := upstreamCostTestAccount(42, 0.8)
 	profitControlTestAccountWithRate(cheap, 0.3)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	for _, account := range []*Account{cheap, expensive} {
@@ -125,9 +124,8 @@ func TestProfitControl_FailoverDoesNotReadmitExcluded(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
-	now := time.Now()
-	cheap := upstreamCostTestAccount(51, UpstreamBillingProbeStatusOK, 0.3, now.Add(-time.Minute), 30*time.Minute)
-	expensive := upstreamCostTestAccount(52, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	cheap := upstreamCostTestAccount(51, 0.3)
+	expensive := upstreamCostTestAccount(52, 0.8)
 	profitControlTestAccountWithRate(cheap, 0.3)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	for _, account := range []*Account{cheap, expensive} {
@@ -160,7 +158,7 @@ func TestProfitControl_FailoverDoesNotReadmitExcluded(t *testing.T) {
 // 抢槽后终检：候选构建后才变得不合格的账号（状态竞态）在取得槽位前被拦截。
 func TestProfitControl_PostSlotRecheckVetoes(t *testing.T) {
 	now := time.Now()
-	expensive := upstreamCostTestAccount(61, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	expensive := upstreamCostTestAccount(61, 0.8)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	expensive.Status = StatusActive
 	expensive.Schedulable = true
@@ -190,8 +188,7 @@ func TestProfitControl_RateRecoveryReadmitsAccount(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
-	now := time.Now()
-	expensive := upstreamCostTestAccount(71, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	expensive := upstreamCostTestAccount(71, 0.8)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	expensive.Status = StatusActive
 	expensive.Schedulable = true
@@ -213,7 +210,7 @@ func TestProfitControl_RateRecoveryReadmitsAccount(t *testing.T) {
 	require.Error(t, err)
 
 	// 同步/手工写回：账号倍率回落到 0.3（阈值 0.5 内）后自动恢复参与。
-	recovered := upstreamCostTestAccount(71, UpstreamBillingProbeStatusOK, 0.3, time.Now().Add(-time.Minute), 30*time.Minute)
+	recovered := upstreamCostTestAccount(71, 0.3)
 	profitControlTestAccountWithRate(recovered, 0.3)
 	recovered.Status = StatusActive
 	recovered.Schedulable = true
@@ -307,8 +304,8 @@ func TestProfitControl_EligibilityFunctionVetoes(t *testing.T) {
 		threshold: 0.5,
 		pricingAt: now,
 	})
-	cheap := upstreamCostTestAccount(81, UpstreamBillingProbeStatusOK, 0.3, now.Add(-time.Minute), 30*time.Minute)
-	expensive := upstreamCostTestAccount(82, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	cheap := upstreamCostTestAccount(81, 0.3)
+	expensive := upstreamCostTestAccount(82, 0.8)
 	profitControlTestAccountWithRate(cheap, 0.3)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	for _, account := range []*Account{cheap, expensive} {
@@ -325,9 +322,8 @@ func TestProfitControl_EligibilityFunctionVetoes(t *testing.T) {
 // legacy 引擎粘性写回（评审 M-Legacy 回归）：门下选号阶段不得直写粘性——
 // 终检否决的账号不能成为新绑定；无门保持官方 eager 绑定与原 TTL 语义。
 func TestProfitControl_LegacyEngineDefersStickyBindingUnderGate(t *testing.T) {
-	now := time.Now()
-	cheap := upstreamCostTestAccount(45, UpstreamBillingProbeStatusOK, 0.3, now.Add(-time.Minute), 30*time.Minute)
-	expensive := upstreamCostTestAccount(46, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	cheap := upstreamCostTestAccount(45, 0.3)
+	expensive := upstreamCostTestAccount(46, 0.8)
 	profitControlTestAccountWithRate(cheap, 0.3)
 	profitControlTestAccountWithRate(expensive, 0.8)
 	for _, account := range []*Account{cheap, expensive} {
