@@ -187,7 +187,7 @@ func TestOpenAIGatewayService_Forward_DecodedMutationKeepsLaterFieldDeletes(t *t
 func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	runForward := func(t *testing.T, body []byte) []byte {
+	runForwardForAccount := func(t *testing.T, account *Account, body []byte) []byte {
 		t.Helper()
 		upstream := &httpUpstreamRecorder{
 			resp: &http.Response{
@@ -199,18 +199,6 @@ func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOpt
 		cfg := &config.Config{}
 		cfg.Security.URLAllowlist.Enabled = false
 		svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
-		account := &Account{
-			ID:          4,
-			Name:        "openai-apikey",
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeAPIKey,
-			Concurrency: 1,
-			Credentials: map[string]any{
-				"api_key":  "sk-test",
-				"base_url": "https://example.com",
-			},
-			Extra: map[string]any{"openai_responses_supported": true},
-		}
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
@@ -222,10 +210,44 @@ func TestOpenAIGatewayService_Forward_NormalizesMaxTokensAndStripsPromptCacheOpt
 		return upstream.lastBody
 	}
 
-	t.Run("max_tokens 归一化为 max_output_tokens 并移除 prompt_cache_options", func(t *testing.T) {
-		out := runForward(t, []byte(`{"model":"gpt-5.4","stream":false,"max_tokens":256,"prompt_cache_options":{"enabled":true},"input":[{"type":"message","content":"hi"}]}`))
+	runForward := func(t *testing.T, body []byte) []byte {
+		t.Helper()
+		// base_url 留空 = 官方 api.openai.com，prompt_cache_options 应透传。
+		return runForwardForAccount(t, &Account{
+			ID:          4,
+			Name:        "openai-apikey",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key": "sk-test",
+			},
+			Extra: map[string]any{"openai_responses_supported": true},
+		}, body)
+	}
+
+	// prompt_cache_options 是 OpenAI 官方 12 小时缓存写入档的开关（ADR 0011），
+	// 官方上游必须透传；只有兼容上游才按不支持字段删除。
+	t.Run("max_tokens 归一化为 max_output_tokens 且官方上游透传 prompt_cache_options", func(t *testing.T) {
+		out := runForward(t, []byte(`{"model":"gpt-5.4","stream":false,"max_tokens":256,"prompt_cache_options":{"ttl":"12h"},"input":[{"type":"message","content":"hi"}]}`))
 		require.Equal(t, int64(256), gjson.GetBytes(out, "max_output_tokens").Int())
 		require.False(t, gjson.GetBytes(out, "max_tokens").Exists())
+		require.Equal(t, "12h", gjson.GetBytes(out, "prompt_cache_options.ttl").String())
+	})
+
+	t.Run("兼容上游仍删除 prompt_cache_options", func(t *testing.T) {
+		out := runForwardForAccount(t, &Account{
+			ID:          41,
+			Name:        "compat-upstream",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "sk-test",
+				"base_url": "https://example.com",
+			},
+			Extra: map[string]any{"openai_responses_supported": true},
+		}, []byte(`{"model":"gpt-5.4","stream":false,"prompt_cache_options":{"ttl":"12h"},"input":[{"type":"message","content":"hi"}]}`))
 		require.False(t, gjson.GetBytes(out, "prompt_cache_options").Exists())
 	})
 

@@ -658,7 +658,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if gjson.GetBytes(body, "max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
 			markPatchDelete("max_completion_tokens")
 		}
-		for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier", "prompt_cache_options"} {
+		// prompt_cache_options 是 OpenAI 官方 12 小时缓存写入的开关
+		// （prompt_cache_options.ttl = "12h"，不指定时为默认 30 分钟）。官方平台
+		// 必须透传，否则我们自己把 12h 档的写入请求降级成了 30m，结算口径与
+		// 上游实际缓存行为就脱节了（ADR 0011）。其它平台仍按不支持字段删除。
+		unsupportedFields := []string{"prompt_cache_retention", "safety_identifier"}
+		if !openAIUpstreamSupportsPromptCacheOptions(account) {
+			unsupportedFields = append(unsupportedFields, "prompt_cache_options")
+		}
+		for _, unsupportedField := range unsupportedFields {
 			if gjson.GetBytes(body, unsupportedField).Exists() {
 				markPatchDelete(unsupportedField)
 			}
@@ -1444,6 +1452,26 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 		}
 	}
 	return !openai_compat.ShouldUseResponsesAPI(account.Extra)
+}
+
+// openAIUpstreamSupportsPromptCacheOptions 报告该账号的上游是否接受
+// prompt_cache_options 字段。该字段是官方 12 小时缓存写入档的开关
+// （prompt_cache_options.ttl = "12h"，不指定时为默认 30 分钟），只有官方上游认它：
+//   - OAuth / SetupToken 走 ChatGPT Codex 协议，属官方；
+//   - API-key 账号的 base_url 为空或指向 api.openai.com 时属官方；
+//   - 其它兼容上游（自建 base_url、国产供应商）一律按不支持字段处理。
+func openAIUpstreamSupportsPromptCacheOptions(account *Account) bool {
+	if account == nil || !account.IsOpenAI() {
+		return false
+	}
+	if account.IsOpenAIOAuthLike() {
+		return true
+	}
+	if !account.IsOpenAIApiKey() {
+		return false
+	}
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	return baseURL == "" || isOfficialOpenAIModelsBaseURL(baseURL)
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
