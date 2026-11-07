@@ -35,6 +35,9 @@ type UserHandler struct {
 	totpService           *service.TotpService                // 角色提升为管理员的 step-up 门控
 	userService           *service.UserService
 	settingService        *service.SettingService // step-up 功能开关
+	// usageInflightService 提供 GET /users/:id/inflight 的按分组在途明细。
+	// 数据源是在途请求登记表，与 concurrencyService 的槽位计数互不替代。
+	usageInflightService *service.UsageInflightService
 }
 
 // NewUserHandler creates a new admin user handler
@@ -56,6 +59,15 @@ func NewUserHandler(
 		userService:           userService,
 		settingService:        settingService,
 	}
+}
+
+// SetUsageInflightService attaches the inflight aggregation service used by
+// GET /users/:id/inflight. Setter keeps the existing constructor wiring.
+func (h *UserHandler) SetUsageInflightService(usageInflight *service.UsageInflightService) {
+	if h == nil {
+		return
+	}
+	h.usageInflightService = usageInflight
 }
 
 // CreateUserRequest represents admin create user request

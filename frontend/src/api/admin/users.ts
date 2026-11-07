@@ -430,6 +430,31 @@ export async function resetPlatformQuotaWindow(
   return data
 }
 
+export interface UserInflightGroupSummary {
+  group_id: number
+  group_name: string
+  inflight: number
+  models: string[]
+  earliest_started_at: string | null
+}
+
+export interface UserInflightResponse {
+  user_id: number
+  total_inflight: number
+  groups: UserInflightGroupSummary[]
+}
+
+/**
+ * 读取某个用户此刻按分组的在途请求明细。
+ *
+ * 与 /admin/users 里的 current_concurrency 互补：那个是并发槽位计数，
+ * 这里是在途请求快照（哪个分组、什么模型、从什么时候开始）。
+ */
+export async function getUserInflight(id: number): Promise<UserInflightResponse> {
+  const { data } = await apiClient.get<UserInflightResponse>(`/admin/users/${id}/inflight`)
+  return data
+}
+
 export const usersAPI = {
   list,
   getById,
@@ -450,6 +475,7 @@ export const usersAPI = {
   getPlatformQuotas,
   updatePlatformQuotas,
   resetPlatformQuotaWindow,
+  getUserInflight,
 }
 
 export default usersAPI
