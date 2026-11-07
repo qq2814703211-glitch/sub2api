@@ -140,6 +140,7 @@ export default {
       tabV2: 'V2 数据监控配置',
       tabV1Active: 'V1 主动探测',
       tabV1History: 'V1 历史（当前模式未启用探测）',
+      tabV3: 'V3 混合监控配置',
     },
   },
 }
