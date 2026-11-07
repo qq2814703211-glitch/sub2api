@@ -28,6 +28,9 @@ const (
 	// 启动回填耗时可能远长于周期聚合，因此使用独立锁并让 TTL 严格大于回填超时。
 	dashboardAggregationGroupUsageBackfillLeaderLockKey = "dashboard:aggregation:group-usage-backfill:leader"
 	dashboardAggregationGroupUsageBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
+
+	dashboardAggregationKeyUsageDailyBackfillLeaderLockKey = "dashboard:aggregation:key-usage-daily-backfill:leader"
+	dashboardAggregationKeyUsageDailyBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
 )
 
 var (
@@ -103,6 +106,7 @@ func (s *DashboardAggregationService) Start() {
 		return
 	}
 	go s.runStartupGroupUsageSync()
+	go s.runStartupKeyUsageDailySync()
 
 	interval := time.Duration(s.cfg.IntervalSeconds) * time.Second
 	if interval <= 0 {
@@ -115,6 +119,12 @@ func (s *DashboardAggregationService) Start() {
 
 	s.timingWheel.ScheduleRecurring("dashboard:aggregation", interval, func() {
 		s.runScheduledAggregation()
+	})
+	// 键日汇总与仪表盘聚合分开调度：它只是把「昨天」重算一遍（稳态一行
+	// DELETE + 一行 upsert），没必要跟着回填窗口一起跑，也不该因为仪表盘
+	// 聚合失败而停更。间隔跟聚合间隔取同一个值，语义上都是「数据新鲜度」。
+	s.timingWheel.ScheduleRecurring("dashboard:key-usage-daily", interval, func() {
+		s.runScheduledKeyUsageDailySync()
 	})
 	logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业启动 (interval=%v, lookback=%ds)", interval, s.cfg.LookbackSeconds)
 	if !s.cfg.BackfillEnabled {
@@ -286,6 +296,18 @@ func (s *DashboardAggregationService) runScheduledGroupUsageSync() {
 	}
 }
 
+// runScheduledKeyUsageDailySync 周期性把「昨天」发布进 usage_key_daily。
+//
+// 关掉开关后这里会立刻空转（Sync 读 state 就返回），不需要重启进程；读侧同时
+// 立即回落到 usage_logs。也就是说「关开关」是秒级生效的降级手段。
+func (s *DashboardAggregationService) runScheduledKeyUsageDailySync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationTimeout)
+	defer cancel()
+	if err := s.syncKeyUsageDailyRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 键日汇总同步失败: %v", err)
+	}
+}
+
 func (s *DashboardAggregationService) runStartupGroupUsageSync() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
 	defer cancel()
@@ -305,6 +327,33 @@ func (s *DashboardAggregationService) syncGroupUsageRollups(ctx context.Context,
 		return nil
 	}
 	return repo.SyncGroupUsageRollups(ctx, GroupUsageTodayStart(now))
+}
+
+// syncKeyUsageDailyRollups 把已关闭的自然日发布进 usage_key_daily。
+//
+// 与分组日汇总同一套语义：只发布「今天以前」的日，今天由读侧用 usage_logs
+// 现算。因此这里最坏情况只重算昨天一天，成本与历史深度无关。
+//
+// 用独立的 leader lock：键日汇总出错不应该拖住分组汇总，反之亦然。
+func (s *DashboardAggregationService) syncKeyUsageDailyRollups(ctx context.Context, now time.Time) error {
+	repo, ok := s.repo.(UsageKeyDailyRollupRepository)
+	if !ok {
+		return nil
+	}
+	return repo.Sync(ctx, now)
+}
+
+func (s *DashboardAggregationService) runStartupKeyUsageDailySync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
+	defer cancel()
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationKeyUsageDailyBackfillLeaderLockKey, s.instanceID, dashboardAggregationKeyUsageDailyBackfillLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+	if err := s.syncKeyUsageDailyRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 启动键日汇总同步失败: %v", err)
+	}
 }
 
 func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, end time.Time) error {
