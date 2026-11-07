@@ -14,7 +14,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
-	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -664,7 +663,6 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 	if c.diagnostics != nil {
 		ctx = requesttiming.WithSource(context.WithValue(ctx, wsDiagnosticsKey{}, c.diagnostics), c.diagnostics)
 	}
-	ctx = requestcapture.WithSession(ctx, requestcapture.FromContext(c.controlCtx))
 	return writeDiagnosticWSClient(ctx, c.conn, msgType, payload)
 }
 
@@ -799,7 +797,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		eventBytes := buildOpenAIFastPolicyBlockedWSEvent(blocked)
 		if eventBytes != nil {
 			writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, eventBytes)
+			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
 			cancelWrite()
 		}
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, blocked.Message, blocked)
@@ -890,10 +888,8 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
-		finishCapture := captureOpenAIWSHandshake(ctx, account.ID, wsURL)
 		dialCtx, finishDiagnosticHandshake := requesttiming.StartHandshake(dialCtx, account.ID)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
-		finishCapture(statusCode, handshakeHeaders, err)
 		if err == nil {
 			finishDiagnosticHandshake(http.StatusSwitchingProtocols, nil)
 		} else {
@@ -942,9 +938,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	upstreamFrameConn, ok := upstreamConn.(openaiwsv2.FrameConn)
 	if !ok {
 		return errors.New("openai ws passthrough upstream connection does not support frame relay")
-	}
-	if capture := requestcapture.FromContext(ctx); capture != nil {
-		upstreamFrameConn = &captureUpstreamFrameConn{FrameConn: upstreamFrameConn, capture: capture, account: account.ID, route: openAIWSCaptureRoute(ctx, wsURL)}
 	}
 	relayUpstreamFrameConn := &openAIWSPassthroughFirstOutputFrameConn{
 		inner:             upstreamFrameConn,
@@ -1156,7 +1149,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				return
 			}
 			writeCtx, cancel := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
-			_ = WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, eventBytes)
+			_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
 			cancel()
 		},
 	}

@@ -598,12 +598,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/request-captures',
-    name: 'AdminRequestCaptures',
-    component: () => import('@/views/admin/RequestCaptureView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Request Capture', titleKey: 'admin.requestCapture.title' }
-  },
-  {
     path: '/admin/accounts',
     name: 'AdminAccounts',
     component: () => import('@/views/admin/AccountsView.vue'),
