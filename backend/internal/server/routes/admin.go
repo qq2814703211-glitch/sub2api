@@ -137,6 +137,19 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+
+		// models.dev 官方参考价同步的变更史
+		registerModelPricingSyncRoutes(admin, h)
+	}
+}
+
+// registerModelPricingSyncRoutes 注册 models.dev 价格同步的只读管理接口。
+// 同步任务本身在后端定时跑，管理端只负责展示「改了什么」与当前状态。
+func registerModelPricingSyncRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	group := admin.Group("/model-pricing-sync")
+	{
+		group.GET("/history", h.Admin.ModelPricingSync.ListHistory)
+		group.GET("/status", h.Admin.ModelPricingSync.Status)
 	}
 }
 

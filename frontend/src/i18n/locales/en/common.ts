@@ -220,6 +220,7 @@ export default {
     contentModeration: 'Content Moderation',
     promptAudit: 'Prompt Audit',
     auditLogs: 'Audit Logs',
+    modelPricingSync: 'Price Sync',
     groupCacheTests: 'Cache Tests',
   },
 

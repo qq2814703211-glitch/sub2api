@@ -651,6 +651,36 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 	return sink
 }
 
+// ProvideModelPricingSyncService 创建 models.dev 官方参考价同步服务。
+//
+// 只在配置了 pricing.override_file 时才启动：没有写入目标就没有同步的意义，
+// 也避免在只读部署上无谓地打外网。同步间隔沿用 pricing.hash_check_interval_minutes，
+// 与覆盖层热重载的检查节奏一致。
+func ProvideModelPricingSyncService(
+	cfg *config.Config,
+	pricingService *PricingService,
+	historyRepo ModelPricingSyncHistoryRepository,
+	remoteClient PricingRemoteClient,
+) *ModelPricingSyncService {
+	if cfg == nil {
+		return NewModelPricingSyncService(nil, pricingService, historyRepo, nil)
+	}
+	syncCfg := &ModelPricingSyncConfig{
+		OverrideFile: strings.TrimSpace(cfg.Pricing.OverrideFile),
+		Interval:     time.Duration(cfg.Pricing.HashCheckIntervalMinutes) * time.Minute,
+	}
+	// 复用定价远程客户端（已带代理与连接池配置），不另建 HTTP 栈。
+	var fetcher modelPricingSyncFetcher
+	if remoteClient != nil {
+		fetcher = remoteClient
+	}
+	svc := NewModelPricingSyncService(syncCfg, pricingService, historyRepo, fetcher)
+	if BackgroundJobsEnabled() {
+		svc.Start()
+	}
+	return svc
+}
+
 // ProvideAuditLogService 创建操作审计日志服务并启动异步写入与保留期清理协程。
 // 停止逻辑挂在 cmd/server 的 provideCleanup。
 func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
@@ -1006,6 +1036,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpsService,
 	ProvideOpsIngressRejectAggregator,
 	ProvideAuditLogService,
+	ProvideModelPricingSyncService,
 	ProvideOpsMetricsCollector,
 	ProvideOpsAggregationService,
 	ProvideOpsAlertEvaluatorService,

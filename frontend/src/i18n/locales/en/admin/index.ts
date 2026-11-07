@@ -5,6 +5,7 @@ import resources from './resources'
 import ops from './ops'
 import settings from './settings'
 import audit from './audit'
+import modelPricingSync from './modelPricingSync'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
 import groupCacheTest from './groupCacheTest'
@@ -19,6 +20,7 @@ export default {
   ...ops,
   ...settings,
   ...audit,
+  ...modelPricingSync,
   ...promptAudit,
   ...plugins,
   ...groupCacheTest,
