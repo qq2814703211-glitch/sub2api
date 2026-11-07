@@ -140,54 +140,6 @@ export async function verifyApiKey(key: string, signal: AbortSignal): Promise<bo
   return models.some((model) => model.includes('image'))
 }
 
-/**
- * Rewrite a template prompt through the chat completions endpoint.
- *
- * The source page hard-coded `gpt-5.5`; the model is a parameter here so an
- * operator can point it at whatever the deployment actually serves.
- */
-export async function rewritePrompt(
-  options: { key: string; model: string; original: string; instruction: string; signal: AbortSignal },
-): Promise<string> {
-  const { key, model, original, instruction, signal } = options
-  const content = `现在你是一名专业的AI提示词工程师，将以下生图内容提示词修改为用户所需要的新提示词，原提示词:"${original}",用户修改期待:"${instruction}"。直接且只能输出修改后的提示词，严禁输入非修改后提示词内容`
-
-  const response = await fetch(gatewayUrl('/v1/chat/completions'), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content }],
-      temperature: 0.2,
-    }),
-    signal,
-  })
-
-  const data = (await response.json().catch(() => ({}))) as {
-    choices?: { message?: { content?: string }; text?: string }[]
-    output_text?: string
-    data?: { text?: string }[]
-    error?: { message?: string; type?: string; code?: string }
-    message?: string
-  }
-
-  if (!response.ok) {
-    const error = data.error ?? {}
-    throw new ImageGenError(
-      [error.message || data.message || `${response.status} ${response.statusText}`, error.type, error.code]
-        .filter(Boolean)
-        .join(' | '),
-      response.status,
-    )
-  }
-
-  const text =
-    data.choices?.[0]?.message?.content || data.choices?.[0]?.text || data.output_text || data.data?.[0]?.text || ''
-  const next = String(text).trim()
-  if (!next) throw new ImageGenError('AI 未返回新提示词')
-  return next
-}
-
 /** Trigger a browser download for a data: or blob: URL. */
 export function downloadUrl(url: string, filename: string): void {
   const link = document.createElement('a')
