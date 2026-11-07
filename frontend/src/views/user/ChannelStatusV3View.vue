@@ -20,7 +20,7 @@
           <button v-for="option in ranges" :key="option.value" type="button" class="tab !px-2.5 !py-1 text-xs" :class="filter.range === option.value ? 'tab-active' : ''" @click="setRange(option.value)">{{ option.label }}</button>
           <span class="mx-1 hidden h-5 w-px bg-gray-200 dark:bg-dark-700 sm:block" />
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.description') }}</span>
-          <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
+          <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: summaryCacheLabel }) }}</span>
         </div>
       </section>
 
@@ -84,13 +84,15 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import * as api from '@/api/channelMonitorV2'
+// V3 reads its own endpoints: the board is gated by channel_monitor_v3_config.enabled
+// alone, not by channel_monitor_enabled / channel_monitor_mode (ADR 0008).
+import * as api from '@/api/channelMonitorV3'
 import userGroupsAPI from '@/api/groups'
 import type { MonitorFilter, MonitorMatrixResponse, MonitorRange, MonitorSnapshot } from '@/api/channelMonitorV2'
 import type { Group } from '@/types'
 import ChannelMonitorV3Card from '@/components/user/monitor/ChannelMonitorV3Card.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
-import { formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { formatMonitorCacheRate, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import { buildChannelStatusLayout, channelStatusLayoutBlockKey } from '@/features/channel-monitor-v2/channelStatusLayout'
 
 const SKELETON_KEYS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const
@@ -145,6 +147,12 @@ const latestSnapshotMetrics = computed(() => {
 // channels carry no traffic. `source` stays server-side only.
 
 function formatPercent(value: number) { return formatMonitorPercent(value, locale.value || 'zh-CN') }
+// Unknown is rendered as "—", never as 0% (ADR 0009).
+const summaryCacheLabel = computed(() => formatMonitorCacheRate(
+  latestSnapshotMetrics.value?.cache_rate,
+  latestSnapshotMetrics.value?.cache_rate_known,
+  locale.value || 'zh-CN',
+))
 function formatTime(value?: string) { if (!value) return '-'; return new Intl.DateTimeFormat(locale.value || undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
 function setRange(value: MonitorRange) { filter.value = { ...filter.value, range: value } }
 
@@ -177,8 +185,8 @@ async function reload(silent = true) {
   if (!silent) loading.value = true
   try {
     const [nextSnapshot, nextMatrix] = await Promise.all([
-      api.getSnapshot(filter.value, false, request.signal),
-      api.getMatrix(filter.value, 'platform_group', false, request.signal),
+      api.getV3Snapshot(filter.value, false, request.signal),
+      api.getV3Matrix(filter.value, 'platform_group', false, request.signal),
     ])
     if (request.signal.aborted || controller !== request) return
     snapshot.value = nextSnapshot
