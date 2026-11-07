@@ -490,7 +490,7 @@ type GatewayCache interface {
 	GetGrokVideoPendingBilling(ctx context.Context, key string) ([]byte, error)
 	// ClaimGrokVideoBilled acquires a short owner-fenced lease for async fallback billing.
 	ClaimGrokVideoBilled(ctx context.Context, key, owner string, ttl time.Duration) (bool, error)
-	// ReleaseGrokVideoBilled only releases the matching lease owner.
+	// ReleaseGrokVideoBilled clears only the caller's lease owner.
 	ReleaseGrokVideoBilled(ctx context.Context, key, owner string) error
 
 	// Reasoning content cache (Responses→Chat Completions 桥接）。
@@ -603,6 +603,7 @@ type ClaudeUsage struct {
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
 }
 
 // ForwardResult 转发结果

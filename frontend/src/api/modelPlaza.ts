@@ -43,6 +43,12 @@ export interface PlazaTimePricing {
   periods: PlazaTimePricingPeriod[]
 }
 
+export interface PlazaMediaRateOption {
+  request_type: 'all' | 'general' | 'image' | 'video'
+  /** Base endpoint rate, excluding time and peak factors. */
+  multiplier: number
+}
+
 export interface PlazaModel {
   name: string
   platform: string
@@ -53,6 +59,8 @@ export interface PlazaModel {
   long_context_basis?: PlazaLongContextBasis
   /** 仅配置了分时倍率的模型返回。 */
   time_pricing?: PlazaTimePricing
+  /** Applicable endpoint rates; a card cannot determine the request endpoint. */
+  media_rate_options?: PlazaMediaRateOption[]
 }
 
 export interface ModelPlazaGroup {

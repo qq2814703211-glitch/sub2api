@@ -52,9 +52,69 @@ func TestCodexDirectImagesMultipartEdit(t *testing.T) {
 	require.False(t, gjson.GetBytes(upstreamBody, "tools").Exists())
 }
 
+func TestCodexDirectImagesMultipartExtendedFields(t *testing.T) {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	for key, value := range map[string]string{"model": "gpt-image-2.6-flare", "prompt": "draw", "quality": "max", "output_format": "gif", "frame_count": "4", "frame_duration_ms": "120", "svg.model": "svg-author", "svg.reasoning.effort": "xhigh"} {
+		require.NoError(t, w.WriteField(key, value))
+	}
+	part, err := w.CreateFormFile("image", "source.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("source-bytes"))
+	require.NoError(t, err)
+	markup, err := w.CreatePart(textproto.MIMEHeader{"Content-Disposition": {`form-data; name="markup"; filename="markup.png"`}, "Content-Type": {"image/png"}})
+	require.NoError(t, err)
+	_, err = markup.Write([]byte("markup-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	c, _ := newOpenAIImagesTestContext(t, body.Bytes())
+	c.Request.URL.Path = "/v1/images/edits"
+	c.Request.Header.Set("Content-Type", w.FormDataContentType())
+	svc := newOpenAIImagesTestService(nil)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, "max", parsed.Quality)
+	require.Equal(t, 4, *parsed.FrameCount)
+	require.Equal(t, 120, *parsed.FrameDurationMs)
+	require.NotNil(t, parsed.MarkupUpload)
+	require.Equal(t, "svg-author", parsed.SVGModel)
+	require.Equal(t, "xhigh", parsed.SVGReasoningEffort)
+	payload, target, err := buildOpenAIImagesOAuthPayload(parsed, parsed.Model)
+	require.NoError(t, err)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/images/edits", target)
+	require.Equal(t, "gif", gjson.GetBytes(payload, "output_format").String())
+	require.Equal(t, "data:image/png;base64,bWFya3VwLWJ5dGVz", gjson.GetBytes(payload, "markup.image_url").String())
+	require.Equal(t, "svg-author", gjson.GetBytes(payload, "svg.model").String())
+}
+
+func TestCodexDirectImagesMultipartMarkupFilePayload(t *testing.T) {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	for key, value := range map[string]string{"model": "gpt-image-2.6-sunburst", "prompt": "annotated edit"} {
+		require.NoError(t, w.WriteField(key, value))
+	}
+	for field, fileName := range map[string]string{"image[]": "base.png", "markup": "markup.png"} {
+		part, err := w.CreatePart(textproto.MIMEHeader{"Content-Disposition": {fmt.Sprintf(`form-data; name=%q; filename=%q`, field, fileName)}, "Content-Type": {"image/png"}})
+		require.NoError(t, err)
+		_, err = part.Write([]byte(fileName))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+	c, _ := newOpenAIImagesTestContext(t, body.Bytes())
+	c.Request.URL.Path = "/v1/images/edits"
+	c.Request.Header.Set("Content-Type", w.FormDataContentType())
+	parsed, err := newOpenAIImagesTestService(nil).ParseOpenAIImagesRequest(c, body.Bytes())
+	require.NoError(t, err)
+	payload, target, err := buildOpenAIImagesOAuthPayload(parsed, parsed.Model)
+	require.NoError(t, err)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/images/edits", target)
+	require.Equal(t, "data:image/png;base64,bWFya3VwLnBuZw==", gjson.GetBytes(payload, "markup.image_url").String())
+	require.Len(t, gjson.GetBytes(payload, "images").Array(), 1)
+}
+
 func TestCodexDirectImagesPricingAndUsage(t *testing.T) {
 	prices := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-image-2": {InputCostPerToken: 1}}}
-	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
+	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08"} {
 		price := prices.matchOpenAIModel(model)
 		require.Equal(t, 5e-6, price.InputCostPerToken)
 		require.Equal(t, 8e-6, price.InputCostPerImageToken)

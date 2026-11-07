@@ -1920,6 +1920,11 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if a == nil {
 		return false
 	}
+	if capability == OpenAIEndpointCapabilityCompatibleVideo {
+		configured, explicit := a.openAIEndpointCapabilitySet()
+		return a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey && strings.TrimSpace(a.GetCredential("base_url")) != "" &&
+			(!explicit || configured[string(OpenAIEndpointCapabilityCompatibleVideo)])
+	}
 	if capability == OpenAIEndpointCapabilitySeedance {
 		configured, _ := a.openAIEndpointCapabilitySet()
 		return configured["seedance"] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
