@@ -640,9 +640,3 @@ func TestCNProviderBalanceCheckRunOnceDispatchesAccountProbesByPlatform(t *testi
 	require.ElementsMatch(t, []int64{1, 2}, prober.probed)
 	require.Equal(t, []int64{1}, repo.paused)
 }
-
-// 官方主机不做上游计费探测：中转站的计费接口在官方 API 上不存在，只会把 Key 发往官方主机。
-func TestClineOfficialHostSkipsUpstreamBillingProbe(t *testing.T) {
-	require.True(t, upstreamBillingProbeTargetIsOfficialAPI(DefaultClineBaseURL))
-	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://relay.example.com/v1"))
-}

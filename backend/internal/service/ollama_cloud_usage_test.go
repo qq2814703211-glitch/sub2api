@@ -30,7 +30,7 @@ func (ollamaUsageTestEncryptor) Decrypt(value string) (string, error) {
 }
 
 type ollamaUsageTestRepo struct {
-	*upstreamBillingProbeAccountRepo
+	*inMemoryAccountRepo
 	due                 []Account
 	beforeSnapshot      func()
 	disableAutoAttempts atomic.Int64
@@ -43,7 +43,7 @@ type ollamaUsageTestRepo struct {
 // before the singleflight group, instead of guessing with a sleep.
 func (r *ollamaUsageTestRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	r.getByIDCalls.Add(1)
-	return r.upstreamBillingProbeAccountRepo.GetByID(ctx, id)
+	return r.inMemoryAccountRepo.GetByID(ctx, id)
 }
 
 func (r *ollamaUsageTestRepo) ListOllamaCloudUsageGroupAccounts(_ context.Context, anchors []*Account) ([]Account, error) {
@@ -224,7 +224,7 @@ func (r *ollamaRefreshPreflightIdentityChangeRepo) GetByID(ctx context.Context, 
 		r.accounts[id].Credentials["api_key"] = "rotated-before-refresh"
 		r.mu.Unlock()
 	}
-	return r.upstreamBillingProbeAccountRepo.GetByID(ctx, id)
+	return r.inMemoryAccountRepo.GetByID(ctx, id)
 }
 
 type ollamaManagedExtraUpdateRepo struct {
@@ -315,7 +315,7 @@ func ollamaUsageFixture(t *testing.T) []byte {
 }
 
 func TestOllamaCloudUsageSettingsDefaultOffAndValidation(t *testing.T) {
-	repo := &upstreamBillingProbeSettingRepo{}
+	repo := &inMemorySettingRepo{}
 	settingsService := NewSettingService(repo, nil)
 	settings, err := settingsService.GetOllamaCloudUsageSettings(context.Background())
 	require.NoError(t, err)
@@ -645,14 +645,14 @@ func TestOllamaCloudUsageManagedExtraCannotBeImported(t *testing.T) {
 		OllamaCloudUsageSnapshotExtraKey:    map[string]any{"status": OllamaCloudUsageStatusOK},
 	}
 	targetExtra := mergeMap(existing.Extra, remoteExtra)
-	reconcileCRSUpstreamBillingProbeExtra(existing, existing.Platform, existing.Type, mergeMap(existing.Credentials, nil), targetExtra)
+	reconcileCRSUpstreamSessionExtra(existing, existing.Platform, existing.Type, mergeMap(existing.Credentials, nil), targetExtra)
 	require.Equal(t, "local-ciphertext", targetExtra[OllamaCloudUsageSessionExtraKey])
 	require.Equal(t, false, targetExtra[OllamaCloudUsageAutoRefreshExtraKey])
 	require.Equal(t, map[string]any{"status": OllamaCloudUsageStatusOK}, targetExtra[OllamaCloudUsageSnapshotExtraKey])
 
 	changedCredentials := mergeMap(existing.Credentials, map[string]any{"api_key": "rotated"})
 	targetExtra = mergeMap(existing.Extra, remoteExtra)
-	reconcileCRSUpstreamBillingProbeExtra(existing, existing.Platform, existing.Type, changedCredentials, targetExtra)
+	reconcileCRSUpstreamSessionExtra(existing, existing.Platform, existing.Type, changedCredentials, targetExtra)
 	require.NotContains(t, targetExtra, OllamaCloudUsageSessionExtraKey)
 	require.NotContains(t, targetExtra, OllamaCloudUsageAutoRefreshExtraKey)
 	require.NotContains(t, targetExtra, OllamaCloudUsageSnapshotExtraKey)
@@ -686,8 +686,8 @@ func TestAccountServiceUpdateStripsOllamaManagedExtra(t *testing.T) {
 
 func TestOllamaCloudUsageSessionEncryptionFailClosedAndWriteOnlyState(t *testing.T) {
 	account := ollamaUsageAccount(7)
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{7: account}}}
-	settings := &upstreamBillingProbeSettingRepo{}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{7: account}}}
+	settings := &inMemorySettingRepo{}
 
 	ephemeral := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, settings, false)
 	_, err := ephemeral.SaveSession(context.Background(), 7, "wos-session=plaintext-secret")
@@ -734,10 +734,10 @@ func TestOllamaCloudUsageGroupSharesAcrossPlatformsURLVariantsAndDynamicSiblings
 	sibling.UpdatedAt = time.Now()
 	different := ollamaUsageAccount(73)
 	different.Credentials["api_key"] = "different-key"
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{
 		source.ID: source, sibling.ID: sibling, different.ID: different,
 	}}}
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &inMemorySettingRepo{}, true)
 
 	state, err := svc.GetState(context.Background(), sibling.ID)
 	require.NoError(t, err)
@@ -773,10 +773,10 @@ func TestOllamaCloudUsageSaveAutoRefreshAndDeleteAreGroupScoped(t *testing.T) {
 	second.Credentials = map[string]any{"base_url": "https://www.ollama.com/v1", "api_key": "shared-key"}
 	different := ollamaUsageAccount(83)
 	different.Credentials["api_key"] = "different-key"
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{
 		first.ID: first, second.ID: second, different.ID: different,
 	}}}
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{}, &inMemorySettingRepo{}, true)
 
 	state, err := svc.SaveSession(context.Background(), second.ID, "wos-session=shared-browser")
 	require.NoError(t, err)
@@ -812,10 +812,10 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	second.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=shared"
 	second.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	repo := &ollamaUsageTestRepo{
-		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{first.ID: first, second.ID: second}},
+		inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{first.ID: first, second.ID: second}},
 		due:                             []Account{*first, *second},
 	}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	started := make(chan struct{})
@@ -860,10 +860,10 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 func TestOllamaCloudUsageRefreshRejectsGroupChangeBeforeUpstreamRequest(t *testing.T) {
 	account := ollamaUsageAccount(94)
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
-	base := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
+	base := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{account.ID: account}}}
 	repo := &ollamaRefreshPreflightIdentityChangeRepo{ollamaUsageTestRepo: base}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&upstreamBillingProbeSettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
+	svc := NewOllamaCloudUsageService(repo, upstream, NewSettingService(&inMemorySettingRepo{}, nil), ollamaUsageTestEncryptor{}, true)
 	t.Cleanup(svc.Stop)
 
 	_, err := svc.Refresh(context.Background(), account.ID)
@@ -876,9 +876,9 @@ func TestOllamaCloudUsageRefreshRejectsGroupChangeBeforeUpstreamRequest(t *testi
 func TestOllamaCloudUsageRefreshUsesFixedURLCookieAndNoRedirects(t *testing.T) {
 	account := ollamaUsageAccount(8)
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=browser-secret; tracking=must-not-send"
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{8: account}}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{8: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &inMemorySettingRepo{}, true)
 	fixedNow := time.Date(2026, time.July, 22, 15, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixedNow }
 
@@ -896,9 +896,9 @@ func TestOllamaCloudUsageRefreshUsesFixedURLCookieAndNoRedirects(t *testing.T) {
 func TestOllamaCloudUsageManualRefreshUsesShortIndependentInterval(t *testing.T) {
 	account := ollamaUsageAccount(12)
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=initial"
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{12: account}}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{12: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &inMemorySettingRepo{}, true)
 	fixedNow := time.Date(2026, time.July, 22, 15, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixedNow }
 
@@ -926,9 +926,9 @@ func TestOllamaCloudUsageRefreshUsesHydratedProxyIdentity(t *testing.T) {
 		ID: proxyID, Protocol: "http", Host: "127.0.0.1", Port: 3128,
 		Username: "proxy-user", Password: "proxy-pass", Status: StatusActive,
 	}
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{13: account}}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{13: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	svc := newOllamaUsageTestService(t, repo, upstream, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, upstream, &inMemorySettingRepo{}, true)
 
 	_, err := svc.Refresh(context.Background(), 13)
 	require.NoError(t, err)
@@ -948,8 +948,8 @@ func TestOllamaCloudUsageRedirectAndBodyLimitArePersistedSafely(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			account := ollamaUsageAccount(9)
 			account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
-			repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{9: account}}}
-			svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{status: test.status, body: test.body}, &upstreamBillingProbeSettingRepo{}, true)
+			repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{9: account}}}
+			svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{status: test.status, body: test.body}, &inMemorySettingRepo{}, true)
 			state, err := svc.Refresh(context.Background(), 9)
 			require.NoError(t, err)
 			require.Equal(t, OllamaCloudUsageStatusFailed, state.Snapshot.Status)
@@ -961,9 +961,9 @@ func TestOllamaCloudUsageRedirectAndBodyLimitArePersistedSafely(t *testing.T) {
 func TestOllamaCloudUsageRefreshRejectsIdentityChange(t *testing.T) {
 	account := ollamaUsageAccount(10)
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{10: account}}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{10: account}}}
 	repo.beforeSnapshot = func() { account.Credentials["api_key"] = "rotated" }
-	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}, &upstreamBillingProbeSettingRepo{}, true)
+	svc := newOllamaUsageTestService(t, repo, &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}, &inMemorySettingRepo{}, true)
 	_, err := svc.Refresh(context.Background(), 10)
 	require.ErrorIs(t, err, ErrOllamaCloudUsageIdentityChanged)
 	require.NotContains(t, account.Extra, OllamaCloudUsageSnapshotExtraKey)
@@ -973,9 +973,9 @@ func TestOllamaCloudUsageRunnerHonorsLeaderLockAndBackoff(t *testing.T) {
 	account := ollamaUsageAccount(11)
 	account.Extra[OllamaCloudUsageSessionExtraKey] = "cipher:wos-session=secret"
 	account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{11: account}}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{11: account}}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	cache := &fakeLeaderLockCache{}
@@ -1003,8 +1003,8 @@ func TestOllamaCloudUsageRunnerDisablesAutoRefreshAfterUnpersistableIdentityErro
 	missingProxyID := int64(99)
 	account.ProxyID = &missingProxyID
 	account.Proxy = nil
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{14: account}}}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{14: account}}}
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
@@ -1034,7 +1034,7 @@ func TestOllamaCloudUsageRunnerIdentityChangePreservesOldGroupAndDoesNotLoop(t *
 	dueAnchor.Credentials = mergeMap(nil, anchor.Credentials)
 	dueAnchor.Extra = mergeMap(nil, anchor.Extra)
 	repo := &ollamaUsageTestRepo{
-		upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+		inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{
 			anchor.ID: anchor, sibling.ID: sibling,
 		}},
 		due: []Account{dueAnchor},
@@ -1050,7 +1050,7 @@ func TestOllamaCloudUsageRunnerIdentityChangePreservesOldGroupAndDoesNotLoop(t *
 			delete(anchor.Extra, OllamaCloudUsageSnapshotExtraKey)
 		})
 	}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,
 	}}
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t)}
@@ -1078,14 +1078,14 @@ func TestOllamaCloudUsageSingleflightConcurrencyAndRunnerSwitches(t *testing.T) 
 		account.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 		accounts[id] = account
 	}
-	repo := &ollamaUsageTestRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: accounts}}
+	repo := &ollamaUsageTestRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: accounts}}
 	unblock := make(chan struct{})
 	entered := make(chan struct{}, 10)
 	upstream := &ollamaUsageHTTPStub{body: ollamaUsageFixture(t), beforeResponse: func(*http.Request) {
 		entered <- struct{}{}
 		<-unblock
 	}}
-	settingsRepo := &upstreamBillingProbeSettingRepo{values: map[string]string{}}
+	settingsRepo := &inMemorySettingRepo{values: map[string]string{}}
 	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
 
 	// Global automatic refresh is fail-safe off by default.

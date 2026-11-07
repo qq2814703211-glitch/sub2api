@@ -798,9 +798,6 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagSubscription },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/request-captures', label: t('admin.requestCapture.title'), icon: ChartIcon },
-    { path: '/admin/ops-center', label: t('nav.opsCenter'), icon: ChartIcon },
-    { path: '/admin/account-ops', label: t('nav.accountOps'), icon: BellIcon },
-    { path: '/admin/upstream-monitor', label: t('nav.upstreamMonitor'), icon: ChartIcon },
 
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
@@ -846,7 +843,6 @@ const adminNavItems = computed((): NavItem[] => {
       ],
     },
     { path: '/admin/usage', label: t('nav.usage'), icon: ChartIcon },
-    { path: '/admin/group-cache-tests', label: t('nav.groupCacheTests'), icon: ChartIcon },
     { path: '/admin/connections', label: t('nav.connectionDiagnostics'), icon: SignalIcon },
     { path: '/admin/audit-logs', label: t('nav.auditLogs'), icon: ShieldIcon, hideInSimpleMode: true },
     { path: '/admin/model-pricing-sync', label: t('nav.modelPricingSync'), icon: ChartIcon, hideInSimpleMode: true }

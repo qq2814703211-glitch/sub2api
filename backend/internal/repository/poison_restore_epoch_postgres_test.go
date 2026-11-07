@@ -94,7 +94,7 @@ func TestPoisonRestoreEpochAtomicWritesPostgres(t *testing.T) {
 	ctx := context.Background()
 	restore := poison.WithAdminRestore(ctx)
 	a.Status = "active"
-	require.NoError(t, r.UpdateWithAccountBillingSettings(restore, a, nil, nil, nil))
+	require.NoError(t, r.Update(restore, a))
 	extra, _, _ := epochRead(t, db, a.ID)
 	require.Equal(t, float64(1), extra[poison.RestoreEpochKey])
 	require.NoError(t, r.SetSchedulable(restore, a.ID, true))

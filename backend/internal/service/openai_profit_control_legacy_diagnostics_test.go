@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -20,8 +19,7 @@ func legacyProfitDiagnosticService(accounts []Account) *OpenAIGatewayService {
 }
 
 func legacyProfitDiagnosticAccount(id int64) *Account {
-	now := time.Now()
-	a := upstreamCostTestAccount(id, UpstreamBillingProbeStatusOK, 0.9, now.Add(-time.Minute), 30*time.Minute)
+	a := upstreamCostTestAccount(id, 0.9)
 	a.Status = StatusActive
 	a.Schedulable = true
 	a.Concurrency = 1

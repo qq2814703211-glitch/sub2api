@@ -17,7 +17,7 @@ func requireValidCodexFingerprintSeed(t *testing.T, extra map[string]any) string
 }
 
 func TestAdminCreateAccountStripsUserSeedAndCreatesFreshSeedWhenEnabled(t *testing.T) {
-	repo := &upstreamBillingProbeAccountRepo{}
+	repo := &inMemoryAccountRepo{}
 	svc := &adminServiceImpl{accountRepo: repo}
 
 	created, err := svc.CreateAccount(context.Background(), &CreateAccountInput{
@@ -39,7 +39,7 @@ func TestAdminCreateAccountStripsUserSeedAndCreatesFreshSeedWhenEnabled(t *testi
 
 func TestAdminUpdateAccountPreservesExistingSeedAndStripsUserSeed(t *testing.T) {
 	accountID := int64(201)
-	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &inMemoryAccountRepo{accounts: map[int64]*Account{
 		accountID: {
 			ID:       accountID,
 			Name:     "before",
@@ -70,7 +70,7 @@ func TestAdminUpdateAccountPreservesExistingSeedAndStripsUserSeed(t *testing.T) 
 
 func TestAdminUpdateAccountInitializesSeedWhenFullEditEnables(t *testing.T) {
 	accountID := int64(202)
-	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &inMemoryAccountRepo{accounts: map[int64]*Account{
 		accountID: {
 			ID:       accountID,
 			Name:     "before",
@@ -95,7 +95,7 @@ func TestAdminUpdateAccountInitializesSeedWhenFullEditEnables(t *testing.T) {
 
 func TestAdminUpdateAccountDisableReenablePreservesValidSeed(t *testing.T) {
 	accountID := int64(203)
-	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &inMemoryAccountRepo{accounts: map[int64]*Account{
 		accountID: {
 			ID:       accountID,
 			Platform: PlatformOpenAI,
@@ -124,7 +124,7 @@ func TestAdminUpdateAccountDisableReenablePreservesValidSeed(t *testing.T) {
 
 func TestAdminUpdateAccountExtraStripsSeedAndLeavesAtomicEnsureToRepository(t *testing.T) {
 	accountID := int64(204)
-	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+	repo := &inMemoryAccountRepo{accounts: map[int64]*Account{
 		accountID: {
 			ID:       accountID,
 			Platform: PlatformOpenAI,
@@ -145,7 +145,7 @@ func TestAdminUpdateAccountExtraStripsSeedAndLeavesAtomicEnsureToRepository(t *t
 }
 
 func TestBulkUpdateAccountsDoesNotPrewriteCodexSeed(t *testing.T) {
-	repo := &upstreamBillingProbeAccountRepo{}
+	repo := &inMemoryAccountRepo{}
 
 	result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
 		AccountIDs: []int64{301, 302},
@@ -165,7 +165,7 @@ func TestBulkUpdateAccountsDoesNotPrewriteCodexSeed(t *testing.T) {
 }
 
 type codexSeedDuplicateRepo struct {
-	*upstreamBillingProbeAccountRepo
+	*inMemoryAccountRepo
 }
 
 func (r *codexSeedDuplicateRepo) CreateWithAccountGroups(ctx context.Context, account *Account, _ []AccountGroup) error {
@@ -174,7 +174,7 @@ func (r *codexSeedDuplicateRepo) CreateWithAccountGroups(ctx context.Context, ac
 
 func TestDuplicateAccountDoesNotCopyCodexFingerprintSeed(t *testing.T) {
 	ctx := context.Background()
-	repo := &codexSeedDuplicateRepo{upstreamBillingProbeAccountRepo: &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}}
+	repo := &codexSeedDuplicateRepo{inMemoryAccountRepo: &inMemoryAccountRepo{accounts: make(map[int64]*Account)}}
 	svc := &adminServiceImpl{accountRepo: repo, accountDuplicateRepo: repo}
 	source := &Account{
 		Name:     "source",
@@ -216,7 +216,7 @@ func TestDuplicateCreatePathMintsFreshSeedWhenEligible(t *testing.T) {
 
 func TestAccountServiceCreateAndUpdateCodexSeedLifecycle(t *testing.T) {
 	ctx := context.Background()
-	repo := &upstreamBillingProbeAccountRepo{accounts: make(map[int64]*Account)}
+	repo := &inMemoryAccountRepo{accounts: make(map[int64]*Account)}
 	svc := NewAccountService(repo, nil)
 
 	created, err := svc.Create(ctx, CreateAccountRequest{

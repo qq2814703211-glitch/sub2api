@@ -50,18 +50,14 @@ func ProvideAdminHandlers(
 	complianceHandler *admin.ComplianceHandler,
 	auditLogHandler *admin.AuditLogHandler,
 	modelPricingSyncHandler *admin.ModelPricingSyncHandler,
-	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
 	claudeResetCredits *service.ClaudeResetCreditService,
-	accountOps *admin.AccountOpsHandler,
-	monitor *admin.UpstreamMonitorHandler,
 	openAIGateway *service.OpenAIGatewayService,
 	usageInflight *service.UsageInflightService,
 	groupCapacity *service.GroupCapacityService,
 ) *AdminHandlers {
 	opsHandler.SetVideoBillingService(openAIGateway)
-	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
@@ -77,8 +73,6 @@ func ProvideAdminHandlers(
 		groupCapacity.WithUsageInflight(usageInflight)
 	}
 	return &AdminHandlers{
-		AccountOps:             accountOps,
-		UpstreamMonitor:        monitor,
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
 		Group:                  groupHandler,
@@ -336,7 +330,5 @@ var ProviderSet = wire.NewSet(
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,
-	ProvideAccountOpsHandler,
-	admin.NewUpstreamMonitorHandler,
 	ProvideHandlers,
 )

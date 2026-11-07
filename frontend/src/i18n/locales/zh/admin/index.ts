@@ -8,9 +8,7 @@ import audit from './audit'
 import modelPricingSync from './modelPricingSync'
 import promptAudit from './promptAudit'
 import plugins from './plugins'
-import groupCacheTest from './groupCacheTest'
 import requestCapture from './requestCapture'
-import accountOps from './accountOps'
 
 export default {
   ...overview,
@@ -23,7 +21,5 @@ export default {
   ...modelPricingSync,
   ...promptAudit,
   ...plugins,
-  ...groupCacheTest,
   ...requestCapture,
-  ...accountOps,
 }
