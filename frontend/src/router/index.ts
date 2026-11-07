@@ -485,18 +485,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/group-cache-tests',
-    name: 'AdminGroupCacheTests',
-    component: () => import('@/views/admin/GroupCacheTestView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Group Cache Tests',
-      titleKey: 'admin.groupCacheTest.title',
-      descriptionKey: 'admin.groupCacheTest.description'
-    }
-  },
-  {
     path: '/admin/audit-logs',
     name: 'AdminAuditLogs',
     component: () => import('@/views/admin/AuditLogView.vue'),
@@ -614,24 +602,6 @@ const routes: RouteRecordRaw[] = [
     name: 'AdminRequestCaptures',
     component: () => import('@/views/admin/RequestCaptureView.vue'),
     meta: { requiresAuth: true, requiresAdmin: true, title: 'Request Capture', titleKey: 'admin.requestCapture.title' }
-  },
-  {
-    path: '/admin/ops-center',
-    name: 'AdminOpsCenter',
-    component: () => import('@/views/admin/OpsCenterView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Operations Center', titleKey: 'nav.opsCenter' }
-  },
-  {
-    path: '/admin/account-ops',
-    name: 'AdminAccountOps',
-    component: () => import('@/views/admin/AccountOpsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Account Operations', titleKey: 'nav.accountOps' }
-  },
-  {
-    path: '/admin/upstream-monitor',
-    name: 'AdminUpstreamMonitor',
-    component: () => import('@/views/admin/UpstreamMonitorView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: 'Upstream Monitor', titleKey: 'nav.upstreamMonitor' }
   },
   {
     path: '/admin/accounts',

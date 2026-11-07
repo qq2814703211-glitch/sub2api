@@ -127,7 +127,7 @@ func TestUpdateAccountKeepsGrokCatalogManagedByDatabase(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			const accountID = int64(25)
-			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+			repo := &inMemoryAccountRepo{accounts: map[int64]*Account{
 				accountID: {
 					ID:          accountID,
 					Name:        "grok",

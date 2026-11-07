@@ -11,11 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openCodeGoManagedExtra 构造同时携带探测 / Ollama / OpenCode 受管键的 extra，
+// openCodeGoManagedExtra 构造同时携带 Ollama / OpenCode 受管键的 extra，
 // 用于验证各身份清理分支只清自己该清的键、不跨身份误清。
 func openCodeGoManagedExtra(now time.Time) map[string]any {
 	return map[string]any{
-		service.UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
 		service.OllamaCloudUsageSessionExtraKey:     "cipher:wos-session=fixture",
 		service.OllamaCloudUsageAutoRefreshExtraKey: true,
 		service.OllamaCloudUsageSnapshotExtraKey: map[string]any{
@@ -134,7 +133,6 @@ func TestUpdateCredentialsOpenCodeGoClearsAllManagedStateOnIdentityChange(t *tes
 	}))
 	loaded, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
-	require.NotContains(t, loaded.Extra, service.UpstreamBillingProbeExtraKey)
 	require.NotContains(t, loaded.Extra, service.OpenCodeGoUsageAutoRefreshExtraKey)
 	require.NotContains(t, loaded.Extra, service.OpenCodeGoUsageSnapshotExtraKey)
 	require.NotContains(t, loaded.Extra, service.OllamaCloudUsageSessionExtraKey)
