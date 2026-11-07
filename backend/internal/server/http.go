@@ -49,6 +49,7 @@ func ProvideRouter(
 	accountService *service.AccountService,
 	proxyService *service.ProxyService,
 	sharedRuntime *PoisonSharedRuntime,
+	usageInflight service.UsageInflightStore,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -109,7 +110,7 @@ func ProvideRouter(
 		}
 	}
 
-	router := SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)
+	router := SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, usageInflight)
 	if sharedRuntime != nil && handlers != nil && handlers.Admin != nil {
 		sharedRuntime.Bind(settingService, handlers.Admin.Setting)
 	}
