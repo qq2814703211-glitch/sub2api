@@ -155,6 +155,11 @@ type UsageLog struct {
 	CacheCreation5mTokens int `gorm:"column:cache_creation_5m_tokens"`
 	CacheCreation1hTokens int `gorm:"column:cache_creation_1h_tokens"`
 
+	// CacheWrite30mTokens / CacheWrite12hTokens 是 OpenAI 的缓存写入 TTL 分档
+	// （30 分钟 / 12 小时），与上面 Anthropic 语义的 5m/1h 是两套独立字段（ADR 0011）。
+	CacheWrite30mTokens int `gorm:"column:cache_write_30m_tokens"`
+	CacheWrite12hTokens int `gorm:"column:cache_write_12h_tokens"`
+
 	ImageInputTokens  int
 	ImageInputCost    float64
 	ImageOutputTokens int
@@ -163,6 +168,8 @@ type UsageLog struct {
 	InputCost                 float64
 	OutputCost                float64
 	CacheCreationCost         float64
+	// CacheWriteTTLCost 是 OpenAI 30 分钟 / 12 小时缓存写入的分档费用合计。
+	CacheWriteTTLCost         float64
 	CacheReadCost             float64
 	TotalCost                 float64
 	ActualCost                float64
