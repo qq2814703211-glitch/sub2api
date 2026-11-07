@@ -7,7 +7,6 @@ services:
     command: ["/app/sub2api"]
     environment:
       BACKGROUND_JOBS_ENABLED: "false"
-      CONFIG_FILE: /app/data/green-config.yaml
       SUB2API_DIAGNOSTIC_SOCKET: /run/submem-green/memory.sock
     ports:
       - "127.0.0.1:18092:8080"
