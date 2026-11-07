@@ -11,15 +11,11 @@
           {{ t('admin.channelMonitor.title') }}
         </h1>
         <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{
-            isV1Mode
-              ? t('channelMonitorV2.admin.descriptionV1')
-              : t('channelMonitorV2.admin.descriptionV2')
-          }}
+          {{ pageDescription }}
         </p>
         <div class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
           <div
-            class="tabs inline-flex w-full max-w-xl flex-wrap sm:w-auto"
+            class="tabs inline-flex w-full max-w-2xl flex-wrap sm:w-auto"
             role="tablist"
             :aria-label="t('channelMonitorV2.admin.tabAria')"
           >
@@ -29,7 +25,7 @@
               class="tab flex-1 sm:flex-none"
               :class="adminMonitorTab === 'v2' ? 'tab-active' : ''"
               :aria-selected="adminMonitorTab === 'v2'"
-              @click="adminMonitorTab = 'v2'"
+              @click="selectTab('v2')"
             >
               {{ t('channelMonitorV2.admin.tabV2') }}
             </button>
@@ -39,15 +35,27 @@
               class="tab flex-1 sm:flex-none"
               :class="adminMonitorTab === 'legacy' ? 'tab-active' : ''"
               :aria-selected="adminMonitorTab === 'legacy'"
-              @click="adminMonitorTab = 'legacy'"
+              @click="selectTab('legacy')"
             >
               {{ isV1Mode ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History') }}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="tab flex-1 sm:flex-none"
+              :class="adminMonitorTab === 'v3' ? 'tab-active' : ''"
+              :aria-selected="adminMonitorTab === 'v3'"
+              @click="selectTab('v3')"
+            >
+              {{ t('channelMonitorV2.admin.tabV3') }}
             </button>
           </div>
         </div>
       </header>
 
       <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
+
+      <MonitorV3SettingsPanel v-else-if="adminMonitorTab === 'v3'" />
 
       <TablePageLayout v-else>
       <template #filters>
@@ -170,6 +178,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -199,12 +208,57 @@ import MonitorActionsCell from '@/components/admin/monitor/MonitorActionsCell.vu
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import MonitorSettingsPanel from '@/features/channel-monitor-v2/MonitorSettingsPanel.vue'
-import { isChannelMonitorV1Mode } from '@/utils/featureFlags'
+import MonitorV3SettingsPanel from '@/features/channel-monitor-v3/MonitorV3SettingsPanel.vue'
+import { getChannelMonitorMode, isChannelMonitorRouteEnabled, isChannelMonitorV1Mode } from '@/utils/featureFlags'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const route = useRoute()
+const router = useRouter()
 const isV1Mode = computed(() => isChannelMonitorV1Mode())
-const adminMonitorTab = ref<'v2' | 'legacy'>(isChannelMonitorV1Mode() ? 'legacy' : 'v2')
+
+type AdminMonitorTab = 'v2' | 'legacy' | 'v3'
+
+/** Old bookmarks hit `/admin/channel-monitor-v3`, which redirects here with `?tab=v3`. */
+function tabFromQuery(): AdminMonitorTab | null {
+  const raw = route?.query?.tab
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return value === 'v3' || value === 'v2' || value === 'legacy' ? value : null
+}
+
+/** Default tab follows the configured system mode, V3 included. */
+function defaultTab(): AdminMonitorTab {
+  // V1/V2 的接口都挂在 channel_monitor_enabled 门控上；总开关关闭时只有 V3 可用
+  // （V3 只认自己的 channel_monitor_v3_config.enabled，ADR 0008）。
+  if (!isChannelMonitorRouteEnabled()) return 'v3'
+  const mode = getChannelMonitorMode()
+  if (mode === 'v1') return 'legacy'
+  if (mode === 'v3') return 'v3'
+  return 'v2'
+}
+
+const adminMonitorTab = ref<AdminMonitorTab>(tabFromQuery() ?? defaultTab())
+
+const pageDescription = computed(() => {
+  switch (adminMonitorTab.value) {
+    case 'v3':
+      return t('channelMonitorV3.admin.description')
+    case 'legacy':
+      return t('channelMonitorV2.admin.descriptionV1')
+    default:
+      return t('channelMonitorV2.admin.descriptionV2')
+  }
+})
+
+/**
+ * Tab state lives in the URL query so the choice survives a refresh and can be
+ * deep-linked (the retired `/admin/channel-monitor-v3` route redirects to `?tab=v3`).
+ */
+function selectTab(tab: AdminMonitorTab) {
+  adminMonitorTab.value = tab
+  void router?.replace({ query: { ...(route?.query ?? {}), tab } })
+}
+
 const {
   providerLabel,
   providerBadgeClass,
