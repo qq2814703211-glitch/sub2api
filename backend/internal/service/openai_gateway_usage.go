@@ -195,6 +195,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		OutputTokens:         result.Usage.OutputTokens,
 		CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
 		CacheReadTokens:      result.Usage.CacheReadInputTokens,
+		CacheWrite30mTokens:  result.Usage.CacheWrite30mTokens,
+		CacheWrite12hTokens:  result.Usage.CacheWrite12hTokens,
 		ImageOutputTokens:    result.Usage.ImageOutputTokens,
 	}
 
@@ -404,6 +406,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		OutputTokens:             result.Usage.OutputTokens,
 		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
+		CacheWrite30mTokens:      result.Usage.CacheWrite30mTokens,
+		CacheWrite12hTokens:      result.Usage.CacheWrite12hTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,
 		ImageCount:               result.ImageCount,
@@ -427,6 +431,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.OutputCost = cost.OutputCost
 		usageLog.ImageOutputCost = cost.ImageOutputCost
 		usageLog.CacheCreationCost = cost.CacheCreationCost
+		usageLog.CacheWriteTTLCost = cost.CacheWriteTTLCost
 		usageLog.CacheReadCost = cost.CacheReadCost
 		usageLog.TotalCost = cost.TotalCost
 		usageLog.ActualCost = cost.ActualCost
