@@ -320,15 +320,42 @@
           </template>
 
           <template #cell-capacity="{ row }">
-            <GroupCapacityBadge
-              v-if="capacityMap.get(row.id)"
-              :concurrency-used="capacityMap.get(row.id)!.concurrencyUsed"
-              :concurrency-max="capacityMap.get(row.id)!.concurrencyMax"
-              :sessions-used="capacityMap.get(row.id)!.sessionsUsed"
-              :sessions-max="capacityMap.get(row.id)!.sessionsMax"
-              :rpm-used="capacityMap.get(row.id)!.rpmUsed"
-              :rpm-max="capacityMap.get(row.id)!.rpmMax"
-            />
+            <div v-if="capacityMap.get(row.id)" class="flex flex-col items-start gap-1">
+              <GroupCapacityBadge
+                :concurrency-used="capacityMap.get(row.id)!.concurrencyUsed"
+                :concurrency-max="capacityMap.get(row.id)!.concurrencyMax"
+                :sessions-used="capacityMap.get(row.id)!.sessionsUsed"
+                :sessions-max="capacityMap.get(row.id)!.sessionsMax"
+                :rpm-used="capacityMap.get(row.id)!.rpmUsed"
+                :rpm-max="capacityMap.get(row.id)!.rpmMax"
+              />
+              <!-- 实时使用中：此刻有请求正在处理的用户数，点开看名单 -->
+              <button
+                type="button"
+                :class="[
+                  'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                  capacityMap.get(row.id)!.activeUsers > 0
+                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600',
+                ]"
+                @click="openActiveUsers(row)"
+              >
+                <span class="relative flex h-1.5 w-1.5">
+                  <span
+                    v-if="capacityMap.get(row.id)!.activeUsers > 0"
+                    class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75"
+                  ></span>
+                  <span
+                    :class="[
+                      'relative inline-flex h-1.5 w-1.5 rounded-full',
+                      capacityMap.get(row.id)!.activeUsers > 0 ? 'bg-emerald-500' : 'bg-gray-400 dark:bg-dark-400',
+                    ]"
+                  ></span>
+                </span>
+                <span class="font-mono">{{ capacityMap.get(row.id)!.activeUsers }}</span>
+                <span>{{ t("admin.groups.activeUsers.badge") }}</span>
+              </button>
+            </div>
             <span v-else class="text-xs text-gray-500">—</span>
           </template>
 
@@ -4297,6 +4324,98 @@
       @close="showRPMOverridesModal = false"
       @success="loadGroups"
     />
+
+    <!-- 分组实时使用中用户名单 -->
+    <BaseDialog
+      :show="showActiveUsersModal"
+      :title="
+        activeUsersGroup
+          ? t('admin.groups.activeUsers.titleWithGroup', { name: activeUsersGroup.name })
+          : t('admin.groups.activeUsers.title')
+      "
+      width="wide"
+      @close="showActiveUsersModal = false"
+    >
+      <div class="space-y-4">
+        <div class="flex items-start justify-between gap-3">
+          <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            {{ t("admin.groups.activeUsers.description") }}
+          </p>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm shrink-0"
+            :disabled="activeUsersLoading"
+            @click="loadActiveUsers"
+          >
+            <Icon
+              name="refresh"
+              size="sm"
+              :class="activeUsersLoading ? 'animate-spin' : ''"
+            />
+          </button>
+        </div>
+
+        <div
+          v-if="activeUsersError"
+          class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+        >
+          {{ activeUsersError }}
+        </div>
+
+        <div
+          v-else-if="!activeUsersLoading && activeUsers.length === 0"
+          class="rounded-lg border border-gray-200 px-3 py-8 text-center text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400"
+        >
+          {{ t("admin.groups.activeUsers.empty") }}
+        </div>
+
+        <div v-else class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600">
+          <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-600">
+            <thead class="bg-gray-50 dark:bg-dark-700">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {{ t("admin.groups.activeUsers.columns.user") }}
+                </th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {{ t("admin.groups.activeUsers.columns.email") }}
+                </th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {{ t("admin.groups.activeUsers.columns.inflight") }}
+                </th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {{ t("admin.groups.activeUsers.columns.models") }}
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+              <tr v-for="user in activeUsers" :key="user.user_id">
+                <td class="px-3 py-2 text-gray-900 dark:text-white">
+                  {{ user.username || "—" }}
+                </td>
+                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">
+                  {{ user.email || "—" }}
+                </td>
+                <td class="px-3 py-2 font-mono text-gray-900 dark:text-white">
+                  {{ user.inflight_count }}
+                </td>
+                <td class="px-3 py-2">
+                  <div v-if="user.models.length" class="flex flex-wrap gap-1">
+                    <span
+                      v-for="model in user.models"
+                      :key="model"
+                      class="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-700 dark:bg-dark-700 dark:text-gray-300"
+                    >
+                      {{ model }}
+                    </span>
+                  </div>
+                  <span v-else class="text-[10px] text-gray-400 dark:text-gray-500">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -4358,6 +4477,7 @@ import {
   validateTimePricing,
 } from "@/components/admin/channel/types";
 import type { ChannelModelPricing } from "@/api/admin/channels";
+import type { GroupActiveUser } from "@/api/admin/groups";
 import { VueDraggable } from "vue-draggable-plus";
 import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
@@ -4841,10 +4961,17 @@ const capacityMap = ref<
       sessionsMax: number;
       rpmUsed: number;
       rpmMax: number;
+      activeUsers: number;
     }
   >
 >(new Map());
 const searchQuery = ref("");
+// 分组「实时使用中」名单：只在管理员的分组管理页出现，人数与名单同源（在途请求登记表）。
+const showActiveUsersModal = ref(false);
+const activeUsersLoading = ref(false);
+const activeUsersError = ref("");
+const activeUsers = ref<GroupActiveUser[]>([]);
+const activeUsersGroup = ref<{ id: number; name: string } | null>(null);
 const filters = reactive({
   platform: "",
   status: "",
@@ -5770,6 +5897,7 @@ const loadCapacitySummary = async () => {
         sessionsMax: number;
         rpmUsed: number;
         rpmMax: number;
+        activeUsers: number;
       }
     >();
     for (const item of data) {
@@ -5780,6 +5908,8 @@ const loadCapacitySummary = async () => {
         sessionsMax: item.sessions_max,
         rpmUsed: item.rpm_used,
         rpmMax: item.rpm_max,
+        // 实时使用中的人数：与 sessions_used 完全不同的口径，直接来自在途请求登记表。
+        activeUsers: item.active_users ?? 0,
       });
     }
     capacityMap.value = map;
@@ -5795,6 +5925,33 @@ const handleSearch = () => {
     pagination.page = 1;
     loadGroups();
   }, 300);
+};
+
+// 打开「实时使用中」名单。名单是瞬时快照，每次打开都重新拉一次。
+const openActiveUsers = (group: { id: number; name: string }) => {
+  activeUsersGroup.value = { id: group.id, name: group.name };
+  showActiveUsersModal.value = true;
+  void loadActiveUsers();
+};
+
+const loadActiveUsers = async () => {
+  const group = activeUsersGroup.value;
+  if (!group) {
+    return;
+  }
+  activeUsersLoading.value = true;
+  activeUsersError.value = "";
+  try {
+    activeUsers.value = await adminAPI.groups.getGroupActiveUsers(group.id);
+  } catch (error) {
+    activeUsersError.value = extractApiErrorMessage(
+      error,
+      t("admin.groups.activeUsers.loadFailed"),
+    );
+    activeUsers.value = [];
+  } finally {
+    activeUsersLoading.value = false;
+  }
 };
 
 const handlePageChange = (page: number) => {
