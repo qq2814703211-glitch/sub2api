@@ -55,12 +55,25 @@ func ProvideAdminHandlers(
 	accountOps *admin.AccountOpsHandler,
 	monitor *admin.UpstreamMonitorHandler,
 	openAIGateway *service.OpenAIGatewayService,
+	usageInflight *service.UsageInflightService,
+	groupCapacity *service.GroupCapacityService,
 ) *AdminHandlers {
 	opsHandler.SetVideoBillingService(openAIGateway)
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
+	// 实时并发可见性：用户维度在途明细与分组维度实时用户名单共用同一个聚合服务，
+	// 分组容量里的 active_users 也挂到同一实例，保证徽标与名单口径一致。
+	if userHandler != nil {
+		userHandler.SetUsageInflightService(usageInflight)
+	}
+	if groupHandler != nil {
+		groupHandler.SetUsageInflightService(usageInflight)
+	}
+	if groupCapacity != nil {
+		groupCapacity.WithUsageInflight(usageInflight)
+	}
 	return &AdminHandlers{
 		AccountOps:             accountOps,
 		UpstreamMonitor:        monitor,
