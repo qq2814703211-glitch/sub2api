@@ -16,6 +16,11 @@ type GroupCapacitySummary struct {
 	SessionsMax     int   `json:"sessions_max"`
 	RPMUsed         int   `json:"rpm_used"`
 	RPMMax          int   `json:"rpm_max"`
+	// ActiveUsers 是「此刻有请求正在处理」的用户数（在途登记表按 group_id 去重计数）。
+	// 它与 SessionsUsed 是两条互不相干的路径：会话数来自 session-limit cache 的空闲窗口，
+	// ActiveUsers 只看在途请求，请求一结束就不算。两者的数据源、TTL 与语义都不同，
+	// 不得互相复用或互相推导。
+	ActiveUsers int `json:"active_users"`
 }
 
 // GroupAccountCapacityRow is the lightweight account projection needed for
@@ -45,6 +50,10 @@ type GroupCapacityService struct {
 	concurrencyService *ConcurrencyService
 	sessionLimitCache  SessionLimitCache
 	rpmCache           RPMCache
+	// usageInflight 是在途请求登记表的聚合服务，只用于 active_users。
+	// 与 concurrencyService / sessionLimitCache / rpmCache 相互独立：任一为 nil 时
+	// 对应字段退化为 0，不影响其它字段。
+	usageInflight *UsageInflightService
 }
 
 // NewGroupCapacityService creates a new GroupCapacityService.
@@ -64,6 +73,14 @@ func NewGroupCapacityService(
 	}
 }
 
+// WithUsageInflight attaches the inflight aggregation service that feeds
+// active_users. It is a setter rather than a constructor parameter so existing
+// capacity wiring and test doubles keep their shape.
+func (s *GroupCapacityService) WithUsageInflight(usageInflight *UsageInflightService) *GroupCapacityService {
+	s.usageInflight = usageInflight
+	return s
+}
+
 // GetAllGroupCapacity returns capacity summary for all active groups.
 func (s *GroupCapacityService) GetAllGroupCapacity(ctx context.Context) ([]GroupCapacitySummary, error) {
 	groupIDs, err := s.listActiveGroupIDs(ctx)
@@ -71,11 +88,42 @@ func (s *GroupCapacityService) GetAllGroupCapacity(ctx context.Context) ([]Group
 		return nil, err
 	}
 
+	var results []GroupCapacitySummary
 	if lister, ok := s.accountRepo.(groupCapacityAccountLister); ok {
-		return s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+		results, err = s.getGroupCapacitiesBatch(ctx, groupIDs, lister)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		results = s.getGroupCapacitiesSequential(ctx, groupIDs)
 	}
 
-	return s.getGroupCapacitiesSequential(ctx, groupIDs), nil
+	s.applyActiveUsers(ctx, results)
+	return results, nil
+}
+
+// applyActiveUsers 为容量行填充 active_users。
+//
+// 这条路径与并发槽位、会话缓存、RPM 缓存完全独立：数据来自在途登记表按 group_id
+// 的去重计数，请求结束即归零。在途登记表不可用时只让该字段保持 0，不影响其它容量
+// 字段，也不让整个容量接口失败。
+func (s *GroupCapacityService) applyActiveUsers(ctx context.Context, results []GroupCapacitySummary) {
+	if s.usageInflight == nil || len(results) == 0 {
+		return
+	}
+	groupIDs := make([]int64, 0, len(results))
+	for i := range results {
+		if results[i].GroupID > 0 {
+			groupIDs = append(groupIDs, results[i].GroupID)
+		}
+	}
+	counts, err := s.usageInflight.CountActiveUsersByGroups(ctx, groupIDs)
+	if err != nil {
+		return
+	}
+	for i := range results {
+		results[i].ActiveUsers = counts[results[i].GroupID]
+	}
 }
 
 func (s *GroupCapacityService) listActiveGroupIDs(ctx context.Context) ([]int64, error) {
