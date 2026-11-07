@@ -3,12 +3,19 @@ import type { MediaPricing, MediaPricingConditions, MediaPricingRule } from '@/t
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
 export type MediaPricingFormValue = MediaPricing | string | null | undefined
 
-const units = ['image', 'second', 'frame', 'request', 'token']
-const tokenPrices = ['input_price', 'output_price', 'image_input_price', 'image_output_price'] as const
+export const MEDIA_PRICING_UNITS = ['image', 'second', 'frame', 'request', 'token'] as const
+export const MEDIA_PRICING_TOKEN_PRICES = ['input_price', 'output_price', 'image_input_price', 'image_output_price'] as const
+const units = MEDIA_PRICING_UNITS as readonly string[]
+const tokenPrices = MEDIA_PRICING_TOKEN_PRICES
 const prices = ['price', ...tokenPrices, 'prompt_price'] as const
-const stringConditions = ['resolution', 'mode', 'input_type'] as const
-const booleanConditions = ['audio', 'reference_video', 'layer'] as const
-const numericConditions = ['min_pixels', 'max_pixels', 'min_duration', 'max_duration', 'fps', 'min_fps', 'max_fps'] as const
+export const MEDIA_PRICING_STRING_CONDITIONS = ['resolution', 'mode', 'input_type'] as const
+export const MEDIA_PRICING_BOOLEAN_CONDITIONS = ['audio', 'reference_video', 'layer'] as const
+export const MEDIA_PRICING_NUMERIC_CONDITIONS = ['min_pixels', 'max_pixels', 'min_duration', 'max_duration', 'fps', 'min_fps', 'max_fps'] as const
+/** Boundary pairs whose lower bound may not exceed the upper bound. */
+export const MEDIA_PRICING_RANGE_PAIRS = [['min_pixels', 'max_pixels'], ['min_duration', 'max_duration'], ['min_fps', 'max_fps']] as const
+const stringConditions = MEDIA_PRICING_STRING_CONDITIONS
+const booleanConditions = MEDIA_PRICING_BOOLEAN_CONDITIONS
+const numericConditions = MEDIA_PRICING_NUMERIC_CONDITIONS
 const conditionKeys = [...stringConditions, ...booleanConditions, ...numericConditions]
 
 function isObject(value: unknown): value is Record<string, unknown> {
