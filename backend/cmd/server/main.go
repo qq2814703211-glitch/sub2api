@@ -38,6 +38,10 @@ var (
 	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
 )
 
+func backgroundJobsEnabled() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("BACKGROUND_JOBS_ENABLED")), "false")
+}
+
 func init() {
 	// 如果 Version 已通过 ldflags 注入（例如 -X main.Version=...），则不要覆盖。
 	if strings.TrimSpace(Version) != "" {
@@ -69,6 +73,9 @@ func main() {
 
 	// CLI setup mode
 	if *setupMode {
+		if !backgroundJobsEnabled() {
+			log.Fatal("setup mode is unavailable while BACKGROUND_JOBS_ENABLED=false")
+		}
 		if err := setup.RunCLI(); err != nil {
 			log.Fatalf("Setup failed: %v", err)
 		}
@@ -96,6 +103,9 @@ func main() {
 }
 
 func runSetupServer() {
+	if !backgroundJobsEnabled() {
+		log.Fatalf("setup mode is unavailable while BACKGROUND_JOBS_ENABLED=false")
+	}
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS(config.CORSConfig{}))
@@ -160,18 +170,20 @@ func runMainServer() {
 	} else {
 		defer stopDiagnostics()
 	}
-	if app.PluginManager != nil {
-		if err := app.PluginManager.Start(context.Background()); err != nil {
-			log.Printf("Plugin manager started in degraded state: %v", err)
+	if backgroundJobsEnabled() {
+		if app.PluginManager != nil {
+			if err := app.PluginManager.Start(context.Background()); err != nil {
+				log.Printf("Plugin manager started in degraded state: %v", err)
+			}
 		}
-	}
-	if app.PromptAudit != nil {
-		if err := app.PromptAudit.Start(context.Background()); err != nil {
-			// Startup continues so unrelated APIs stay up. Fail-closed (unavailable)
-			// applies only when a persisted blocking policy was observed; without
-			// blocking intent, Prompt Audit stays ModeOff so the gateway remains
-			// usable and administrators can still disable the feature (#4560).
-			log.Printf("Prompt Audit started in degraded state: %v", err)
+		if app.PromptAudit != nil {
+			if err := app.PromptAudit.Start(context.Background()); err != nil {
+				// Startup continues so unrelated APIs stay up. Fail-closed (unavailable)
+				// applies only when a persisted blocking policy was observed; without
+				// blocking intent, Prompt Audit stays ModeOff so the gateway remains
+				// usable and administrators can still disable the feature (#4560).
+				log.Printf("Prompt Audit started in degraded state: %v", err)
+			}
 		}
 	}
 

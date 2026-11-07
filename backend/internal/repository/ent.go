@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -84,23 +85,11 @@ func isTransientDatabaseInitializationError(err error) bool {
 	return code == "57P03" || strings.HasPrefix(code, "08")
 }
 
-// InitEnt 初始化 Ent ORM 客户端并返回客户端实例和底层的 *sql.DB。
-//
-// 该函数执行以下操作：
-//  1. 初始化全局时区设置，确保时间处理一致性
-//  2. 建立 PostgreSQL 数据库连接
-//  3. 自动执行数据库迁移，确保 schema 与代码同步
-//  4. 创建并返回 Ent 客户端实例
-//
-// 重要提示：调用者必须负责关闭返回的 ent.Client（关闭时会自动关闭底层的 driver/db）。
-//
-// 参数：
-//   - cfg: 应用程序配置，包含数据库连接信息和时区设置
-//
-// 返回：
-//   - *ent.Client: Ent ORM 客户端，用于执行数据库操作
-//   - *sql.DB: 底层的 SQL 数据库连接，可用于直接执行原生 SQL
-//   - error: 初始化过程中的错误
+func startupWritesEnabled() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("BACKGROUND_JOBS_ENABLED")), "false")
+}
+
+// InitEnt initializes the Ent ORM client and returns it with the underlying database.
 func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	// 优先初始化时区设置，确保所有时间操作使用统一的时区。
 	// 这对于跨时区部署和日志时间戳的一致性至关重要。
@@ -129,6 +118,10 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 		}
 	}
 	applyDBPoolSettings(drv.DB(), cfg)
+
+	if !startupWritesEnabled() {
+		return ent.NewClient(ent.Driver(drv)), drv.DB(), nil
+	}
 
 	// 确保数据库 schema 已准备就绪。
 	// SQL 迁移文件是 schema 的权威来源（source of truth）。
