@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	coderws "github.com/coder/websocket"
 )
 
@@ -57,11 +56,6 @@ func readOpenAIWSClientMessageWithTimeoutStart(
 	readDone := make(chan openAIWSClientReadResult, 1)
 	go func() {
 		messageType, payload, err := readAPIKeyWSMessage(controlCtx, conn)
-		if err == nil && (messageType == coderws.MessageText || messageType == coderws.MessageBinary) {
-			capture := requestcapture.FromContext(controlCtx)
-			capture.SetProtocol("websocket")
-			capture.ClientFrame(payload)
-		}
 		readDone <- openAIWSClientReadResult{messageType: messageType, payload: payload, err: err}
 	}()
 

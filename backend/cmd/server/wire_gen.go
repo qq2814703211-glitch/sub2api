@@ -483,7 +483,6 @@ func provideCleanup(
 		}
 
 		parallelSteps := []cleanupStep{
-			{"RequestCapture", func() error { settingService.StopRequestCapture(); return nil }},
 			{"KeyUsageRuntime", func() error {
 				if keyUsage != nil {
 					keyUsage.Stop()
