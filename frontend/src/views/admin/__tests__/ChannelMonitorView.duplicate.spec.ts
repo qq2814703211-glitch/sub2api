@@ -19,7 +19,15 @@ const {
 }))
 
 
+// 视图现在把当前页签同步到 URL query（旧的 /admin/channel-monitor-v3 会 redirect 到
+// ?tab=v3），所以挂载时需要一个 router。
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: {} }),
+  useRouter: () => ({ replace: vi.fn() }),
+}))
+
 vi.mock('@/utils/featureFlags', () => ({
+  isChannelMonitorRouteEnabled: () => true,
   isChannelMonitorV1Mode: () => true,
   isChannelMonitorV2Mode: () => false,
   getChannelMonitorMode: () => 'v1' as const,

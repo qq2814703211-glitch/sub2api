@@ -561,18 +561,14 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    // Standalone V3 configuration surface (ADR 0008). Not nested under the V1/V2
-    // channel-monitor page: V3 has its own switch and its own probe identity.
+    // V3's configuration used to live on its own sidebar page. It is now the third
+    // tab of the V1/V2 monitor page; keep the old path as a redirect so existing
+    // bookmarks still land on V3 instead of 404-ing.
     path: '/admin/channel-monitor-v3',
-    name: 'AdminChannelMonitorV3',
-    component: () => import('@/views/admin/ChannelMonitorV3View.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Channel Monitor V3',
-      titleKey: 'channelMonitorV3.admin.title',
-      descriptionKey: 'channelMonitorV3.admin.description'
-    }
+    redirect: (to) => ({
+      path: '/admin/channels/monitor',
+      query: { ...to.query, tab: 'v3' },
+    }),
   },
   {
     path: '/monitor',
