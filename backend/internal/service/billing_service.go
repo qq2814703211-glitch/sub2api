@@ -126,6 +126,12 @@ type ModelPricing struct {
 	LongContextOutputMultiplier        float64            // 长上下文整次会话输出倍率
 	ImageOutputPricePerToken           float64            // 图片输出 token 价格 (USD)
 	ImageOutputPriceExplicit           bool               // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
+
+	// CNYOfficial 标记该价格来自「官方人民币牌价」口径（覆盖层 cny_official: true）。
+	// 由 getModelPricingAt 从 LiteLLMModelPricing 透传下来，供
+	// applyModelSpecificPricingPolicyEx 判断是否跳过 DeepSeek 强制美元谷价兜底。
+	// 与 ModelPricing 里同名的 LiteLLMModelPricing.CNYOfficial 是同一语义。
+	CNYOfficial bool
 }
 
 func normalizeBillingServiceTier(serviceTier string) string {
@@ -1467,6 +1473,9 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				ImageInputPricePerToken:       litellmPricing.InputCostPerImageToken,
 				ImageCacheReadPricePerToken:   litellmPricing.CacheReadInputImageTokenCost,
 				ImageOutputPricePerToken:      litellmPricing.OutputCostPerImageToken,
+				// 人民币官方价口径透传：计费策略据此跳过 DeepSeek 美元谷价兜底，
+				// 让覆盖层里的 CNY 牌价真正生效。
+				CNYOfficial: litellmPricing.CNYOfficial,
 			}, true, pricingAt), nil
 		}
 	}
@@ -1965,12 +1974,18 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	// （Flash 三档为 2026-09-10 官方降价后口径）。这是覆盖远端旧价的关键——远端
 	// 仓库不可改，生产会先拉到旧价，必须在此兜底修正；克隆后再覆盖，避免污染
 	// 共享 fallbackPrices 指针。
+	//
+	// 例外（0.1.3 起）：价格来自「官方人民币牌价」口径的条目（CNYOfficial 置位）
+	// 不受本兜底改写。人民币价与美元目录价是两套独立口径，数字照搬官方人民币
+	// 牌价；若在这里被改写成硬编码美元谷价，覆盖层里的人民币价会在计费时静默
+	// 失效。硬编码常量仍作为「无人民币条目」时的兜底保留。
+	//
 	// 档位判定：含 "deepseek-v4-pro" 的版本化名称（如 deepseek-v4-pro-0813）归 pro 档，
 	// 其余 deepseek-*（含已停服的 chat/reasoner 与未知型号）统一归 flash 档。
 	// 官方后续保留了 Pro 服务及其计费方式，Pro 不按日期切换成 Flash 价。
 	// 高峰时段倍率不在本函数处理，由 calculateTokenCost 按 deepseekPeakMultiplierAt
 	// 对默认价卡另行叠加（分组/渠道自定义定价不叠加）。
-	if forceDeepSeekRates && isDeepSeekModel(model) {
+	if forceDeepSeekRates && isDeepSeekModel(model) && !pricing.CNYOfficial {
 		cloned := *pricing
 		if isDeepSeekProModel(model) {
 			cloned.InputPricePerToken = deepseekProOffPeakInputPrice
