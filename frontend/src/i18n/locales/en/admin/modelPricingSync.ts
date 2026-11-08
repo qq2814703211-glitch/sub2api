@@ -69,12 +69,12 @@ export default {
       sourceUrl: 'Source',
       manualTitle: 'Manual overrides',
       manualHint:
-        'CNY per 1M tokens, highest priority. Use the exact request model name — a slash is part of the name (e.g. siliconflow/deepseek-v3.2), so no vendor prefix is needed.',
+        'CNY per 1M tokens, highest priority. Enter the full request model name as-is (e.g. deepseek-v4.1-flash-1017 or siliconflow/deepseek-v3.2) — no vendor prefix needed.',
       manualEmpty: 'No manual overrides yet. Add a row to pin a model price.',
       manualPriorityNote: 'Highest priority, sync never overwrites this',
       addRow: 'Add row',
       removeRow: 'Remove row',
-      colModel: 'Model key (vendor/model)',
+      colModel: 'Model name',
       colModelPlaceholder: 'deepseek-v4.1-flash-1017',
       col: {
         input: 'Input',
@@ -103,7 +103,6 @@ export default {
       saveFailed: 'Failed to save pricing source',
       errFixFirst: 'Fix the highlighted rows first',
       errModelRequired: 'Model key is required',
-      errModelFormat: 'Use the vendor/model format (must contain a slash)',
       errModelDuplicate: 'Duplicate model key',
       errPriceRequired: 'Required',
       errPriceInvalid: 'Must be a non-negative number',

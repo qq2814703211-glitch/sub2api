@@ -143,9 +143,11 @@ func TestSetCNYOfficialPricingSettings_WrittenValueIsReadableBySync(t *testing.T
 	require.Equal(t, cnyOfficialDefaultSourceURL, parsed.SourceURL)
 	require.Len(t, parsed.ManualOverrides, 1)
 
-	// 且能被 dataset 判定为 manual 命中
-	ds := &cnyOfficialDataset{ManualOverrides: map[string]struct{}{"deepseek/deepseek-flash": {}}}
-	require.True(t, ds.manualOverrideHit("deepseek/deepseek-flash", "deepseek"))
+	// 且能被 dataset 判定为 manual 命中（精确匹配，不区分厂商）
+	ds := &cnyOfficialDataset{ManualOverrides: map[string]struct{}{"deepseek-flash": {}}}
+	require.True(t, ds.manualOverrideHit("deepseek-flash"))
+	require.False(t, ds.manualOverrideHit("deepseek/deepseek-flash"),
+		"带斜杠的键和不带斜杠的键是两个不同的模型名")
 }
 
 // TestCNYOfficialSettingsJSONShape 钉住落库 JSON 的字段名，前端按此读写。
