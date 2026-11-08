@@ -56,18 +56,30 @@ func TestGetCNYOfficialPricingSettings_DefaultsWhenMissing(t *testing.T) {
 	require.Empty(t, got.ManualOverrides)
 }
 
-// TestSetCNYOfficialPricingSettings_RejectsBadKeys 模型键必须形如 vendor/model。
+// TestSetCNYOfficialPricingSettings_RejectsBadKeys 空键被拒绝；裸模型名可用。
+//
+// 前缀只是给人看的分类，匹配时会剥掉，所以「深seek-flash」和
+// 「deepseek/deepseek-flash」等价。这里锁住空键仍被拒。
 func TestSetCNYOfficialPricingSettings_RejectsBadKeys(t *testing.T) {
-	svc, _ := newCNYSettingsService()
 	ctx := context.Background()
 
-	for _, bad := range []string{"deepseek-flash", "", "   "} {
+	for _, bad := range []string{"", "   "} {
+		svc, _ := newCNYSettingsService()
 		_, err := svc.SetCNYOfficialPricingSettings(ctx, &CNYOfficialPricingSettings{
 			Enabled:         true,
 			ManualOverrides: map[string]CNYOfficialManualPrice{bad: {Input: 1}},
 		})
 		require.Error(t, err, "键 %q 应当被拒绝", bad)
 	}
+
+	// 裸模型名是合法键，不再强制要求 vendor/ 前缀。
+	svc, _ := newCNYSettingsService()
+	got, err := svc.SetCNYOfficialPricingSettings(ctx, &CNYOfficialPricingSettings{
+		Enabled:         true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{"deepseek-flash": {Input: 1}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, float64(1), got.ManualOverrides["deepseek-flash"].Input)
 }
 
 // TestSetCNYOfficialPricingSettings_RejectsNegativePrice 价格不能为负。
@@ -230,4 +242,39 @@ func TestSetCNYOfficialPricingSettings_LongContextValidation(t *testing.T) {
 	require.Equal(t, 32000, saved.LongContextThreshold)
 	require.InDelta(t, 1.5, saved.LongContextInputMultiplier, 1e-9)
 	require.InDelta(t, 2, saved.LongContextOutputMultiplier, 1e-9)
+}
+
+// TestSetCNYOfficialPricingSettings_PrefixIsOptionalButUnique 前缀只是给人看的分类。
+//
+// 匹配侧（cnyOfficialBareModelName）用 LastIndex("/") 剥掉前缀，所以前缀填错也照样
+// 命中 —— 这一点必须钉住，否则「前缀没用但强制要求填」的矛盾会被当成安全校验。
+// 反过来，剥掉前缀后撞车的两个键会互相覆盖，必须在入口拦住。
+func TestSetCNYOfficialPricingSettings_PrefixIsOptionalButUnique(t *testing.T) {
+	// 裸模型名合法。
+	svc, _ := newCNYSettingsService()
+	_, err := svc.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+		Enabled:         true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{"deepseek-flash": {Input: 1, Output: 4}},
+	})
+	require.NoError(t, err, "裸模型名应当直接可用")
+
+	// 前缀填「错的」厂商也接受：前缀不参与匹配。
+	svc2, _ := newCNYSettingsService()
+	_, err = svc2.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+		Enabled:         true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{"qwen/deepseek-flash": {Input: 1, Output: 4}},
+	})
+	require.NoError(t, err, "前缀不做厂商校验")
+
+	// 两个不同前缀指向同一个裸模型 -> 互相覆盖，必须拒绝。
+	svc3, _ := newCNYSettingsService()
+	_, err = svc3.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"zhipuai/glm-4.6":   {Input: 11, Output: 11},
+			"alibaba-cn/glm-4.6": {Input: 22, Output: 22},
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "指向同一个模型")
 }
