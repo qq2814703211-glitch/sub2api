@@ -23,8 +23,10 @@ type ChannelMonitorV3BoardScope struct {
 	GroupIDs []int64
 	// Platforms 是这些分组所属的平台（去重、升序）。
 	Platforms []string
-	// CacheAverageWindowDays 探针桶缓存率的回看天数（ADR 0009）。
-	CacheAverageWindowDays int
+	// CacheAverageWindowMinutes 探针桶缓存率的回看窗口（分钟，ADR 0009）。
+	// 分钟粒度是用户要求的能力：窗口可以配成「30 分钟」，实现据此判断能否走
+	// 日汇总表（最小粒度一天）。
+	CacheAverageWindowMinutes int
 }
 
 // ChannelMonitorV3BoardRepository 是 V3 看板的只读契约。
@@ -38,10 +40,7 @@ type ChannelMonitorV3BoardRepository interface {
 // 分组元数据缺失（分组被删/停用）时那条记录直接丢弃：V3 不该为一个已经不存在的
 // 分组持续探针，也不该在看板上留一行永远没有数据的空卡片。
 func (c ChannelMonitorV3Config) DeriveScope(groups map[int64]ChannelMonitorV3GroupInfo) ChannelMonitorV3BoardScope {
-	scope := ChannelMonitorV3BoardScope{CacheAverageWindowDays: c.CacheAverageWindowDays}
-	if scope.CacheAverageWindowDays <= 0 {
-		scope.CacheAverageWindowDays = ChannelMonitorV3DefaultCacheAverageWindowDays
-	}
+	scope := ChannelMonitorV3BoardScope{CacheAverageWindowMinutes: c.CacheAverageWindowMinutes()}
 	platforms := map[string]struct{}{}
 	for _, id := range c.EnabledGroupIDs() {
 		info, ok := groups[id]
