@@ -396,7 +396,7 @@ func (s *ModelPricingSyncService) Sync(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	merged := applyModelPricingSyncChanges(existing, changes)
+	merged := applyModelPricingSyncChanges(existing, changes, cnyOfficialModelSet(dataset))
 	if err := s.writeOverrideFile(merged); err != nil {
 		s.recordRun(err, 0)
 		s.recordCNYRun(err, nil, 0)
@@ -906,9 +906,30 @@ func decodeModelPricingSyncEntry(raw json.RawMessage) map[string]float64 {
 	return out
 }
 
+// cnyOfficialModelSet 返回本轮「按人民币官方价口径处理」的模型集合。
+//
+// 这个集合决定哪些覆盖层条目要打上 cny_official 标记。它必须来自数据源
+// 本身（dataset.Pricing 的键），不能从「本轮产生了变更」反推：已经同步过、
+// 价格没变的模型不产生 change，若按 change 判定标记，那些条目会永远缺标记，
+// 进而在计费时被 DeepSeek 美元谷价兜底覆盖。
+func cnyOfficialModelSet(dataset *cnyOfficialDataset) map[string]struct{} {
+	if dataset == nil || len(dataset.Pricing) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(dataset.Pricing))
+	for model := range dataset.Pricing {
+		out[model] = struct{}{}
+	}
+	return out
+}
+
 // applyModelPricingSyncChanges 把变更合并进覆盖层条目，返回新的覆盖层对象。
 // 已有条目的其他字段（含运营手配的倍率、阶梯开关等）原样保留。
-func applyModelPricingSyncChanges(existing map[string]json.RawMessage, changes []modelPricingSyncChange) map[string]json.RawMessage {
+func applyModelPricingSyncChanges(
+	existing map[string]json.RawMessage,
+	changes []modelPricingSyncChange,
+	cnyModels map[string]struct{},
+) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(existing)+16)
 	for model, raw := range existing {
 		out[model] = raw
@@ -938,14 +959,11 @@ func applyModelPricingSyncChanges(existing map[string]json.RawMessage, changes [
 
 	// 人民币官方价口径的条目必须带上 cny_official 标记：计费侧据此跳过
 	// 「DeepSeek 一律强制回官方低谷美元价」的兜底改写，否则人民币价写入覆盖层
-	// 后在计费时会被静默吞掉。标记按模型整体置位 —— 一个模型的 price 字段
-	// 全部来自同一口径，不存在半 USD 半 CNY 的条目。
-	cnyModels := make(map[string]struct{}, len(changes))
-	for _, change := range changes {
-		if change.source() == ModelPricingSyncSourceCNYOfficial {
-			cnyModels[change.Model] = struct{}{}
-		}
-	}
+	// 后在计费时会被静默吞掉。
+	//
+	// 标记按「数据源里属于人民币口径的模型」整体置位，而不是按「本轮有变更」——
+	// 已经同步过、价格未变因而没有 change 的模型同样要打标记，否则标记会永久缺失。
+	// 一个模型的 price 字段全部来自同一口径，不存在半 USD 半 CNY 的条目。
 	for model := range cnyModels {
 		raw, exists := out[model]
 		if !exists {
@@ -953,6 +971,9 @@ func applyModelPricingSyncChanges(existing map[string]json.RawMessage, changes [
 		}
 		var fields map[string]any
 		if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+			continue
+		}
+		if fields["cny_official"] == true {
 			continue
 		}
 		fields["cny_official"] = true
