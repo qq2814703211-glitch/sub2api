@@ -256,6 +256,16 @@ type LiteLLMModelPricing struct {
 	// 此类条目只可用于图片计费，token 计费必须回退到 fallback 或 fail-closed，
 	// 否则 token 流量会被按 $0 计费。零值（false）表示条目具备 token 价格。
 	TokenPricingAbsent bool `json:"-"`
+
+	// CNYOfficial 标记该条目的 token 价格来自「官方人民币牌价」口径
+	// （basellm/llm-metadata 的 CNY 分支，数字照搬官方人民币价，
+	// 单位按每百万 token 折算成每 token 存放）。
+	//
+	// 置位后计费侧必须尊重这些值，不得被 applyModelSpecificPricingPolicyEx 里
+	// 「DeepSeek 一律强制回官方低谷美元价」的兜底改写 —— 否则人民币价写进覆盖层
+	// 也会在计费时被静默吞掉。该标记只在同步写入人民币价时置位，
+	// 运营手配价与美元目录价都不会带上它。
+	CNYOfficial bool `json:"cny_official,omitempty"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -287,6 +297,9 @@ type LiteLLMRawEntry struct {
 	InputCostPerImageToken              *float64 `json:"input_cost_per_image_token"`
 	CacheReadInputImageTokenCost        *float64 `json:"cache_read_input_image_token_cost"`
 	CacheStorageCostPerTokenPerHour     *float64 `json:"cache_storage_cost_per_token_per_hour"`
+
+	// CNYOfficial 标记该条目价格来自官方人民币牌价口径（见 LiteLLMModelPricing）。
+	CNYOfficial *bool `json:"cny_official"`
 }
 
 // PricingService 动态价格服务
@@ -761,6 +774,9 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.CacheStorageCostPerTokenPerHour != nil {
 			pricing.CacheStorageCostPerTokenPerHour = *entry.CacheStorageCostPerTokenPerHour
+		}
+		if entry.CNYOfficial != nil {
+			pricing.CNYOfficial = *entry.CNYOfficial
 		}
 
 		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||

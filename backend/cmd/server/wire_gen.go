@@ -300,7 +300,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	auditLogService := service.ProvideAuditLogService(auditLogRepository, settingService)
 	auditLogHandler := admin.NewAuditLogHandler(auditLogService, totpService)
 	modelPricingSyncHistoryRepository := repository.NewModelPricingSyncHistoryRepository(db)
-	modelPricingSyncService := service.ProvideModelPricingSyncService(configConfig, pricingService, modelPricingSyncHistoryRepository, pricingRemoteClient)
+	modelPricingSyncService := service.ProvideModelPricingSyncService(configConfig, pricingService, modelPricingSyncHistoryRepository, pricingRemoteClient, settingService)
 	modelPricingSyncHandler := admin.NewModelPricingSyncHandler(modelPricingSyncService, modelPricingSyncHistoryRepository)
 	openCodeGoUsageService := service.ProvideOpenCodeGoUsageService(accountRepository, httpUpstream, settingService, leaderLockCache, db)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
