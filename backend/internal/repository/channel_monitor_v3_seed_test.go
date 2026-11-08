@@ -19,9 +19,9 @@ import (
 // would lose its rows.
 func TestChannelMonitorV3SeedsRowsWithoutAllowlistOrPricing(t *testing.T) {
 	scope := service.ChannelMonitorV3BoardScope{
-		GroupIDs:               []int64{7, 9},
-		Platforms:              []string{"anthropic", "openai"},
-		CacheAverageWindowDays: 30,
+		GroupIDs:                  []int64{7, 9},
+		Platforms:                 []string{"anthropic", "openai"},
+		CacheAverageWindowMinutes: 30 * 24 * 60,
 	}
 	cfg := v3BoardConfig(scope)
 

@@ -91,7 +91,7 @@ func (f channelMonitorV3ProbeFallback) applyProbeFallbackToMatrix(
 	}
 	// Cache rates come from real traffic only. A query failure here degrades to
 	// "unknown" for every probe bucket rather than failing the whole board.
-	cacheRates, err := f.repo.GroupCacheRates(ctx, f.scope.GroupIDs, f.scope.CacheAverageWindowDays)
+	cacheRates, err := f.repo.GroupCacheRates(ctx, f.scope.GroupIDs, f.scope.CacheAverageWindowMinutes)
 	if err != nil {
 		cacheRates = map[int64]float64{}
 	}
