@@ -210,6 +210,15 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		if g.ModelPlazaEnabled {
 			appendSelfDeclaredModels(ctx, pg, g)
 		}
+		// 分组开启了模型白名单时，白名单就是「这个分组对外卖哪些模型」的权威清单：
+		// 只有被勾选的模型才出现在广场上。未勾选的模型即使渠道支持、价卡里也有价，
+		// 也不展示（典型：Grok Ultra 只勾了 4 个模型，价卡外的 grok-4.3 等不显示）。
+		//
+		// 白名单未开启的分组完全不受影响，仍按价卡/渠道枚举。
+		if g.ModelAllowlist.Enabled {
+			pruneToGroupAllowlist(pg, g)
+			appendAllowlistedModels(pg, g)
+		}
 		// 关键（无条件生效，不受「独立展示」开关控制）：只要分组有自己的价卡，
 		// 模型集就必须收敛到价卡本身。渠道枚举给出的是「渠道支持哪些模型」，
 		// 不是「这个分组卖哪些模型」；把两者并集会让绑定了同一渠道的所有分组
@@ -218,7 +227,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		//
 		// 这条属于数据归属的不变量，不交给开关决定：否则管理员一旦关掉
 		// 「独立展示」，串味立刻复发。开关只影响「没有价卡时是否用白名单兜底」。
-		if countGroupCardModels(g) > 0 {
+		if countGroupCardModels(g) > 0 && !g.ModelAllowlist.Enabled {
 			fromChannels := append([]PlazaModel(nil), pg.Models...)
 			pruneToGroupCards(pg, g)
 			if len(pg.Models) == 0 && len(fromChannels) > 0 {
@@ -297,6 +306,81 @@ func pruneToGroupCards(pg *PlazaGroup, g *Group) {
 		}
 	}
 	pg.Models = kept
+}
+
+// pruneToGroupAllowlist 把 pg.Models 收敛到分组白名单勾选的模型。
+//
+// 白名单条目支持通配（claude-*、gpt-*），用与服务端准入相同的匹配规则判定，
+// 保证「广场看到的 = 实际能调的」。
+func pruneToGroupAllowlist(pg *PlazaGroup, g *Group) {
+	if pg == nil || g == nil || !g.ModelAllowlist.Enabled {
+		return
+	}
+	if len(g.ModelAllowlist.Models) == 0 {
+		// 开启但为空是脏数据（管理端已拒绝），此时不放行任何模型，
+		// 与准入侧「看到什么 = 能调什么」保持一致。
+		pg.Models = nil
+		return
+	}
+	kept := pg.Models[:0]
+	for _, m := range pg.Models {
+		if g.ModelAllowlist.Allows(m.Name) {
+			kept = append(kept, m)
+		}
+	}
+	pg.Models = kept
+}
+
+// appendAllowlistedModels 把白名单勾选、但当前模型集里还没有的模型补进来。
+//
+// 白名单是售卖清单：勾了就代表对外提供，即使渠道枚举没列出、价卡也没写价，
+// 也要出现在广场上（价格列可以为空，由官方参考价兜底展示）。这样 GLM、Kimi
+// 这类「勾了但还没配价卡」的分组不会整个消失。
+func appendAllowlistedModels(pg *PlazaGroup, g *Group) {
+	if pg == nil || g == nil || !g.ModelAllowlist.Enabled {
+		return
+	}
+	// 通配条目无法展开成具体模型名：它的实例只能来自渠道枚举与价卡，
+	// 这两处已经处理过，这里只补精确条目。
+	seen := make(map[string]struct{}, len(pg.Models))
+	for i := range pg.Models {
+		seen[strings.ToLower(strings.TrimSpace(pg.Models[i].Name))] = struct{}{}
+	}
+	for _, entry := range g.ModelAllowlist.Models {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || strings.Contains(entry, "*") {
+			continue
+		}
+		key := strings.ToLower(entry)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		pg.Models = append(pg.Models, PlazaModel{
+			Name:     entry,
+			Platform: plazaModelPlatformForKey(pg.Platform, g, entry),
+		})
+	}
+}
+
+// plazaModelPlatformForKey 决定白名单补入的模型挂在哪个平台。
+//
+// 价卡里对该模型声明了平台就沿用它（composite 分组的价卡记录目标平台），
+// 否则普通分组退回分组平台、composite 分组保持 composite。
+func plazaModelPlatformForKey(groupPlatform string, g *Group, name string) string {
+	if g != nil {
+		for i := range g.ModelPricing {
+			card := &g.ModelPricing[i]
+			for _, m := range card.Models {
+				if strings.EqualFold(strings.TrimSpace(m), name) {
+					if p := strings.TrimSpace(card.Platform); p != "" {
+						return p
+					}
+				}
+			}
+		}
+	}
+	return groupPlatform
 }
 
 // appendSelfDeclaredModels 用分组自身配置确定该分组「拥有」的模型清单。
