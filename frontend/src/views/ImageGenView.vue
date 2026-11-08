@@ -20,52 +20,25 @@
       <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,430px)_minmax(0,1fr)]">
         <!-- ==================== Left: form ==================== -->
         <div class="space-y-4">
-          <!-- Token -->
-          <section class="card">
-            <div class="card-body space-y-2.5">
-              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('imagegen.keyLabel') }}</h3>
-              <div class="flex gap-2">
-                <input
-                  v-model="apiKey"
-                  type="password"
-                  class="input flex-1"
-                  :placeholder="t('imagegen.keyPlaceholder')"
-                  :aria-label="t('imagegen.keyLabel')"
-                  autocomplete="off"
-                  @blur="persistKey()"
-                />
-                <button
-                  type="button"
-                  class="btn btn-secondary btn-sm shrink-0"
-                  :disabled="checkingKey"
-                  @click="checkApiKey()"
-                >
-                  {{ checkingKey ? t('imagegen.keyChecking') : t('imagegen.keyCheck') }}
-                </button>
-              </div>
-              <div class="flex flex-wrap items-center gap-1.5">
-                <span
-                  v-if="keyStatus !== 'unknown'"
-                  class="badge shrink-0"
-                  :class="keyStatus === 'verified' ? 'badge-success' : 'badge-danger'"
-                >
-                  {{ keyStatus === 'verified' ? t('imagegen.keyValid') : t('imagegen.keyInvalid') }}
-                </span>
-                <p class="text-[11px] leading-relaxed text-gray-500 dark:text-dark-400">{{ t('imagegen.keyHint') }}</p>
-              </div>
-            </div>
-          </section>
-
-          <!-- AI rewrite settings: its own credential, separate from the image key -->
+          <!--
+            生图密钥与 AI 改写密钥同卡分区。地址写死、协议自适应，
+            所以卡片里没有任何地址或协议控件；其余配置进「详细配置」弹窗。
+          -->
           <RewriteSettings
             :config="rewriteConfig"
+            :keys="ownKeys"
+            :generation-key-id="generationKeyId"
+            :model-options="rewriteModels"
+            :generation-key-status="keyStatus"
+            :checking-generation-key="checkingKey"
+            :models-loading="rewriteModelsLoading"
             :uses-generation-key="rewriteUsesGenerationKey"
-            @update:enabled="setRewriteEnabled"
-            @update:api-key="setRewriteApiKey"
-            @update:base-url="setRewriteBaseUrl"
-            @update:protocol="setRewriteProtocol"
             @update:model="setRewriteModel"
             @update:effort="setRewriteEffort"
+            @update:key-id="setRewriteKeyId"
+            @update:generation-key-id="setGenerationKeyId"
+            @check-generation-key="checkApiKey"
+            @key-changed="reloadRewriteModels"
           />
 
           <!-- Prompt + retouch + references -->
@@ -518,7 +491,6 @@
       @apply="onApplyTemplate"
       @delete-custom="onDeleteCustomTemplate"
       @rewrite="onRewrite"
-      @update:rewrite-model="setRewriteModel"
     />
   </AppLayout>
 </template>
@@ -547,7 +519,6 @@ function notify(message: string, kind: 'success' | 'error' | 'info' = 'info'): v
 
 // Destructured so the template reads as plain state; the composable returns refs.
 const {
-  apiKey,
   prompt,
   model,
   size,
@@ -561,17 +532,21 @@ const {
   compression,
   style,
   rewriteModel,
-  // AI rewrite config — separate credential/protocol/model/effort
+  // 密钥（生图 / AI 改写）
+  ownKeys,
+  generationKeyId,
+  setGenerationKeyId,
+  loadOwnKeys,
+  // AI 改写配置
   rewriteConfig,
   rewriteUsesGenerationKey,
-  setRewriteEnabled,
-  setRewriteApiKey,
-  setRewriteBaseUrl,
-  setRewriteProtocol,
+  rewriteModels,
+  rewriteModelsLoading,
+  reloadRewriteModels,
+  setRewriteKeyId,
   setRewriteModel,
   setRewriteEffort,
   isCustomSize,
-  persistKey,
   retouchSelections,
   retouchIntensity,
   retouchSubject,
@@ -642,6 +617,10 @@ let activeTemplatePrompt = ''
 onMounted(async () => {
   loadCustomTemplates()
   await loadHistory()
+  // 两个密钥下拉的候选来源；拉完立刻按当前选中项补齐模型列表，
+  // 这样刷新页面后「详细配置」里的模型下拉不是空的。
+  await loadOwnKeys()
+  await reloadRewriteModels()
 })
 
 function onToggleRetouch(preset: RetouchPreset): void {
