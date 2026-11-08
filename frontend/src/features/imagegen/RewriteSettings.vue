@@ -32,7 +32,7 @@
           <span class="text-xs font-semibold text-gray-900 dark:text-white">
             {{ t('imagegen.generationKeySection') }}
           </span>
-          <span v-if="generationKeyStatus" class="badge shrink-0" :class="generationBadgeClass">
+          <span v-if="generationKeyStatus !== 'unknown'" class="badge shrink-0" :class="generationBadgeClass">
             {{ generationBadgeText }}
           </span>
         </div>
