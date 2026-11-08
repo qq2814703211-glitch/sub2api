@@ -13,7 +13,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -22,7 +21,6 @@ import (
 
 type openAIWSClientFrameConn struct {
 	conn                 *coderws.Conn
-	diagnostics          *wsConnectionDiagnostics
 	controlCtx           context.Context
 	interTurnIdleTimeout time.Duration
 	interTurnStarted     chan struct{}
@@ -427,9 +425,6 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context)
 	for {
 		select {
 		case result := <-readResultCh:
-			if col := requesttiming.From(ctx); col != nil {
-				col.WSFrame(false, len(result.payload), openAIWSPassthroughStartsSemanticOutput(result.payload), result.err)
-			}
 			if result.err == nil {
 				c.observeUpstreamActivity(result.msgType, result.payload)
 			}
@@ -470,9 +465,6 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context
 		generation = c.armDeadline(payload)
 	}
 	err := c.inner.WriteFrame(ctx, msgType, payload)
-	if col := requesttiming.From(ctx); col != nil {
-		col.WSFrame(true, len(payload), false, err)
-	}
 	if err != nil {
 		c.disarmDeadline(generation)
 		return err
@@ -660,10 +652,7 @@ func (c *openAIWSClientFrameConn) WriteFrame(ctx context.Context, msgType coderw
 			payload = c.restoreToolNames(payload)
 		}
 	}
-	if c.diagnostics != nil {
-		ctx = requesttiming.WithSource(context.WithValue(ctx, wsDiagnosticsKey{}, c.diagnostics), c.diagnostics)
-	}
-	return writeDiagnosticWSClient(ctx, c.conn, msgType, payload)
+	return c.conn.Write(ctx, msgType, payload)
 }
 
 func (c *openAIWSClientFrameConn) Close() error {
@@ -888,13 +877,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
-		dialCtx, finishDiagnosticHandshake := requesttiming.StartHandshake(dialCtx, account.ID)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
-		if err == nil {
-			finishDiagnosticHandshake(http.StatusSwitchingProtocols, nil)
-		} else {
-			finishDiagnosticHandshake(statusCode, err)
-		}
 		cancelDial()
 		if err == nil {
 			break
@@ -973,7 +956,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	var acceptedTurnStartedAt atomic.Pointer[time.Time]
 	clientFrameConn := &openAIWSClientFrameConn{
 		conn:                 clientConn,
-		diagnostics:          wsDiagnostics(ctx),
 		controlCtx:           ctx,
 		interTurnIdleTimeout: s.openAIWSIngressInterTurnIdleTimeout(),
 		interTurnStarted:     make(chan struct{}, 1),

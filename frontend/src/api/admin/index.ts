@@ -36,7 +36,6 @@ import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import modelPricingSyncAPI from './modelPricingSync'
-import connectionDiagnosticsAPI from './connectionDiagnostics'
 import pluginsAPI from './plugins'
 
 /**
@@ -76,7 +75,6 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   audit: auditAPI,
   modelPricingSync: modelPricingSyncAPI,
-  connectionDiagnostics: connectionDiagnosticsAPI,
   plugins: pluginsAPI
 }
 
@@ -114,7 +112,6 @@ export {
   adminComplianceAPI,
   auditAPI,
   modelPricingSyncAPI,
-  connectionDiagnosticsAPI,
   pluginsAPI
 }
 
