@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -373,7 +374,7 @@ func (s *ModelPricingSyncService) Sync(ctx context.Context) (int, error) {
 		s.recordCNYRun(nil, nil, 0)
 		return 0, fmt.Errorf("read override file: %w", err)
 	}
-	syncedFields, err := s.loadSyncedFields(ctx)
+	syncedFields, cnyWrittenHist, err := s.loadSyncedFieldsWithCNY(ctx)
 	if err != nil {
 		// 变更史读不到时按「全部都是手动定价」处理：宁可不写，也不覆盖手配价。
 		s.recordRun(err, 0)
@@ -396,7 +397,7 @@ func (s *ModelPricingSyncService) Sync(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	merged := applyModelPricingSyncChanges(existing, changes, cnyOfficialModelSet(dataset))
+	merged := applyModelPricingSyncChanges(existing, changes, cnyOfficialModelSet(dataset), cnyWrittenModelSet(changes, cnyWrittenHist))
 	if err := s.writeOverrideFile(merged); err != nil {
 		s.recordRun(err, 0)
 		s.recordCNYRun(err, nil, 0)
@@ -486,14 +487,23 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 // 拿不到跨来源的先后顺序，所以这里用「高优先级覆盖低优先级」这个确定性规则，
 // 而不是猜时间。
 func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[string]map[string]float64, error) {
+	merged, _, err := s.loadSyncedFieldsWithCNY(ctx)
+	return merged, err
+}
+
+// loadSyncedFieldsWithCNY 同 loadSyncedFields，额外返回「历史上被人民币档写入过」
+// 的模型集合。覆盖层打 cny_official 标记时需要它：只有真正写过人民币值的条目
+// 才能标成人民币口径，否则值与标记错配（标着人民币、值还是美元）。
+func (s *ModelPricingSyncService) loadSyncedFieldsWithCNY(ctx context.Context) (map[string]map[string]float64, map[string]struct{}, error) {
 	merged := map[string]map[string]float64{}
+	cnyWritten := map[string]struct{}{}
 	if s.history == nil {
-		return merged, nil
+		return merged, cnyWritten, nil
 	}
 	for _, source := range []string{ModelPricingSyncSourceModelsDev, ModelPricingSyncSourceCNYOfficial} {
 		fields, err := s.history.ListSyncedFields(ctx, source)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for model, perField := range fields {
 			target, ok := merged[model]
@@ -504,9 +514,12 @@ func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[str
 			for field, value := range perField {
 				target[field] = value
 			}
+			if source == ModelPricingSyncSourceCNYOfficial && len(perField) > 0 {
+				cnyWritten[model] = struct{}{}
+			}
 		}
 	}
-	return merged, nil
+	return merged, cnyWritten, nil
 }
 
 // fetchRegistry 拉取 models.dev 注册表。
@@ -873,19 +886,44 @@ func countSyncModelsBySource(changes []modelPricingSyncChange, source string) in
 //
 // synced 记录的是「上次同步写进去的值」；字段不在其中，或其中记的值与当前值不等，
 // 都说明当前值是别人写的。
+//
+// 只检查 modelPricingSyncFields 里的价格字段。覆盖层条目里混着大量非价格的数值
+// 字段（long_context_input_cost_multiplier、long_context_input_token_threshold、
+// 分时倍率等），它们永远不出现在同步史里，若一并参与判定，每个带长上下文的模型
+// 都会被误判成「运营手配价」而整条跳过同步 —— 表现为条目被打上人民币标记、值却
+// 停留在上一版美元价，模型广场显示的价格与官方牌价对不上。
 func modelHasManualPricing(fields map[string]float64, synced map[string]float64) bool {
-	for field, value := range fields {
+	for _, field := range modelPricingSyncFields {
+		value := fields[field]
 		if value == 0 {
 			continue
 		}
 		lastSynced, syncedBefore := synced[field]
-		if syncedBefore && lastSynced == value {
+		if syncedBefore && modelPricingValueEqual(lastSynced, value) {
 			// 与上次同步写入的值一致：这是同步自己写的，可以继续跟随官方价。
 			continue
 		}
 		return true
 	}
 	return false
+}
+
+// modelPricingValueEqual 按相对容差比较两个价格，而不是直接 ==。
+//
+// 同步史里的值与覆盖层里的值经过不同路径落盘（数据库 numeric 往返、JSON 浮点
+// 序列化），末位会有 1e-16 量级的差。直接比较会把「同步自己写的值」判成运营
+// 手配价，导致这些模型永远不再跟随官方价更新 —— 症状是价格停在旧值且不报错。
+// 价格数量级跨 1e-9..1e-4，用相对容差才能同时覆盖两端。
+func modelPricingValueEqual(a, b float64) bool {
+	if a == b {
+		return true
+	}
+	diff := math.Abs(a - b)
+	scale := math.Max(math.Abs(a), math.Abs(b))
+	if scale == 0 {
+		return diff == 0
+	}
+	return diff/scale < 1e-9
 }
 
 // decodeModelPricingSyncEntry 把覆盖层里某个模型的原始 JSON 解成字段表。
@@ -923,12 +961,32 @@ func cnyOfficialModelSet(dataset *cnyOfficialDataset) map[string]struct{} {
 	return out
 }
 
+// cnyWrittenModelSet 返回「本条目的价格确实由人民币档写入过」的模型集合。
+//
+// 两个来源合并：本轮产生 cny-official 变更的模型，加上历史变更史里已有
+// cny-official 写入记录的模型（后者覆盖「本轮价格没变、不产生 change」的情况，
+// 否则这些条目的标记会丢失）。
+func cnyWrittenModelSet(changes []modelPricingSyncChange, history map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(history)+8)
+	for model := range history {
+		out[model] = struct{}{}
+	}
+	for _, change := range changes {
+		if change.source() != ModelPricingSyncSourceCNYOfficial {
+			continue
+		}
+		out[change.Model] = struct{}{}
+	}
+	return out
+}
+
 // applyModelPricingSyncChanges 把变更合并进覆盖层条目，返回新的覆盖层对象。
 // 已有条目的其他字段（含运营手配的倍率、阶梯开关等）原样保留。
 func applyModelPricingSyncChanges(
 	existing map[string]json.RawMessage,
 	changes []modelPricingSyncChange,
 	cnyModels map[string]struct{},
+	cnyWrittenModels map[string]struct{},
 ) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(existing)+16)
 	for model, raw := range existing {
@@ -963,8 +1021,15 @@ func applyModelPricingSyncChanges(
 	//
 	// 标记按「数据源里属于人民币口径的模型」整体置位，而不是按「本轮有变更」——
 	// 已经同步过、价格未变因而没有 change 的模型同样要打标记，否则标记会永久缺失。
-	// 一个模型的 price 字段全部来自同一口径，不存在半 USD 半 CNY 的条目。
+	//
+	// 但只对「本条目的价格字段确实由同步写入了人民币值」的模型打标记。判据是
+	// 历史同步记录里有 source=cny-official 的写入：若某条目因运营手配价被整条
+	// 跳过，它的值仍是上一版美元价，此时打上人民币标记会让计费侧误以为这是人民币
+	// 金额而跳过美元兜底，实际按美元数值计费 —— 值与标记错配。
 	for model := range cnyModels {
+		if _, written := cnyWrittenModels[model]; !written {
+			continue
+		}
 		raw, exists := out[model]
 		if !exists {
 			continue
