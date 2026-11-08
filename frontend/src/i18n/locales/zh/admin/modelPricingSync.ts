@@ -89,6 +89,9 @@ export default {
         long_context_output_multiplier: '如 2'
       },
       longContextTitle: '长上下文阶梯（留空不启用）',
+      longContextBadge: '阶梯',
+      expandAll: '全部展开',
+      collapseAll: '全部收起',
       longContextHint: '输入超阈值后，输入倍率同时乘到输入、缓存读、缓存写三项。',
       vendorsTitle: '国模厂商清单',
       vendorsHint: '（{count} 个，走 CNY 官方价）',

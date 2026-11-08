@@ -738,3 +738,95 @@ describe('ModelPricingSyncView 计价口径配置卡片', () => {
     wrapper.unmount()
   })
 })
+
+describe('manual 行折叠', () => {
+  it('已有的行默认收起，点一下展开', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': { input: 1, output: 4, cache_read: 0.02 }
+      }
+    })
+    const row = wrapper.find('[data-testid="pricing-row-1"]')
+    expect(row.attributes('data-expanded')).toBe('false')
+
+    await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
+    expect(wrapper.find('[data-testid="pricing-row-1"]').attributes('data-expanded')).toBe('true')
+  })
+
+  it('收起态显示价格摘要，不用展开就能看到价格', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': { input: 1, output: 4, cache_read: 0.02 }
+      }
+    })
+    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('¥1 / 4 / 0.02')
+  })
+
+  it('配了阶梯的行在收起态亮出标记', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': {
+          input: 1, output: 4,
+          long_context_threshold: 32000,
+          long_context_input_multiplier: 1.5
+        }
+      }
+    })
+    expect(wrapper.find('[data-testid="pricing-row-lc-badge-1"]').exists()).toBe(true)
+  })
+
+  it('只填阈值不填倍率不亮标记（等于没配阶梯）', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': { input: 1, output: 4, long_context_threshold: 32000 }
+      }
+    })
+    expect(wrapper.find('[data-testid="pricing-row-lc-badge-1"]').exists()).toBe(false)
+  })
+
+  it('新增的行直接展开，省掉一次点击', async () => {
+    const wrapper = await mountReady({ enabled: true, manual_overrides: {} })
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    await flushPromises()
+    const row = wrapper.find('[data-testid="pricing-row-1"]')
+    expect(row.attributes('data-expanded')).toBe('true')
+  })
+
+  it('全部展开 / 全部收起作用于所有行', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': { input: 1, output: 4 },
+        'zhipuai/glm-4.6': { input: 0.6, output: 2.2 }
+      }
+    })
+    expect(wrapper.find('[data-testid="pricing-row-1"]').attributes('data-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="pricing-row-2"]').attributes('data-expanded')).toBe('false')
+
+    await wrapper.find('[data-testid="pricing-expand-all"]').trigger('click')
+    expect(wrapper.find('[data-testid="pricing-row-1"]').attributes('data-expanded')).toBe('true')
+    expect(wrapper.find('[data-testid="pricing-row-2"]').attributes('data-expanded')).toBe('true')
+
+    await wrapper.find('[data-testid="pricing-collapse-all"]').trigger('click')
+    expect(wrapper.find('[data-testid="pricing-row-1"]').attributes('data-expanded')).toBe('false')
+    expect(wrapper.find('[data-testid="pricing-row-2"]').attributes('data-expanded')).toBe('false')
+  })
+
+  it('折叠不丢编辑：展开改了值再收起，值仍在', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'deepseek/deepseek-flash': { input: 1, output: 4 }
+      }
+    })
+    await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
+    await wrapper.find('[data-testid="pricing-row-input-1"]').setValue('9')
+    await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('¥9')
+  })
+})
