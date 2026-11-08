@@ -876,29 +876,20 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body []byte, knownSto
 }
 
 func normalizeOpenAICodexCompactReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, bool, error) {
-	if account == nil || !account.IsOpenAIOAuthLike() || !isOpenAIResponsesCompactPath(c) {
-		return body, false, nil
-	}
-
-	requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	effectiveModel := account.GetMappedModel(requestedModel)
-	return normalizeOpenAICodexCompactReasoningEffort(body, effectiveModel)
+	_, _ = c, account
+	return body, false, nil
 }
 
 func normalizeOpenAICodexCompactReasoningEffort(body []byte, effectiveModel string) ([]byte, bool, error) {
-	if !isOpenAIGPT56Model(effectiveModel) ||
-		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()), "max") {
-		return body, false, nil
-	}
-
-	// Codex Ultra 在客户端编排层会下发 max；ChatGPT compact 端点目前只接受到
-	// xhigh。这里只降级 OpenAI OAuth 的 GPT-5.6 compact 子请求，普通 Responses、
-	// API Key 请求和其他平台的 OAuth 请求保留 max。
-	normalized, err := sjson.SetBytes(body, "reasoning.effort", "xhigh")
-	if err != nil {
-		return body, false, fmt.Errorf("normalize codex compact reasoning effort: %w", err)
-	}
-	return normalized, true, nil
+	_, _ = body, effectiveModel
+	// This used to rewrite reasoning.effort max -> xhigh for the OpenAI OAuth
+	// GPT-5.6 Codex compact sub-request, because the backend compact endpoint
+	// only accepted xhigh. The gateway no longer rewrites the requested level
+	// for any model: if the compact endpoint cannot serve max it answers with
+	// its own error, and that error is what the caller sees. Silently sending a
+	// weaker level made a failed request look like a successful one that simply
+	// reasoned less than asked.
+	return body, false, nil
 }
 
 func resolveOpenAICompactSessionID(c *gin.Context) string {

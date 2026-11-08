@@ -437,10 +437,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Upstream model resolved: %s -> %s (account: %s, type: %s, isCodexCLI: %v)", billingModel, upstreamModel, account.Name, account.Type, isCodexCLI)
 		}
 	}
-	if strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) == "minimal" {
-		markPatchSet("reasoning.effort", "none")
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
-	}
+	// reasoning.effort is forwarded exactly as the client sent it. Upstream
+	// validates the level itself and answers a deterministic 400 when a model
+	// does not support it; rewriting minimal -> none here silently changed the
+	// caller's request into a weaker one and made the change invisible.
 	if strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String()) == "json_schema" ||
 		strings.TrimSpace(gjson.GetBytes(body, "response_format.type").String()) == "json_schema" {
 		decoded, decodeErr := ensureReqBody()

@@ -635,70 +635,49 @@ func grokModelRejectsLogprobs(model string) bool {
 	return strings.HasPrefix(model, "grok-4.20")
 }
 
+// sanitizeGrokResponsesModelCapabilities previously stripped the reasoning
+// fields for Grok Composer models. It is now a no-op: the gateway forwards the
+// client's reasoning effort verbatim on every Grok model and lets upstream
+// reject an unsupported level with its own 400, so the caller sees the real
+// reason instead of a silently weaker request.
 func sanitizeGrokResponsesModelCapabilities(body []byte, upstreamModel string) ([]byte, error) {
-	if !grokModelRejectsReasoningEffort(upstreamModel) {
-		return body, nil
-	}
-
-	out := body
-	for _, field := range []string{"reasoning", "reasoning_effort", "reasoningEffort"} {
-		if !gjson.GetBytes(out, field).Exists() {
-			continue
-		}
-		var err error
-		out, err = sjson.DeleteBytes(out, field)
-		if err != nil {
-			return nil, fmt.Errorf("remove unsupported Grok Composer %s: %w", field, err)
-		}
-	}
-	return out, nil
+	_, _ = body, upstreamModel
+	return body, nil
 }
 
-func grokModelRejectsReasoningEffort(model string) bool {
-	model = strings.TrimSpace(strings.ToLower(model))
-	if slash := strings.LastIndex(model, "/"); slash >= 0 {
-		model = strings.TrimSpace(model[slash+1:])
-	}
-	switch model {
-	case "grok-composer", "grok-composer-2.5-fast", "composer-2.5":
-		return true
-	default:
-		return false
-	}
-}
-
+// normalizeGrokResponsesReasoningEffort keeps the client's reasoning effort
+// exactly as requested. Only the field *name* is consolidated onto
+// reasoning_effort (xAI accepts both spellings on both endpoints); the value is
+// never downgraded, remapped or dropped.
+//
+// Rationale: xAI validates the effort itself and answers 400 invalid-argument
+// ("Invalid reasoning effort." / "This model does not support
+// `reasoning_effort` value `X`.") when a level is unsupported. Silently
+// rewriting the value made the gateway answer 200 with less thinking than the
+// caller asked for, so the caller could not tell the level had been ignored.
+// Passing the value through keeps the failure attributable to upstream and
+// surfaces upstream's own wording to the client.
 func normalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
-	supportsEffort := grokSupportsReasoningEffort(upstreamModel)
+	_ = upstreamModel
 	out := body
 	var err error
-	for _, field := range []string{"reasoning.effort", "reasoning_effort"} {
-		value := gjson.GetBytes(out, field)
-		if !value.Exists() {
-			continue
-		}
-		normalized, keep := normalizeGrokReasoningEffortValue(value.String(), upstreamModel)
-		if !supportsEffort || !keep {
-			out, err = sjson.DeleteBytes(out, field)
-		} else {
-			out, err = sjson.SetBytes(out, field, normalized)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("normalize Grok reasoning field %s: %w", field, err)
-		}
-	}
+	// Consolidate the camelCase spelling onto reasoning_effort without touching
+	// the value. xAI reads reasoning_effort on both /v1/responses and
+	// /v1/chat/completions; leaving two spellings in one body is ambiguous.
 	if camel := gjson.GetBytes(out, "reasoningEffort"); camel.Exists() {
-		normalized, keep := normalizeGrokReasoningEffortValue(camel.String(), upstreamModel)
 		out, err = sjson.DeleteBytes(out, "reasoningEffort")
 		if err != nil {
 			return nil, fmt.Errorf("remove Grok reasoningEffort: %w", err)
 		}
-		if supportsEffort && keep && !gjson.GetBytes(out, "reasoning_effort").Exists() {
-			out, err = sjson.SetBytes(out, "reasoning_effort", normalized)
+		if !gjson.GetBytes(out, "reasoning_effort").Exists() {
+			out, err = sjson.SetBytes(out, "reasoning_effort", camel.String())
 			if err != nil {
 				return nil, fmt.Errorf("set Grok reasoning_effort: %w", err)
 			}
 		}
 	}
+	// An explicitly empty reasoning object carries no effort; upstream rejects it
+	// as malformed, so drop the now-meaningless container.
 	if reasoning := gjson.GetBytes(out, "reasoning"); reasoning.Exists() && reasoning.IsObject() && len(reasoning.Map()) == 0 {
 		out, err = sjson.DeleteBytes(out, "reasoning")
 		if err != nil {
@@ -708,52 +687,32 @@ func normalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([
 	return out, nil
 }
 
+// normalizeGrokChatReasoningEffort keeps the client's reasoning_effort exactly
+// as requested on the raw Chat Completions route. See
+// normalizeGrokResponsesReasoningEffort for why values are not rewritten.
 func normalizeGrokChatReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
-	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoningEffort").String())
-	}
-	normalized, keep := normalizeGrokReasoningEffortValue(raw, upstreamModel)
-	keep = keep && grokSupportsReasoningEffort(upstreamModel)
+	_ = upstreamModel
 	out := body
 	var err error
-	if gjson.GetBytes(out, "reasoningEffort").Exists() {
+	if camel := gjson.GetBytes(out, "reasoningEffort"); camel.Exists() {
 		out, err = sjson.DeleteBytes(out, "reasoningEffort")
 		if err != nil {
 			return nil, err
 		}
-	}
-	if !keep {
-		if gjson.GetBytes(out, "reasoning_effort").Exists() {
-			out, err = sjson.DeleteBytes(out, "reasoning_effort")
+		if !gjson.GetBytes(out, "reasoning_effort").Exists() {
+			out, err = sjson.SetBytes(out, "reasoning_effort", camel.String())
+			if err != nil {
+				return nil, err
+			}
 		}
-		return out, err
 	}
-	out, err = sjson.SetBytes(out, "reasoning_effort", normalized)
-	return out, err
+	return out, nil
 }
 
-func normalizeGrokReasoningEffortValue(raw, model string) (string, bool) {
-	value := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(raw)))
-	switch value {
-	case "none", "low", "medium", "high":
-		return value, true
-	case "minimal":
-		return "low", true
-	case "xhigh", "extrahigh":
-		if GrokSupportsXHighReasoningEffort(model) {
-			return "xhigh", true
-		}
-		return "high", true
-	case "max", "ultra":
-		return "high", true
-	default:
-		return "", false
-	}
-}
-
-// GrokSupportsXHighReasoningEffort reports whether the model advertises and
-// forwards the xhigh reasoning effort (Grok 4.6/4.7 and their aliases).
+// GrokSupportsXHighReasoningEffort reports whether the model advertises an
+// xhigh level in its /v1/models catalogue. It is a display/advertising helper
+// only: forwarding no longer consults it, because the gateway now passes every
+// requested effort straight through and lets upstream reject unsupported ones.
 func GrokSupportsXHighReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	return model == "grok-4.7" || model == "grok-4.7-latest" ||
