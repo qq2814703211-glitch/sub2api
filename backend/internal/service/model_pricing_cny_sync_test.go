@@ -935,3 +935,31 @@ func TestCNYOfficial_SlashInModelNameIsNotAPrefix(t *testing.T) {
 		"给带斜杠模型配价不能污染同名裸模型")
 	require.InDelta(t, 4e-6, entries["deepseek-v3.2"]["output_cost_per_token"], 1e-15)
 }
+
+// TestCNYOfficial_ManualKeyIsExactModelName manual 的键就是完整模型名，
+// 不做任何厂商区分、不剥前缀、不做 lastSegment 猜测。
+//
+// 只按一字不差的模型名命中：配 `deepseek-v3.2` 只影响 `deepseek-v3.2`，
+// 配 `siliconflow/deepseek-v3.2` 只影响它自己。两者是不同的模型。
+func TestCNYOfficial_ManualKeyIsExactModelName(t *testing.T) {
+	existing := `{
+		"deepseek-v3.2":             {"input_cost_per_token": 5.8e-7},
+		"siliconflow/deepseek-v3.2": {"input_cost_per_token": 2.7e-7}
+	}`
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			// 只配裸名这一条。
+			"deepseek-v3.2": {Input: 1, Output: 4},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entries := readOverrideEntries(t, path)
+
+	require.InDelta(t, 1e-6, entries["deepseek-v3.2"]["input_cost_per_token"], 1e-15,
+		"裸名配置应写到裸名条目")
+	require.InDelta(t, 2.7e-7, entries["siliconflow/deepseek-v3.2"]["input_cost_per_token"], 1e-15,
+		"带斜杠的同名模型是完全不同的模型，不能被裸名配置波及")
+}

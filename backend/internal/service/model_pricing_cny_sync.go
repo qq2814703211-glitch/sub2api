@@ -348,12 +348,12 @@ func (d *cnyOfficialDataset) pricing(model string) (*cnyOfficialPricing, bool) {
 	return priced, ok
 }
 
-// manualPricing 取该模型的手工价。
+// manualPricing 取该模型的手工价：只按完整模型名精确匹配。
 //
-// 查找顺序：精确键 → 「<provider>/<model>」→ 裸 lastSegment。精确键优先，
-// 因为真实模型名本身可能带斜杠（`siliconflow/deepseek-v3.2`）；先试全名能
-// 命中运营给这条真模型配的价，而不是误取给裸名 `deepseek-v3.2` 配的价。
-func (d *cnyOfficialDataset) manualPricing(model, provider string) (*cnyOfficialManualPricing, bool) {
+// 不做任何厂商区分 —— 覆盖层的键就是模型请求名，一字不差地查。带斜杠的键
+// （`siliconflow/deepseek-v3.2`）和不带斜杠的键（`deepseek-v3.2`）是两个
+// 不同的模型，各自按自己的名字命中。
+func (d *cnyOfficialDataset) manualPricing(model string) (*cnyOfficialManualPricing, bool) {
 	if d == nil || len(d.ManualPricing) == 0 {
 		return nil, false
 	}
@@ -361,20 +361,11 @@ func (d *cnyOfficialDataset) manualPricing(model, provider string) (*cnyOfficial
 	if model == "" {
 		return nil, false
 	}
-	if priced, ok := d.ManualPricing[model]; ok {
-		return &priced, true
+	priced, ok := d.ManualPricing[model]
+	if !ok {
+		return nil, false
 	}
-	if provider != "" {
-		if priced, ok := d.ManualPricing[strings.ToLower(strings.TrimSpace(provider))+"/"+model]; ok {
-			return &priced, true
-		}
-	}
-	if index := strings.LastIndex(model, "/"); index >= 0 {
-		if priced, ok := d.ManualPricing[model[index+1:]]; ok {
-			return &priced, true
-		}
-	}
-	return nil, false
+	return &priced, true
 }
 
 // isNationalModel 报告该模型是否属于「国模」（出现在白名单厂商或 CNY 计价厂商下）。
@@ -386,22 +377,13 @@ func (d *cnyOfficialDataset) isNationalModel(model string) bool {
 	return ok
 }
 
-// manualOverrideHit 报告 manual_overrides 是否命中该 (厂商, 模型)。
-// 支持 "<vendor>/<model>" 与裸 "<model>" 两种写法。
-func (d *cnyOfficialDataset) manualOverrideHit(model, provider string) bool {
+// manualOverrideHit 报告 manual_overrides 是否命中该模型名（精确匹配，不区分厂商）。
+func (d *cnyOfficialDataset) manualOverrideHit(model string) bool {
 	if d == nil || len(d.ManualOverrides) == 0 {
 		return false
 	}
-	if _, ok := d.ManualOverrides[strings.ToLower(strings.TrimSpace(model))]; ok {
-		return true
-	}
-	if provider != "" {
-		key := strings.ToLower(strings.TrimSpace(provider)) + "/" + strings.ToLower(strings.TrimSpace(model))
-		if _, ok := d.ManualOverrides[key]; ok {
-			return true
-		}
-	}
-	return false
+	_, ok := d.ManualOverrides[strings.ToLower(strings.TrimSpace(model))]
+	return ok
 }
 
 // ---------------------------------------------------------------------------

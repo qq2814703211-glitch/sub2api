@@ -923,9 +923,6 @@ function collectErrors(): Record<number, RowErrors> {
 
     if (model === '') {
       rowError.model = t('admin.modelPricingSync.pricingSource.errModelRequired')
-    } else if (!model.includes('/')) {
-      // 后端按 `vendor/model` 拆分，缺斜杠会整条被忽略 —— 必须在这里挡住。
-      rowError.model = t('admin.modelPricingSync.pricingSource.errModelFormat')
     } else if (seen.has(model)) {
       rowError.model = t('admin.modelPricingSync.pricingSource.errModelDuplicate')
     } else {
