@@ -176,6 +176,51 @@ func (c *usageInflightCache) ListByUser(ctx context.Context, userID int64) ([]se
 	return snapshots, nil
 }
 
+// CountByUsers 批量返回一批用户的在途请求数。
+//
+// 计数口径刻意与 ListByUser 保持一致：只统计能成功反序列化的快照，
+// 否则列表（这里）和详情（SummarizeUserInflight 走 ListByUser）会对同一个
+// 用户给出不同的数。用 Pipeline 一次往返取全部 HASH，避免按用户逐个往返。
+func (c *usageInflightCache) CountByUsers(ctx context.Context, userIDs []int64) (map[int64]int, error) {
+	counts := make(map[int64]int, len(userIDs))
+	if !c.usable() || len(userIDs) == 0 {
+		return counts, nil
+	}
+	pipe := c.rdb.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(userIDs))
+	queried := make([]int64, len(userIDs))
+	for i, userID := range userIDs {
+		if userID <= 0 {
+			continue
+		}
+		queried[i] = userID
+		cmds[i] = pipe.HGetAll(ctx, usageInflightKey(userID))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("read usage inflight counts: %w", err)
+	}
+	for i, cmd := range cmds {
+		if queried[i] <= 0 || cmd == nil {
+			continue
+		}
+		raw, err := cmd.Result()
+		if err != nil {
+			return nil, fmt.Errorf("read usage inflight count for user %d: %w", queried[i], err)
+		}
+		n := 0
+		for _, value := range raw {
+			var snap service.UsageInflightSnapshot
+			if err := json.Unmarshal([]byte(value), &snap); err != nil {
+				// 与 ListByUser 一致：单条脏数据不计入，也不让整批读失败。
+				continue
+			}
+			n++
+		}
+		counts[queried[i]] = n
+	}
+	return counts, nil
+}
+
 // ListByGroup 读取分组内当前有在途请求的全部快照（跨用户）。
 //
 // 分组 key 只保存 userID → 在途数的引用计数，明细仍在各自的 usage:inflight:{uid}

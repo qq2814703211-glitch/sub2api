@@ -65,6 +65,11 @@ func ProvideAdminHandlers(
 	// 分组容量里的 active_users 也挂到同一实例，保证徽标与名单口径一致。
 	if userHandler != nil {
 		userHandler.SetUsageInflightService(usageInflight)
+		// 列表排序也要能在 Redis 里读实时在途数（SQL 排不了），
+		// 顺便让列表与详情共用同一数据源，避免 39/91 这种两处不一致。
+		if setter, ok := userHandler.AdminService().(service.UserInflightCounterSetter); ok {
+			setter.SetUsageInflightCounter(usageInflight)
+		}
 	}
 	if groupHandler != nil {
 		groupHandler.SetUsageInflightService(usageInflight)

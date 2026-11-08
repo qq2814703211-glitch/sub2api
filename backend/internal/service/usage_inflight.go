@@ -38,6 +38,9 @@ type UsageInflightStore interface {
 	Release(ctx context.Context, userID int64, requestID string, groupID int64) error
 	// ListByUser 读取某个用户的全部在途快照。
 	ListByUser(ctx context.Context, userID int64) ([]UsageInflightSnapshot, error)
+	// CountByUsers 批量返回一批用户此刻的在途请求数。
+	// 口径必须与 ListByUser 一致（只计可解析的快照），列表与详情才能得到同一个数。
+	CountByUsers(ctx context.Context, userIDs []int64) (map[int64]int, error)
 	// ListByGroup 读取某个分组内全部在途快照（跨用户）。
 	ListByGroup(ctx context.Context, groupID int64) ([]UsageInflightSnapshot, error)
 	// CountActiveUsersByGroups 批量返回分组当前实时使用中的人数（COUNT(DISTINCT user_id)）。
@@ -90,6 +93,19 @@ func (s *UsageInflightService) SummarizeUserInflight(ctx context.Context, userID
 		summaries[i].GroupName = names[summaries[i].GroupID]
 	}
 	return summaries, len(snapshots), nil
+}
+
+// CountUserInflightBatch 批量返回一批用户此刻的在途请求数。
+//
+// 列表页原先展示的是 Redis 并发槽位数（concurrency:api_key:<id> 的 ZCARD），
+// 而详情弹层展示的是在途请求数（usage:inflight:<uid> 的 HLEN），两者不同源，
+// 同一个用户在列表显示 39、点开详情却是 91。这里把列表也切到在途登记表，
+// 与 SummarizeUserInflight 的 len(snapshots) 严格同源，两个数才能对上。
+func (s *UsageInflightService) CountUserInflightBatch(ctx context.Context, userIDs []int64) (map[int64]int, error) {
+	if s == nil || s.store == nil || len(userIDs) == 0 {
+		return map[int64]int{}, nil
+	}
+	return s.store.CountByUsers(ctx, userIDs)
 }
 
 // ListGroupActiveUsers 返回某分组此刻正在处理请求的用户名单。

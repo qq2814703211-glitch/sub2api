@@ -702,6 +702,15 @@ func (s *APIKeyService) fillCurrentConcurrency(ctx context.Context, keys []APIKe
 	for i := range keys {
 		keys[i].CurrentConcurrency = counts[keys[i].ID]
 	}
+	// 下面这次调用会再写一次 CurrentConcurrency，值却与上面完全相同：
+	// GetAPIKeyConcurrencyBatch 和 apiKeyQueueStatsScript 读的是同一组
+	// concurrency:api_key:<id> / concurrency:live:api_key:<id> 有序集合，
+	// 都用 ZCARD 求和、都先按同样 TTL 清理过期成员。所以这不是互相覆盖的
+	// 双写 bug，重复赋值是幂等的。
+	//
+	// 保留它是因为它有独立的职责：它额外给出排队数（WaitingCount）和
+	// QueueStatsAvailable，而失败时直接 return、让上面那次赋值继续生效，
+	// 正好构成「队列统计不可用但并发数仍可展示」的降级路径。
 	s.concurrencyService.FillAPIKeyQueueStats(ctx, keys)
 }
 

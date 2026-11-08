@@ -597,12 +597,16 @@ export default {
         requestsUnit: '个请求',
         modelPending: '模型尚未解析',
         startedAt: '最早开始于 {time}',
-        sinceHint: '最早一条请求开始于 {time}'
+        sinceHint: '最早一条请求开始于 {time}',
+        slotHint: '当前 {inflight} 个在途请求；并发槽位占用 {slots} 个（两者口径不同，槽位按 TTL 过期、在途按请求结束注销，略有出入属正常）'
       },
       today: '今日',
       total: '近30天',
       sortBy: '排序方式',
       sortCurrentPageOnly: '仅对本页数据排序',
+      concurrencySortCurrent: '当前并发',
+      concurrencySortLimit: '并发上限',
+      concurrencySortHint: '当前并发为实时在途请求数，跨页全局排序',
       noSubscription: '暂无订阅',
       publicGroupCount: '+{count} 公开',
       exclusiveLabel: '专属',
