@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // usageInflightStoreStub 是 UsageInflightStore 的内存实现。
@@ -294,7 +296,9 @@ func TestSummarizeUserInflightGroupsByGroupID(t *testing.T) {
 	svc, store := newTestUsageInflightService(t)
 	ctx := context.Background()
 
-	earliest := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	// 用相对当前的时间：快照超过 UsageInflightMaxAge 会被判陈旧并过滤掉，
+	// 写死的历史时间戳会让这个用例随真实日期推移而失败。
+	earliest := time.Now().UTC().Add(-2 * time.Minute)
 	later := earliest.Add(30 * time.Second)
 	mustRegister(t, store, UsageInflightSnapshot{RequestID: "x1", UserID: 5, GroupID: 7, Model: "claude-sonnet-4-5", StartedAt: later})
 	mustRegister(t, store, UsageInflightSnapshot{RequestID: "x2", UserID: 5, GroupID: 7, Model: "claude-opus-4-1", StartedAt: earliest})
@@ -426,4 +430,45 @@ func TestActiveUsersIsIndependentFromSessions(t *testing.T) {
 	if summaries[0].SessionsUsed != 5 {
 		t.Fatalf("sessions used on inflight error = %d, want untouched 5", summaries[0].SessionsUsed)
 	}
+}
+
+// TestUsageInflight_StaleSnapshotsAreNotCounted 钉死「并发数远大于真实并发」。
+//
+// 生产实测：用户桶里有 started_at 距今 6 小时以上的条目，key 每来一个新请求
+// 就把整个 HASH 的 TTL 重置回满值，于是这些漏注销的条目永远等不到过期。
+// 读取侧必须按年龄过滤，否则并发数只增不减。
+func TestUsageInflight_StaleSnapshotsAreNotCounted(t *testing.T) {
+	svc, store := newTestUsageInflightService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// 两条新鲜的、三条陈旧的（其中一条没有时间戳 = 历史脏数据）。
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "fresh-1", UserID: 9, GroupID: 3, StartedAt: now.Add(-30 * time.Second)})
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "fresh-2", UserID: 9, GroupID: 3, StartedAt: now.Add(-5 * time.Minute)})
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "ghost-1", UserID: 9, GroupID: 3, StartedAt: now.Add(-2 * time.Hour)})
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "ghost-2", UserID: 9, GroupID: 3, StartedAt: now.Add(-6 * time.Hour)})
+	// 零值时间戳的历史脏数据：必须直接塞进 store，走 mustRegister 会被补成当前时间。
+	require.NoError(t, store.Register(ctx, UsageInflightSnapshot{RequestID: "ghost-3", UserID: 9, GroupID: 3}))
+
+	summaries, total, err := svc.SummarizeUserInflight(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, 2, total, "只应统计新鲜条目")
+	require.Len(t, summaries, 1)
+	require.Equal(t, 2, summaries[0].Inflight)
+}
+
+// TestUsageInflight_StaleSnapshotsExcludedFromGroupActiveUsers 分组实时使用人数
+// 也不能被陈旧条目抬高。
+func TestUsageInflight_StaleSnapshotsExcludedFromGroupActiveUsers(t *testing.T) {
+	svc, store := newTestUsageInflightService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "a", UserID: 11, GroupID: 5, StartedAt: now.Add(-time.Minute)})
+	mustRegister(t, store, UsageInflightSnapshot{RequestID: "b", UserID: 12, GroupID: 5, StartedAt: now.Add(-3 * time.Hour)})
+
+	users, err := svc.ListGroupActiveUsers(ctx, 5)
+	require.NoError(t, err)
+	require.Len(t, users, 1, "只有新鲜条目对应的用户算活跃")
+	require.Equal(t, int64(11), users[0].UserID)
 }
