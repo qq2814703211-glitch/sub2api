@@ -491,7 +491,7 @@ func TestCNYOfficial_ManualOverrideWithoutOfficialPrice(t *testing.T) {
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
 			// 该模型不在人民币数据源里（模拟只有 mistral 美元价的场景）。
-			"deepseek/deepseek-v4.1-flash-1017": {Input: 1, Output: 4, CacheRead: 0.02},
+			"deepseek-v4.1-flash-1017": {Input: 1, Output: 4, CacheRead: 0.02},
 		},
 	}
 	// 覆盖层里先放一个美元价，模拟线上现状。
@@ -834,7 +834,7 @@ func TestCNYOfficial_ManualLongContextWritesLadder(t *testing.T) {
 	settings := &CNYOfficialPricingSettings{
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
-			"deepseek/deepseek-v4.1-flash-1017": {
+			"deepseek-v4.1-flash-1017": {
 				Input: 1, Output: 4, CacheRead: 0.02,
 				LongContextThreshold:        32000,
 				LongContextInputMultiplier:  1.5,
@@ -862,7 +862,7 @@ func TestCNYOfficial_ManualLongContextOmittedWhenEmpty(t *testing.T) {
 	settings := &CNYOfficialPricingSettings{
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
-			"deepseek/deepseek-v4.1-flash-1017": {Input: 1, Output: 4},
+			"deepseek-v4.1-flash-1017": {Input: 1, Output: 4},
 		},
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
@@ -884,7 +884,7 @@ func TestCNYOfficial_ManualLongContextOnlyOutputSide(t *testing.T) {
 	settings := &CNYOfficialPricingSettings{
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
-			"deepseek/deepseek-v4.1-flash-1017": {
+			"deepseek-v4.1-flash-1017": {
 				Input: 1, Output: 4,
 				LongContextThreshold:        32000,
 				LongContextOutputMultiplier: 2,
@@ -898,4 +898,40 @@ func TestCNYOfficial_ManualLongContextOnlyOutputSide(t *testing.T) {
 	entry := readOverrideEntries(t, path)["deepseek-v4.1-flash-1017"]
 	require.InDelta(t, 1, entry["long_context_input_cost_multiplier"], 1e-9)
 	require.InDelta(t, 2, entry["long_context_output_cost_multiplier"], 1e-9)
+}
+
+// TestCNYOfficial_SlashInModelNameIsNotAPrefix 钉死一个会静默改错价的生产问题。
+//
+// 真实模型名本身可能带斜杠（生产覆盖层里就有 `siliconflow/deepseek-v3.2`，
+// 单价 0.27）。早先版本把斜杠前的部分当厂商前缀剥掉，导致：
+//   1. 给 `siliconflow/deepseek-v3.2` 配的价被写到裸名 `deepseek-v3.2` 上；
+//   2. 如果同时存在同名裸模型，它的价被覆盖（实测 0.27 → 55）。
+//
+// 键必须原样当作模型名。两种键共存的场合各自独立。
+func TestCNYOfficial_SlashInModelNameIsNotAPrefix(t *testing.T) {
+	// 覆盖层里两条都真实存在，价格不同。
+	existing := `{
+		"siliconflow/deepseek-v3.2": {"input_cost_per_token": 2.7e-7, "output_cost_per_token": 1.08e-6},
+		"deepseek-v3.2":             {"input_cost_per_token": 1e-6,  "output_cost_per_token": 4e-6}
+	}`
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			// 只给带斜杠这一条配手工价。
+			"siliconflow/deepseek-v3.2": {Input: 55, Output: 55},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entries := readOverrideEntries(t, path)
+
+	require.InDelta(t, 55e-6, entries["siliconflow/deepseek-v3.2"]["input_cost_per_token"], 1e-15,
+		"带斜杠的真实模型名必须写到自己名下")
+	require.InDelta(t, 55e-6, entries["siliconflow/deepseek-v3.2"]["output_cost_per_token"], 1e-15)
+
+	// 裸名那条不能被动到 —— 它是另一个模型。
+	require.InDelta(t, 1e-6, entries["deepseek-v3.2"]["input_cost_per_token"], 1e-15,
+		"给带斜杠模型配价不能污染同名裸模型")
+	require.InDelta(t, 4e-6, entries["deepseek-v3.2"]["output_cost_per_token"], 1e-15)
 }
