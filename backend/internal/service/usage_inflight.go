@@ -25,6 +25,29 @@ type UsageInflightSnapshot struct {
 	StartedAt  time.Time `json:"started_at"`
 }
 
+// UsageInflightMaxAge 是在途快照的最长有效寿命，与并发槽位 TTL 同源。
+//
+// 为什么读取时还要按年龄过滤：key 级 PExpire 会随任何一个新请求把整个 HASH
+// 的 TTL 重置回满值，桶里那些 Release 没删掉的陈旧条目就永远等不到过期。
+// 结果是并发数只增不减、看起来「远大于真实并发且不实时变化」。写入侧修不掉
+// 这个问题（漏注销的请求不会再跑一次 defer），所以读取时必须自己按年龄兜底。
+const UsageInflightMaxAge = 15 * time.Minute
+
+// isStale 报告快照是否已经超过最长有效寿命。
+//
+// 没有任何时间戳的条目（历史脏数据）按陈旧处理：它们无法证明自己还活着，
+// 留着只会让并发数虚高。
+func (s UsageInflightSnapshot) IsStale(now time.Time, maxAge time.Duration) bool {
+	if s.StartedAt.IsZero() {
+		return true
+	}
+	if maxAge <= 0 {
+		return false
+	}
+	return now.Sub(s.StartedAt) > maxAge
+}
+
+
 // UsageInflightStore 是在途请求登记表的存储能力。
 //
 // 所有写方法都必须是 best-effort 语义：调用方（网关中间件）失败时只记日志，
@@ -70,11 +93,41 @@ type GroupActiveUser struct {
 type UsageInflightService struct {
 	store     UsageInflightStore
 	groupRepo GroupRepository
+	// maxAge 是读取时判定「陈旧」的阈值；<=0 表示不过滤（仅测试与降级用）。
+	// 与写入侧 TTL 同源，见 UsageInflightMaxAge 的说明。
+	maxAge time.Duration
 }
 
 // NewUsageInflightService 创建在途请求聚合服务。
 func NewUsageInflightService(store UsageInflightStore, groupRepo GroupRepository) *UsageInflightService {
-	return &UsageInflightService{store: store, groupRepo: groupRepo}
+	return &UsageInflightService{store: store, groupRepo: groupRepo, maxAge: UsageInflightMaxAge}
+}
+
+// SetMaxAge 覆盖陈旧判定阈值；<=0 关闭过滤。
+//
+// 关闭过滤只在明确知道登记表干净时使用：TTL 到期并不保证条目被删掉
+// （key 级续期会让整桶幽灵条目续命），所以生产环境应当保持过滤开启。
+func (s *UsageInflightService) SetMaxAge(maxAge time.Duration) {
+	if s == nil {
+		return
+	}
+	s.maxAge = maxAge
+}
+
+// filterFresh 只保留仍然在寿命内的快照。
+func (s *UsageInflightService) filterFresh(snapshots []UsageInflightSnapshot) []UsageInflightSnapshot {
+	if s == nil || s.maxAge <= 0 || len(snapshots) == 0 {
+		return snapshots
+	}
+	now := time.Now()
+	fresh := make([]UsageInflightSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.IsStale(now, s.maxAge) {
+			continue
+		}
+		fresh = append(fresh, snapshot)
+	}
+	return fresh
 }
 
 // SummarizeUserInflight 按分组聚合该用户的在途请求。
@@ -87,6 +140,8 @@ func (s *UsageInflightService) SummarizeUserInflight(ctx context.Context, userID
 	if err != nil {
 		return nil, 0, err
 	}
+	// 只聚合仍在寿命内的快照：桶里可能残留 Release 漏删的陈旧条目。
+	snapshots = s.filterFresh(snapshots)
 	summaries := summarizeUsageInflightByGroup(snapshots)
 	names := s.groupNames(ctx, summaries)
 	for i := range summaries {
@@ -117,7 +172,7 @@ func (s *UsageInflightService) ListGroupActiveUsers(ctx context.Context, groupID
 	if err != nil {
 		return nil, err
 	}
-	return aggregateGroupActiveUsers(groupID, snapshots), nil
+	return aggregateGroupActiveUsers(groupID, s.filterFresh(snapshots)), nil
 }
 
 // CountActiveUsersByGroups 返回分组当前实时使用中的人数。
