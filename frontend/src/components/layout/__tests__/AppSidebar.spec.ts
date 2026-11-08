@@ -97,8 +97,10 @@ describe('AppSidebar MCP entry', () => {
 })
 
 describe('AppSidebar connection diagnostics entry', () => {
-  it('exposes the admin-only connection trace route in the sidebar', () => {
-    expect(componentSource).toContain("path: '/admin/connections', label: t('nav.connectionDiagnostics')")
+  it('does not expose the removed connection diagnostics route', () => {
+    // 连接诊断（admin/connections）整体移除，防止从上游 fork 合并时又被带回来。
+    expect(componentSource).not.toContain("path: '/admin/connections'")
+    expect(componentSource).not.toContain("t('nav.connectionDiagnostics')")
   })
 })
 

@@ -222,14 +222,6 @@ export default {
       "label": "Read site-wide usage details and user usage",
       "category": "Reports"
     },
-    "usage_dconnections_dread": {
-      "label": "Read site-wide connection diagnostic metadata",
-      "category": "Monitoring"
-    },
-    "usage_dconnections_dwrite": {
-      "label": "Enable or disable site-wide connection diagnostics",
-      "category": "Monitoring"
-    },
     "payment_dread": {
       "label": "Read all payment orders and reports",
       "category": "Finance"

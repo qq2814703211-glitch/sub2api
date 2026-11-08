@@ -29,7 +29,6 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -206,10 +205,8 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return nil, err
 	}
 	profile := service.HTTPUpstreamProfileDefault
-	var egressTrace *requesttiming.Trace
 	if req != nil {
 		profile = service.HTTPUpstreamProfileFromContext(req.Context())
-		req, egressTrace = requesttiming.StartAttempt(req, accountID, 0)
 	}
 
 	// 获取或创建对应的客户端，并标记请求占用
@@ -222,7 +219,6 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req, s.upstreamDrainTimeout())
-	egressTrace.Response(resp, err)
 	if err != nil {
 		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
@@ -257,10 +253,8 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 	applyGrokCLIProxyHeaders(req)
 	upstreamProfile := service.HTTPUpstreamProfileDefault
-	var egressTrace *requesttiming.Trace
 	if req != nil {
 		upstreamProfile = service.HTTPUpstreamProfileFromContext(req.Context())
-		req, egressTrace = requesttiming.StartAttempt(req, accountID, 0)
 	}
 
 	targetHost := ""
@@ -286,7 +280,6 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := doUpstreamRequest(client, req, s.upstreamDrainTimeout())
-	egressTrace.Response(resp, err)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -316,13 +309,9 @@ func doUpstreamRequest(client *http.Client, req *http.Request, drainTimeouts ...
 	if len(drainTimeouts) > 0 {
 		drainTimeout = drainTimeouts[0]
 	}
-	req, trace := requesttiming.StartTransport(req)
 	ctx, cancel := pkghttputil.NewUpstreamAttemptContext(req.Context(), drainTimeout)
 	req = req.WithContext(ctx)
 	resp, err := servertiming.Do(client, req)
-	if trace != nil {
-		trace.Response(resp, err)
-	}
 	if err != nil {
 		cancel()
 		return resp, err
