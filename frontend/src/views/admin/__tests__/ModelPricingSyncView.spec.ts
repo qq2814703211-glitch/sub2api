@@ -94,12 +94,42 @@ function mountView() {
   })
 }
 
-function defaultConfig(overrides: Record<string, { input: number; output: number; cache_read: number }> = {}) {
+function defaultConfig(
+  overrides: Record<
+    string,
+    {
+      input: number
+      output: number
+      cache_read: number
+      long_context_threshold?: number
+      long_context_input_multiplier?: number
+      long_context_output_multiplier?: number
+    }
+  > = {}
+) {
   return {
     enabled: true,
     source_url: 'https://raw.githubusercontent.com/basellm/llm-metadata/main/dist/api/all.json',
     manual_overrides: overrides
   }
+}
+
+/** 取新加那一行的 id 后缀：行 id 是自增的，测试里不能写死。 */
+function rowSuffix(wrapper: Awaited<ReturnType<typeof mountReady>>, index = 0): string {
+  const rows = wrapper.findAll('[data-testid^="pricing-row-model-"]')
+  return rows[index].attributes('data-testid')!.replace('pricing-row-model-', '')
+}
+
+/** 填一行的三档基础价，长上下文字段按需再填。 */
+async function fillPrice(
+  wrapper: Awaited<ReturnType<typeof mountReady>>,
+  suffix: string,
+  model = 'deepseek/deepseek-flash'
+) {
+  await wrapper.find(`[data-testid="pricing-row-model-${suffix}"]`).setValue(model)
+  await wrapper.find(`[data-testid="pricing-row-input-${suffix}"]`).setValue('1')
+  await wrapper.find(`[data-testid="pricing-row-output-${suffix}"]`).setValue('4')
+  await wrapper.find(`[data-testid="pricing-row-cache_read-${suffix}"]`).setValue('0.02')
 }
 
 async function mountReady(config = defaultConfig()) {
@@ -445,6 +475,265 @@ describe('ModelPricingSyncView 计价口径配置卡片', () => {
 
     expect(wrapper.find('[data-testid="pricing-source-load-error"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="pricing-save"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('renders the long-context tier inputs on every row', async () => {
+    const wrapper = await mountReady(defaultConfig({ 'deepseek/deepseek-flash': { input: 1, output: 4, cache_read: 0.02 } }))
+    const suffix = rowSuffix(wrapper)
+
+    // 三个新输入框默认留空 —— 空 = 不启用阶梯。
+    for (const field of [
+      'long_context_threshold',
+      'long_context_input_multiplier',
+      'long_context_output_multiplier'
+    ]) {
+      const input = wrapper.find(`[data-testid="pricing-row-${field}-${suffix}"]`)
+      expect(input.exists()).toBe(true)
+      expect((input.element as HTMLInputElement).value).toBe('')
+    }
+
+    expect(wrapper.find(`[data-testid="pricing-row-long-context-${suffix}"]`).text()).toContain(
+      '长上下文阶梯（留空不启用）'
+    )
+
+    wrapper.unmount()
+  })
+
+  it('omits the long-context keys entirely when the inputs are left blank', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => payload as never)
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    await fillPrice(wrapper, rowSuffix(wrapper))
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    const payload = updateCnyOfficialConfig.mock.calls[0][0] as {
+      manual_overrides: Record<string, Record<string, unknown>>
+    }
+    // 留空不能写成 0：后端带 omitempty，省略才是「不启用阶梯」。
+    expect(Object.keys(payload.manual_overrides['deepseek/deepseek-flash']).sort()).toEqual([
+      'cache_read',
+      'input',
+      'output'
+    ])
+    expect(payload.manual_overrides['deepseek/deepseek-flash']).not.toHaveProperty(
+      'long_context_threshold'
+    )
+
+    wrapper.unmount()
+  })
+
+  it('submits all three long-context fields as numbers when filled in', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => payload as never)
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = rowSuffix(wrapper)
+    await fillPrice(wrapper, suffix)
+    await wrapper.find(`[data-testid="pricing-row-long_context_threshold-${suffix}"]`).setValue('32000')
+    await wrapper
+      .find(`[data-testid="pricing-row-long_context_input_multiplier-${suffix}"]`)
+      .setValue('1.5')
+    await wrapper
+      .find(`[data-testid="pricing-row-long_context_output_multiplier-${suffix}"]`)
+      .setValue('2')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).toHaveBeenCalledWith({
+      enabled: true,
+      source_url: 'https://raw.githubusercontent.com/basellm/llm-metadata/main/dist/api/all.json',
+      manual_overrides: {
+        'deepseek/deepseek-flash': {
+          input: 1,
+          output: 4,
+          cache_read: 0.02,
+          long_context_threshold: 32000,
+          long_context_input_multiplier: 1.5,
+          long_context_output_multiplier: 2
+        }
+      }
+    })
+
+    wrapper.unmount()
+  })
+
+  it('blocks the save when a multiplier is set without a threshold', async () => {
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = rowSuffix(wrapper)
+    await fillPrice(wrapper, suffix)
+    // 只填倍率、不填阈值：阶梯永远不会生效，必须拦。
+    await wrapper
+      .find(`[data-testid="pricing-row-long_context_input_multiplier-${suffix}"]`)
+      .setValue('1.5')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
+    expect(
+      wrapper.find(`[data-testid="pricing-row-long_context_threshold-error-${suffix}"]`).text()
+    ).toContain('填了倍率必须同时填阈值')
+
+    wrapper.unmount()
+  })
+
+  it('blocks the save when a multiplier is set with a threshold of 0', async () => {
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = rowSuffix(wrapper)
+    await fillPrice(wrapper, suffix)
+    // 阈值 0 等价于不启用，配倍率同样无意义。
+    await wrapper.find(`[data-testid="pricing-row-long_context_threshold-${suffix}"]`).setValue('0')
+    await wrapper
+      .find(`[data-testid="pricing-row-long_context_output_multiplier-${suffix}"]`)
+      .setValue('2')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('填了倍率必须同时填阈值')
+
+    wrapper.unmount()
+  })
+
+  it('accepts a threshold of 0 when both multipliers are left blank', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => payload as never)
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = rowSuffix(wrapper)
+    await fillPrice(wrapper, suffix)
+    await wrapper.find(`[data-testid="pricing-row-long_context_threshold-${suffix}"]`).setValue('0')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    // 阈值 0 + 倍率留空 = 不启用阶梯，合法。提交的阈值是显式的 0。
+    expect(updateCnyOfficialConfig).toHaveBeenCalledTimes(1)
+    const payload = updateCnyOfficialConfig.mock.calls[0][0] as {
+      manual_overrides: Record<string, Record<string, unknown>>
+    }
+    expect(payload.manual_overrides['deepseek/deepseek-flash'].long_context_threshold).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['a non-integer threshold', '32000.5', '', '', '需为不小于 0 的整数', 'long_context_threshold'],
+    ['a negative threshold', '-1', '', '', '需为不小于 0 的整数', 'long_context_threshold'],
+    ['an input multiplier below 1', '32000', '0.5', '', '需为不小于 1 的数字', 'long_context_input_multiplier'],
+    ['an output multiplier below 1', '32000', '', '0.9', '需为不小于 1 的数字', 'long_context_output_multiplier']
+  ])(
+    'blocks the save for %s',
+    async (_case, threshold, inputMultiplier, outputMultiplier, expectedError, field) => {
+      const wrapper = await mountReady()
+
+      await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+      const suffix = rowSuffix(wrapper)
+      await fillPrice(wrapper, suffix)
+      await wrapper.find(`[data-testid="pricing-row-long_context_threshold-${suffix}"]`).setValue(threshold)
+      if (inputMultiplier) {
+        await wrapper
+          .find(`[data-testid="pricing-row-long_context_input_multiplier-${suffix}"]`)
+          .setValue(inputMultiplier)
+      }
+      if (outputMultiplier) {
+        await wrapper
+          .find(`[data-testid="pricing-row-long_context_output_multiplier-${suffix}"]`)
+          .setValue(outputMultiplier)
+      }
+
+      await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+      await flushPromises()
+
+      expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
+      expect(wrapper.find(`[data-testid="pricing-row-${field}-error-${suffix}"]`).text()).toContain(
+        expectedError
+      )
+
+      wrapper.unmount()
+    }
+  )
+
+  it('backfills the three long-context fields returned by the backend', async () => {
+    const wrapper = await mountReady(
+      defaultConfig({
+        'deepseek/deepseek-flash': {
+          input: 1,
+          output: 4,
+          cache_read: 0.02,
+          long_context_threshold: 32000,
+          long_context_input_multiplier: 1.5,
+          long_context_output_multiplier: 2
+        },
+        // 没有阶梯的模型回填成空串，不能变成 "0" / "undefined"。
+        'zhipuai/glm-4': { input: 2, output: 8, cache_read: 0.05 }
+      })
+    )
+
+    const suffixes = wrapper
+      .findAll('[data-testid^="pricing-row-model-"]')
+      .map((el) => el.attributes('data-testid')!.replace('pricing-row-model-', ''))
+
+    // 行按模型键排序：deepseek 在前。
+    const deepseek = suffixes[0]
+    expect(
+      (wrapper.find(`[data-testid="pricing-row-long_context_threshold-${deepseek}"]`).element as HTMLInputElement)
+        .value
+    ).toBe('32000')
+    expect(
+      (
+        wrapper.find(`[data-testid="pricing-row-long_context_input_multiplier-${deepseek}"]`)
+          .element as HTMLInputElement
+      ).value
+    ).toBe('1.5')
+    expect(
+      (
+        wrapper.find(`[data-testid="pricing-row-long_context_output_multiplier-${deepseek}"]`)
+          .element as HTMLInputElement
+      ).value
+    ).toBe('2')
+
+    const glm = suffixes[1]
+    expect(
+      (wrapper.find(`[data-testid="pricing-row-long_context_threshold-${glm}"]`).element as HTMLInputElement)
+        .value
+    ).toBe('')
+
+    wrapper.unmount()
+  })
+
+  it('keeps a backfilled long-context tier out of the dirty state until it is edited', async () => {
+    const wrapper = await mountReady(
+      defaultConfig({
+        'deepseek/deepseek-flash': {
+          input: 1,
+          output: 4,
+          cache_read: 0.02,
+          long_context_threshold: 32000,
+          long_context_input_multiplier: 1.5,
+          long_context_output_multiplier: 2
+        }
+      })
+    )
+
+    // 回填后的快照必须与载荷一致，否则一进页面就显示「有未保存改动」。
+    expect(wrapper.find('[data-testid="pricing-source-dirty"]').exists()).toBe(false)
+
+    await wrapper
+      .find(`[data-testid="pricing-row-long_context_threshold-${rowSuffix(wrapper)}"]`)
+      .setValue('64000')
+    expect(wrapper.find('[data-testid="pricing-source-dirty"]').exists()).toBe(true)
 
     wrapper.unmount()
   })

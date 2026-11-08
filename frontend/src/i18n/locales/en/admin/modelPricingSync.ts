@@ -78,8 +78,19 @@ export default {
       col: {
         input: 'Input',
         output: 'Output',
-        cache_read: 'Cache read'
+        cache_read: 'Cache read',
+        long_context_threshold: 'Threshold (tokens)',
+        long_context_input_multiplier: 'Input multiplier',
+        long_context_output_multiplier: 'Output multiplier'
       },
+      colPlaceholder: {
+        long_context_threshold: 'e.g. 32000',
+        long_context_input_multiplier: 'e.g. 1.5',
+        long_context_output_multiplier: 'e.g. 2'
+      },
+      longContextTitle: 'Long-context tier (leave blank to disable)',
+      longContextHint:
+        'Above the threshold, the input multiplier also applies to cache read and cache write.',
       vendorsTitle: 'Chinese vendor list',
       vendorsHint: '({count} vendors priced from CNY official lists)',
       save: 'Save',
@@ -91,7 +102,11 @@ export default {
       errModelFormat: 'Use the vendor/model format (must contain a slash)',
       errModelDuplicate: 'Duplicate model key',
       errPriceRequired: 'Required',
-      errPriceInvalid: 'Must be a non-negative number'
+      errPriceInvalid: 'Must be a non-negative number',
+      errThresholdInvalid: 'Must be an integer of 0 or more',
+      errMultiplierInvalid: 'Must be a number of at least 1',
+      errThresholdRequiredForMultiplier:
+        'A threshold above 0 is required when a multiplier is set, otherwise the tier never applies'
     }
   }
 }

@@ -810,7 +810,7 @@ func computeCNYOfficialSyncChanges(
 		// manual_overrides 命中：按运营配置的人民币价写入，优先级最高。
 		currentFields := decodeModelPricingSyncEntry(existing[model])
 		if manual, hit := dataset.manualPricing(model, providerOf(priced)); hit {
-			changes = append(changes, cnyOfficialManualChanges(model, manual.PerToken, currentFields)...)
+			changes = append(changes, cnyOfficialManualChanges(model, manual.PerToken, manual.LongContext, currentFields)...)
 			continue
 		}
 		if !ok || priced == nil {
@@ -862,6 +862,33 @@ func cnyOfficialBareModelName(key string) string {
 	return normalized
 }
 
+// cnyOfficialManualLongContext 把手工配置的长上下文三项折成覆盖层阶梯。
+//
+// 返回 nil 表示不开长上下文：阈值未填、或两侧倍率都不大于 1 时都没意义
+// （计费侧同样以「倍率 <= 1」判定不启用）。倍率留空按 1 处理，只有一侧配置时
+// 另一侧保持 1 —— 与 official 数据的写法一致。
+func cnyOfficialManualLongContext(price CNYOfficialManualPrice) *cnyOfficialLongContext {
+	if price.LongContextThreshold <= 0 {
+		return nil
+	}
+	inputMult := price.LongContextInputMultiplier
+	outputMult := price.LongContextOutputMultiplier
+	if inputMult <= 0 {
+		inputMult = 1
+	}
+	if outputMult <= 0 {
+		outputMult = 1
+	}
+	if inputMult <= 1 && outputMult <= 1 {
+		return nil
+	}
+	return &cnyOfficialLongContext{
+		Threshold:        price.LongContextThreshold,
+		InputMultiplier:  inputMult,
+		OutputMultiplier: outputMult,
+	}
+}
+
 // providerOf 安全取出 priced 的厂商名，priced 为 nil 时返回空串。
 func providerOf(priced *cnyOfficialPricing) string {
 	if priced == nil {
@@ -875,8 +902,8 @@ func providerOf(priced *cnyOfficialPricing) string {
 // manual 是最高优先级一档：只要配置了，就按这份价格写覆盖层，不看官方人民币价
 // 是否有值。这样即使某个模型在官方数据源里没有人民币牌价（只有境外厂商的美元价），
 // 运营也能把它改成本位币计价。
-func cnyOfficialManualChanges(model string, perToken map[string]float64, current map[string]float64) []modelPricingSyncChange {
-	changes := make([]modelPricingSyncChange, 0, len(modelPricingSyncFields))
+func cnyOfficialManualChanges(model string, perToken map[string]float64, longContext *cnyOfficialLongContext, current map[string]float64) []modelPricingSyncChange {
+	changes := make([]modelPricingSyncChange, 0, len(modelPricingSyncFields)+3)
 	for _, field := range modelPricingSyncFields {
 		newValue, ok := perToken[field]
 		if !ok || newValue <= 0 {
@@ -895,6 +922,9 @@ func cnyOfficialManualChanges(model string, perToken map[string]float64, current
 			Source:   ModelPricingSyncSourceCNYOfficial,
 		})
 	}
+	// 长上下文阶梯：三字段成组写，与官方档共用同一套逻辑（只写阈值不写倍率，
+	// 等于「超过阈值后价格不变」）。
+	changes = append(changes, cnyOfficialLadderChanges(model, longContext, current)...)
 	return changes
 }
 

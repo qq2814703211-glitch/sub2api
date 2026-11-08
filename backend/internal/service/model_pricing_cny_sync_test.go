@@ -827,3 +827,75 @@ func absFloat(v float64) float64 {
 	}
 	return v
 }
+
+// TestCNYOfficial_ManualLongContextWritesLadder 钉死 manual 里的长上下文阶梯：
+// 阈值 + 输入倍率 + 输出倍率三字段成组写入覆盖层，供计费侧读取。
+func TestCNYOfficial_ManualLongContextWritesLadder(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"deepseek/deepseek-v4.1-flash-1017": {
+				Input: 1, Output: 4, CacheRead: 0.02,
+				LongContextThreshold:        32000,
+				LongContextInputMultiplier:  1.5,
+				LongContextOutputMultiplier: 2,
+			},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entries := readOverrideEntries(t, path)
+
+	entry := entries["deepseek-v4.1-flash-1017"]
+	require.NotNil(t, entry)
+	require.InDelta(t, 1e-6, entry["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 32000, entry["long_context_input_token_threshold"], 1e-9)
+	require.InDelta(t, 1.5, entry["long_context_input_cost_multiplier"], 1e-9)
+	require.InDelta(t, 2, entry["long_context_output_cost_multiplier"], 1e-9)
+}
+
+// TestCNYOfficial_ManualLongContextOmittedWhenEmpty 确认留空不写阶梯字段：
+// 阈值留 0 时三个字段都不应出现，否则计费侧会误判为「已配置阶梯」。
+func TestCNYOfficial_ManualLongContextOmittedWhenEmpty(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"deepseek/deepseek-v4.1-flash-1017": {Input: 1, Output: 4},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entries := readOverrideEntries(t, path)
+
+	entry := entries["deepseek-v4.1-flash-1017"]
+	require.NotNil(t, entry)
+	require.NotContains(t, entry, "long_context_input_token_threshold")
+	require.NotContains(t, entry, "long_context_input_cost_multiplier")
+	require.NotContains(t, entry, "long_context_output_cost_multiplier")
+}
+
+// TestCNYOfficial_ManualLongContextOnlyOutputSide 只配一侧倍率时另一侧保持 1，
+// 与官方数据的写法一致（倍率 <= 1 在计费侧判定为该侧不涨价）。
+func TestCNYOfficial_ManualLongContextOnlyOutputSide(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"deepseek/deepseek-v4.1-flash-1017": {
+				Input: 1, Output: 4,
+				LongContextThreshold:        32000,
+				LongContextOutputMultiplier: 2,
+			},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entry := readOverrideEntries(t, path)["deepseek-v4.1-flash-1017"]
+	require.InDelta(t, 1, entry["long_context_input_cost_multiplier"], 1e-9)
+	require.InDelta(t, 2, entry["long_context_output_cost_multiplier"], 1e-9)
+}
