@@ -773,9 +773,6 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)
-		usage.GET("/connections", h.Admin.Usage.Connections)
-		usage.GET("/connection-diagnostics", h.Admin.Usage.ConnectionDiagnosticsSettings)
-		usage.PUT("/connection-diagnostics", h.Admin.Usage.ConnectionDiagnosticsSettings)
 		usage.POST("/cleanup-tasks", h.Admin.Usage.CreateCleanupTask)
 		usage.POST("/cleanup-tasks/:id/cancel", h.Admin.Usage.CancelCleanupTask)
 	}
