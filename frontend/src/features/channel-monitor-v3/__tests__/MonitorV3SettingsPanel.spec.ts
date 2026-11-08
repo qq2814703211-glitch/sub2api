@@ -35,6 +35,7 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key) }),
 }))
 
+// 候选列表只含有效分组（后端已按 deleted_at IS NULL 过滤）。
 const GROUP_ROWS = [
   { id: 7, name: 'claude-main', platform: 'anthropic', status: 'active' },
   { id: 9, name: 'gpt-main', platform: 'openai', status: 'active' },
@@ -45,6 +46,8 @@ function config(overrides: Partial<ChannelMonitorV3Config> = {}): ChannelMonitor
     version: 1,
     enabled: true,
     cache_average_window_days: 30,
+    cache_average_window_value: 30,
+    cache_average_window_unit: 'day',
     groups: [{ group_id: 7, enabled: true, models: [], probe_enabled: true }],
     probe: {
       endpoint: 'https://api.example.com',
@@ -58,12 +61,16 @@ function config(overrides: Partial<ChannelMonitorV3Config> = {}): ChannelMonitor
   }
 }
 
-async function mountPanel(value: ChannelMonitorV3Config) {
+async function mountPanel(value: ChannelMonitorV3Config, rows = GROUP_ROWS) {
   mocks.getV3Config.mockResolvedValue(value)
-  mocks.listV3Groups.mockResolvedValue(GROUP_ROWS)
+  mocks.listV3Groups.mockResolvedValue(rows)
   const wrapper = mount(MonitorV3SettingsPanel, { global: { stubs: { teleport: true } } })
   await flushPromises()
   return wrapper
+}
+
+function saveButton(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('button').find((b) => b.text().includes('channelMonitorV3.admin.save'))!
 }
 
 describe('MonitorV3SettingsPanel', () => {
@@ -103,8 +110,7 @@ describe('MonitorV3SettingsPanel', () => {
     const enableSwitch = wrapper.find('[role="switch"]')
     await enableSwitch.trigger('click')
     await flushPromises()
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('channelMonitorV3.admin.save'))!
-    expect(saveButton.attributes('disabled')).toBeUndefined()
+    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -113,14 +119,15 @@ describe('MonitorV3SettingsPanel', () => {
     const wrapper = await mountPanel(config({ enabled: false }))
 
     await wrapper.find('[role="switch"]').trigger('click')
-    const saveButton = wrapper.findAll('button').find((b) => b.text().includes('channelMonitorV3.admin.save'))!
-    await saveButton.trigger('click')
+    await saveButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(mocks.updateV3Config).toHaveBeenCalledTimes(1)
     const payload = mocks.updateV3Config.mock.calls[0][0] as Record<string, unknown>
     expect(payload.enabled).toBe(true)
     expect(payload.cache_average_window_days).toBe(30)
+    expect(payload.cache_average_window_value).toBe(30)
+    expect(payload.cache_average_window_unit).toBe('day')
     expect(payload.probe).toMatchObject({
       endpoint: 'https://api.example.com',
       provider: 'anthropic',
@@ -129,7 +136,7 @@ describe('MonitorV3SettingsPanel', () => {
       interval_seconds: 60,
     })
     expect(payload.groups).toEqual([
-      { group_id: 7, enabled: true, models: [], probe_enabled: true },
+      expect.objectContaining({ group_id: 7, enabled: true, probe_enabled: true }),
     ])
     expect(mocks.showSuccess).toHaveBeenCalledWith('channelMonitorV3.admin.saveSuccess')
     wrapper.unmount()
@@ -142,6 +149,269 @@ describe('MonitorV3SettingsPanel', () => {
     await flushPromises()
 
     expect(mocks.showError).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  // ── L1-1：残留的已删分组 ──────────────────────────────────────────────────
+
+  it('keeps a stale entry for a deleted group, labelled and impossible to enable', async () => {
+    // 配置里还挂着 42 号分组，但它已不在候选里（后端已过滤掉），且配置里是勾选状态。
+    const wrapper = await mountPanel(
+      config({
+        groups: [
+          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          { group_id: 42, enabled: true, models: [], probe_enabled: true },
+        ],
+      }),
+    )
+
+    const stale = wrapper.find('[data-group-id="42"]')
+    expect(stale.exists()).toBe(true)
+    expect(stale.attributes('data-deleted')).toBe('true')
+    // 名字带分组 id，多个已删分组不会都显示成同一行「已删除分组」。
+    expect(stale.text()).toContain('channelMonitorV3.admin.deletedGroupNamed')
+    expect(stale.text()).toContain('42')
+    expect(stale.text()).toContain('channelMonitorV3.admin.deletedGroupHint')
+    // 已删分组不能被勾选：没有 Toggle，只有一个危险色图标占位。
+    expect(stale.find('[role="switch"]').exists()).toBe(false)
+    // 有独立的「移除」按钮。
+    expect(stale.find('[data-group-remove="42"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('drops a stale deleted-group entry from the saved config', async () => {
+    const wrapper = await mountPanel(
+      config({
+        groups: [
+          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          { group_id: 42, enabled: true, models: [], probe_enabled: true },
+        ],
+      }),
+    )
+
+    // 勾选状态让它变脏，才能点保存。
+    await wrapper.find('[role="switch"]').trigger('click')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const payload = mocks.updateV3Config.mock.calls[0][0] as { groups: Array<{ group_id: number }> }
+    expect(payload.groups.map((g) => g.group_id)).toEqual([7])
+    wrapper.unmount()
+  })
+
+  it('lets the operator remove a stale entry explicitly', async () => {
+    const wrapper = await mountPanel(
+      config({
+        groups: [
+          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          { group_id: 42, enabled: true, models: [], probe_enabled: true },
+        ],
+      }),
+    )
+
+    await wrapper.find('[data-group-remove="42"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-group-id="42"]').exists()).toBe(false)
+    // 仍勾选的分组不受影响。
+    expect(wrapper.find('[data-group-id="7"]').exists()).toBe(true)
+    // 移除动作本身就该让表单变脏，否则点不了保存。
+    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('distinguishes multiple deleted groups from each other', async () => {
+    const wrapper = await mountPanel(
+      config({
+        groups: [
+          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          { group_id: 42, enabled: true, models: [], probe_enabled: true },
+          { group_id: 43, enabled: true, models: [], probe_enabled: true },
+        ],
+      }),
+    )
+
+    const staleRows = wrapper.findAll('[data-deleted="true"]')
+    expect(staleRows).toHaveLength(2)
+    expect(staleRows[0].text()).toContain('42')
+    expect(staleRows[1].text()).toContain('43')
+    expect(staleRows[0].text()).not.toBe(staleRows[1].text())
+    wrapper.unmount()
+  })
+
+  // ── L1-2：每组独立探针 ────────────────────────────────────────────────────
+
+  it('shows "inherits the global configuration" for a group without its own probe', async () => {
+    const wrapper = await mountPanel(config())
+
+    const row = wrapper.find('[data-group-id="7"]')
+    expect(row.text()).toContain('channelMonitorV3.admin.groupProbeInherited')
+    // 展开后默认是「使用全局探针」状态。
+    await row.find('[data-group-probe-toggle="7"]').trigger('click')
+    await flushPromises()
+    const inherit = wrapper.find('[data-group-probe-inherit="7"]').element as HTMLInputElement
+    expect(inherit.checked).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('lets each group configure its own probe identity and key', async () => {
+    const wrapper = await mountPanel(config())
+
+    // 只有勾选的分组才会写进配置，先启用 9 号。
+    await wrapper.find('[data-group-id="9"]').find('[role="switch"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-group-probe-toggle="9"]').trigger('click')
+    await flushPromises()
+
+    const panel = wrapper.find('[data-group-probe-panel="9"]')
+    expect(panel.exists()).toBe(true)
+
+    // 关掉「使用全局探针」→ 从全局身份派生一份可编辑的初值，而不是空白半成品。
+    await wrapper.find('[data-group-probe-inherit="9"]').setValue(false)
+    await flushPromises()
+
+    // 重新取 panel：上一步触发了重渲染，先前抓的 wrapper 已失效。
+    const seededInputs = wrapper.find('[data-group-probe-panel="9"]').findAll('input')
+    const seededEndpoint = seededInputs.find((i) => i.attributes('type') === 'url')!
+    expect((seededEndpoint.element as HTMLInputElement).value).toBe('https://api.example.com')
+
+    await seededEndpoint.setValue('https://gpt.example.com')
+    const passwordInput = seededInputs.find((i) => i.attributes('type') === 'password')!
+    await passwordInput.setValue('gpt-group-key')
+    await flushPromises()
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const payload = mocks.updateV3Config.mock.calls[0][0] as {
+      groups: Array<{ group_id: number; probe: { endpoint: string } }>
+      group_api_keys: Record<string, string>
+    }
+    const group9 = payload.groups.find((g) => g.group_id === 9)!
+    expect(group9.probe.endpoint).toBe('https://gpt.example.com')
+    // 分组 key 走单独的 map，绝不混进组对象里回传。
+    expect(payload.group_api_keys).toEqual({ '9': 'gpt-group-key' })
+    wrapper.unmount()
+  })
+
+  it('saves a per-group model list distinct from the global one', async () => {
+    const wrapper = await mountPanel(config())
+
+    await wrapper.find('[data-group-probe-toggle="7"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-group-probe-inherit="7"]').setValue(false)
+    await flushPromises()
+
+    const panel = wrapper.find('[data-group-probe-panel="7"]')
+    const modelsInput = panel
+      .findAll('input')
+      .find((i) => i.attributes('placeholder') === 'channelMonitorV3.admin.groupModelsPlaceholder')!
+    await modelsInput.setValue('claude-opus-4, claude-haiku')
+    await flushPromises()
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const payload = mocks.updateV3Config.mock.calls[0][0] as {
+      groups: Array<{ group_id: number; models: string[] }>
+    }
+    expect(payload.groups.find((g) => g.group_id === 7)!.models).toEqual([
+      'claude-opus-4',
+      'claude-haiku',
+    ])
+    wrapper.unmount()
+  })
+
+  // ── L1-3：窗口单位可选分钟 / 天 ───────────────────────────────────────────
+
+  it('renders a unit selector next to the cache window value', async () => {
+    const wrapper = await mountPanel(config())
+
+    // 数值输入 + 单位下拉（Select 组件的 trigger）。
+    const numberInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('aria-label') === 'channelMonitorV3.admin.cacheWindowTitle')!
+    expect(numberInput.exists()).toBe(true)
+    expect((numberInput.element as HTMLInputElement).value).toBe('30')
+    expect(wrapper.text()).toContain('channelMonitorV3.admin.windowRangeHint')
+    wrapper.unmount()
+  })
+
+  it('saves a minute window as value + unit so the backend can hit minute-granularity SQL', async () => {
+    const wrapper = await mountPanel(config())
+
+    const numberInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('aria-label') === 'channelMonitorV3.admin.cacheWindowTitle')!
+    await numberInput.setValue('30')
+
+    // 切单位：数值不被静默重置。
+    const unitSelect = wrapper.findComponent({ name: 'Select' })
+    unitSelect.vm.$emit('update:modelValue', 'minute')
+    await flushPromises()
+
+    expect((numberInput.element as HTMLInputElement).value).toBe('30')
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const payload = mocks.updateV3Config.mock.calls[0][0] as Record<string, unknown>
+    expect(payload.cache_average_window_value).toBe(30)
+    expect(payload.cache_average_window_unit).toBe('minute')
+    wrapper.unmount()
+  })
+
+  it('rejects a window above the physical limit instead of saving it', async () => {
+    const wrapper = await mountPanel(config())
+
+    const numberInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('aria-label') === 'channelMonitorV3.admin.cacheWindowTitle')!
+    // 天单位上限 90。
+    await numberInput.setValue('91')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('channelMonitorV3.admin.windowInvalid')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(mocks.updateV3Config).not.toHaveBeenCalled()
+    expect(mocks.showError).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('accepts a minute window up to 129600 and rejects one above it', async () => {
+    const wrapper = await mountPanel(config())
+    const unitSelect = wrapper.findComponent({ name: 'Select' })
+    unitSelect.vm.$emit('update:modelValue', 'minute')
+    await flushPromises()
+
+    const numberInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('aria-label') === 'channelMonitorV3.admin.cacheWindowTitle')!
+
+    await numberInput.setValue('129600')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('channelMonitorV3.admin.windowInvalid')
+
+    await numberInput.setValue('129601')
+    await flushPromises()
+    expect(wrapper.text()).toContain('channelMonitorV3.admin.windowInvalid')
+    wrapper.unmount()
+  })
+
+  it('keeps the legacy days field consistent when a minute window is loaded', async () => {
+    // 老配置只有 days（没有 value/unit）：UI 回落到「天」单位并按天解释。
+    const wrapper = await mountPanel(config({
+      cache_average_window_days: 14,
+      cache_average_window_value: undefined,
+      cache_average_window_unit: undefined,
+    }))
+
+    const numberInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.attributes('aria-label') === 'channelMonitorV3.admin.cacheWindowTitle')!
+    expect((numberInput.element as HTMLInputElement).value).toBe('14')
     wrapper.unmount()
   })
 })
