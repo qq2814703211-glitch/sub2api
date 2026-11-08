@@ -542,6 +542,90 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		userCtx = mixins.SkipSoftDelete(ctx)
 	}
 
+	q, matched, err := r.userListQuery(userCtx, filters)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !matched {
+		return []service.User{}, paginationResultFromTotal(0, params), nil
+	}
+
+	total, err := q.Clone().Count(userCtx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	usersQuery := q.
+		Offset(params.Offset()).
+		Limit(params.Limit())
+	for _, order := range userListOrder(params) {
+		usersQuery = usersQuery.Order(order)
+	}
+
+	users, err := usersQuery.All(userCtx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	outUsers, err := r.decorateUsers(ctx, users)
+	if err != nil {
+		return nil, nil, err
+	}
+	return outUsers, paginationResultFromTotal(int64(total), params), nil
+}
+
+// ListIDsWithFilters 返回满足筛选条件的全部用户 ID（不分页）。
+//
+// 只给「按实时并发排序」使用：实时并发数在 Redis 里，SQL 排不了，
+// 只能先取全量 ID，由上层批量拿实时值排序后再分页。不能退化成
+// 「只排当前页」——那样翻页结果既非全局序又可能重复/遗漏。
+func (r *userRepository) ListIDsWithFilters(ctx context.Context, filters service.UserListFilters) ([]int64, error) {
+	userCtx := ctx
+	if filters.IncludeDeleted {
+		userCtx = mixins.SkipSoftDelete(ctx)
+	}
+
+	q, matched, err := r.userListQuery(userCtx, filters)
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return []int64{}, nil
+	}
+
+	users, err := q.Select(dbuser.FieldID).All(userCtx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(users))
+	for i := range users {
+		ids = append(ids, users[i].ID)
+	}
+	return ids, nil
+}
+
+// ListByIDsWithFilters 按给定 ID 取回用户详情，用于「应用层排序后再分页」的取数步骤。
+// 返回顺序不保证与入参一致，调用方需自行按目标顺序重排。
+func (r *userRepository) ListByIDsWithFilters(ctx context.Context, ids []int64, filters service.UserListFilters) ([]service.User, error) {
+	if len(ids) == 0 {
+		return []service.User{}, nil
+	}
+	userCtx := ctx
+	if filters.IncludeDeleted {
+		userCtx = mixins.SkipSoftDelete(ctx)
+	}
+
+	q := r.client.User.Query().Where(dbuser.IDIn(ids...))
+	users, err := q.All(userCtx)
+	if err != nil {
+		return nil, err
+	}
+	return r.decorateUsers(ctx, users)
+}
+
+// userListQuery 组装 ListWithFilters / ListIDsWithFilters 共用的筛选条件。
+// matched=false 表示属性过滤已确定无任何用户命中，调用方应直接返回空结果。
+func (r *userRepository) userListQuery(userCtx context.Context, filters service.UserListFilters) (*dbent.UserQuery, bool, error) {
 	q := r.client.User.Query()
 
 	if filters.Status != "" {
@@ -579,40 +663,27 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 	}
 
 	// If attribute filters are specified, we need to filter by user IDs first
-	var allowedUserIDs []int64
 	if len(filters.Attributes) > 0 {
-		var attrErr error
-		allowedUserIDs, attrErr = r.filterUsersByAttributes(ctx, filters.Attributes)
+		allowedUserIDs, attrErr := r.filterUsersByAttributes(userCtx, filters.Attributes)
 		if attrErr != nil {
-			return nil, nil, attrErr
+			return nil, false, attrErr
 		}
 		if len(allowedUserIDs) == 0 {
-			// No users match the attribute filters
-			return []service.User{}, paginationResultFromTotal(0, params), nil
+			// 属性过滤已确定无任何用户命中，调用方直接返回空结果。
+			return nil, false, nil
 		}
 		q = q.Where(dbuser.IDIn(allowedUserIDs...))
 	}
 
-	total, err := q.Clone().Count(userCtx)
-	if err != nil {
-		return nil, nil, err
-	}
+	return q, true, nil
+}
 
-	usersQuery := q.
-		Offset(params.Offset()).
-		Limit(params.Limit())
-	for _, order := range userListOrder(params) {
-		usersQuery = usersQuery.Order(order)
-	}
-
-	users, err := usersQuery.All(userCtx)
-	if err != nil {
-		return nil, nil, err
-	}
-
+// decorateUsers 把 ent 实体转成 service.User 并批量补齐订阅与分组权限，
+// 供 SQL 分页路径和「应用层排序后取详情」路径共用，避免两处 N+1 实现分叉。
+func (r *userRepository) decorateUsers(ctx context.Context, users []*dbent.User) ([]service.User, error) {
 	outUsers := make([]service.User, 0, len(users))
 	if len(users) == 0 {
-		return outUsers, paginationResultFromTotal(int64(total), params), nil
+		return outUsers, nil
 	}
 
 	userIDs := make([]int64, 0, len(users))
@@ -624,30 +695,26 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		userMap[u.ID] = &outUsers[len(outUsers)-1]
 	}
 
-	shouldLoadSubscriptions := filters.IncludeSubscriptions == nil || *filters.IncludeSubscriptions
-	if shouldLoadSubscriptions {
-		// Batch load active subscriptions with groups to avoid N+1.
-		subs, err := r.client.UserSubscription.Query().
-			Where(
-				usersubscription.UserIDIn(userIDs...),
-				usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			).
-			WithGroup().
-			All(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
+	subs, err := r.client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDIn(userIDs...),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+		).
+		WithGroup().
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-		for i := range subs {
-			if u, ok := userMap[subs[i].UserID]; ok {
-				u.Subscriptions = append(u.Subscriptions, *userSubscriptionEntityToService(subs[i]))
-			}
+	for i := range subs {
+		if u, ok := userMap[subs[i].UserID]; ok {
+			u.Subscriptions = append(u.Subscriptions, *userSubscriptionEntityToService(subs[i]))
 		}
 	}
 
 	allowedGroupsByUser, err := r.loadAllowedGroups(ctx, userIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for id, u := range userMap {
 		if groups, ok := allowedGroupsByUser[id]; ok {
@@ -655,7 +722,7 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		}
 	}
 
-	return outUsers, paginationResultFromTotal(int64(total), params), nil
+	return outUsers, nil
 }
 
 func userListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
@@ -683,6 +750,9 @@ func userListOrder(params pagination.PaginationParams) []func(*entsql.Selector) 
 		field = dbuser.FieldBalance
 		defaultField = false
 	case "concurrency":
+		// 并发上限配额（users.concurrency 列），不是实时在途数。
+		// 实时并发排序走 sort_by=current_concurrency，在 service 层应用层排序，
+		// 因为那个值在 Redis 里，SQL 排不了——两者刻意分成两个排序键。
 		field = dbuser.FieldConcurrency
 		defaultField = false
 	case "status":

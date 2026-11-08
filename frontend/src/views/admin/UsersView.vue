@@ -578,7 +578,75 @@
               :current="row.current_concurrency ?? 0"
               :max="row.concurrency"
               :user-id="row.id"
+              :slot-concurrency="row.slot_concurrency"
+              :inflight-available="row.inflight_available"
             />
+          </template>
+
+          <!-- 并发列自定义表头：列名 + 排序菜单，区分「当前并发（实时在途请求数）」
+               与「并发上限（配额）」。内置表头只能绑定一个排序键，而这里必须让用户
+               显式选择按哪个口径排——原先点一次是按上限排，上限大多相同，看起来
+               就像按 ID 排，正是用户报的第三个问题。 -->
+          <template #header-concurrency="{ column }">
+            <div class="flex items-center gap-1.5">
+              <span>{{ column.label }}</span>
+              <div class="concurrency-sort-trigger relative">
+                <button
+                  type="button"
+                  class="flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-gray-200 dark:hover:bg-dark-700"
+                  :class="concurrencySortKey
+                    ? 'text-primary-700 dark:text-primary-400'
+                    : 'text-gray-500 dark:text-dark-400'"
+                  :title="t('admin.users.sortBy')"
+                  :data-test="`concurrency-sort-trigger`"
+                  @click.stop="toggleConcurrencySortMenu"
+                >
+                  <span
+                    v-if="concurrencySortKey"
+                    class="text-[10px] normal-case font-medium tracking-normal"
+                  >{{ concurrencySortKey === CURRENT_CONCURRENCY_SORT_KEY
+                    ? t('admin.users.concurrencySortCurrent')
+                    : t('admin.users.concurrencySortLimit') }}</span>
+                  <svg
+                    v-if="concurrencySortKey"
+                    class="h-3.5 w-3.5"
+                    :class="{ 'rotate-180': sortState.sort_order === 'desc' }"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
+                  >
+                    <path
+                      fill-rule="evenodd"
+                      d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                      clip-rule="evenodd"
+                    />
+                  </svg>
+                  <svg v-else class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 3l-4 5h8l-4-5zM10 17l4-5H6l4 5z" />
+                  </svg>
+                </button>
+                <div
+                  v-if="openConcurrencySortMenu"
+                  class="absolute right-0 top-full z-50 mt-1 min-w-[160px] rounded-lg border border-gray-200 bg-white py-1 shadow-pop dark:border-dark-600 dark:bg-dark-800"
+                >
+                  <button
+                    v-for="option in CONCURRENCY_SORT_OPTIONS"
+                    :key="option.key"
+                    type="button"
+                    class="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-xs normal-case tracking-normal hover:bg-gray-100 dark:hover:bg-dark-700"
+                    :class="concurrencySortKey === option.key
+                      ? 'font-medium text-primary-700 dark:text-primary-400'
+                      : 'text-gray-700 dark:text-gray-300'"
+                    :data-test="`concurrency-sort-${option.key}`"
+                    @click.stop="toggleConcurrencySort(option.key)"
+                  >
+                    <span>{{ t(option.label) }}</span>
+                  </button>
+                  <div class="mt-1 border-t border-gray-100 px-3 py-1 text-[10px] normal-case tracking-normal text-gray-500 dark:border-dark-700 dark:text-dark-400">
+                    {{ t('admin.users.concurrencySortHint') }}
+                  </div>
+                </div>
+              </div>
+            </div>
           </template>
 
           <template #cell-status="{ value }">
@@ -898,7 +966,9 @@ const allColumns = computed<Column[]>(() => [
   { key: 'usage_openai', label: t('admin.users.columns.usageOpenAI'), sortable: false },
   { key: 'usage_gemini', label: t('admin.users.columns.usageGemini'), sortable: false },
   { key: 'usage_antigravity', label: t('admin.users.columns.usageAntigravity'), sortable: false },
-  { key: 'concurrency', label: t('admin.users.columns.concurrency'), sortable: true },
+  // 并发列走自定义表头（#header-concurrency）：在「当前并发」与「并发上限」之间选，
+  // 所以关掉 DataTable 内置排序，避免同一列出现两个互相打架的排序入口。
+  { key: 'concurrency', label: t('admin.users.columns.concurrency'), sortable: false },
   { key: 'status', label: t('admin.users.columns.status'), sortable: true },
   { key: 'last_active_at', label: t('admin.users.columns.lastActive'), sortable: true },
   { key: 'last_used_at', label: t('admin.users.columns.lastUsed'), sortable: true },
@@ -1056,7 +1126,7 @@ const searchQuery = ref('')
 const USER_SORT_STORAGE_KEY = 'admin-users-table-sort'
 const loadInitialSortState = (): { sort_by: string; sort_order: 'asc' | 'desc' } => {
   const fallback = { sort_by: 'created_at', sort_order: 'desc' as 'asc' | 'desc' }
-  const sortable = new Set(['email', 'id', 'username', 'role', 'balance', 'concurrency', 'status', 'last_used_at', 'last_active_at', 'created_at'])
+  const sortable = new Set(['email', 'id', 'username', 'role', 'balance', 'concurrency', 'current_concurrency', 'status', 'last_used_at', 'last_active_at', 'created_at'])
   try {
     const raw = localStorage.getItem(USER_SORT_STORAGE_KEY)
     if (!raw) return fallback
@@ -1540,6 +1610,10 @@ const handleClickOutside = (event: MouseEvent) => {
   if (openUsageSortMenu.value !== null && !target.closest('.usage-sort-trigger')) {
     openUsageSortMenu.value = null
   }
+  // Close concurrency sort dropdown when clicking outside its trigger
+  if (openConcurrencySortMenu.value && !target.closest('.concurrency-sort-trigger')) {
+    openConcurrencySortMenu.value = false
+  }
   // Close expanded group dropdown when clicking outside
   if (expandedGroupUserId.value !== null) {
     expandedGroupUserId.value = null
@@ -1682,6 +1756,49 @@ const handlePageChange = (page: number) => {
 
 const handlePageSizeChange = (pageSize: number) => {
   pagination.page_size = pageSize
+  pagination.page = 1
+  loadUsers()
+}
+
+// 并发列的排序键：与后端的两个排序键一一对应。
+//   - current_concurrency：实时在途请求数（后端在应用层全局排序，跨页正确）
+//   - concurrency：并发上限配额（SQL 排 users.concurrency）
+// 之前列头只有 concurrency 一个键，用户点「按并发排序」看到的是上限排序，
+// 而上限大多相同 → 看起来像按 ID 排。现在让用户显式选口径。
+const CURRENT_CONCURRENCY_SORT_KEY = 'current_concurrency'
+const CONCURRENCY_LIMIT_SORT_KEY = 'concurrency'
+const CONCURRENCY_SORT_OPTIONS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: CURRENT_CONCURRENCY_SORT_KEY, label: 'admin.users.concurrencySortCurrent' },
+  { key: CONCURRENCY_LIMIT_SORT_KEY, label: 'admin.users.concurrencySortLimit' }
+]
+const openConcurrencySortMenu = ref(false)
+
+// 当前并发排序是否生效（决定表头徽标与图标）。
+const concurrencySortKey = computed(() => {
+  const key = sortState.sort_by
+  return key === CURRENT_CONCURRENCY_SORT_KEY || key === CONCURRENCY_LIMIT_SORT_KEY ? key : ''
+})
+
+const toggleConcurrencySortMenu = () => {
+  openConcurrencySortMenu.value = !openConcurrencySortMenu.value
+}
+
+// 三态循环：desc → asc → 取消（回到默认排序）。与用量列一致：点击同一项切换方向，
+// 再点一次关闭排序，避免用户被困在某个排序里。
+const toggleConcurrencySort = (key: string) => {
+  openConcurrencySortMenu.value = false
+  if (sortState.sort_by === key) {
+    if (sortState.sort_order === 'desc') {
+      sortState.sort_order = 'asc'
+    } else {
+      // 关闭排序：回到后端默认（创建时间倒序）。
+      sortState.sort_by = 'created_at'
+      sortState.sort_order = 'desc'
+    }
+  } else {
+    sortState.sort_by = key
+    sortState.sort_order = 'desc'
+  }
   pagination.page = 1
   loadUsers()
 }
