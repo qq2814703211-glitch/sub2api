@@ -50,14 +50,16 @@ func (r *channelMonitorV3Repository) WithGroupDailyReader(reader service.UsageGr
 	return r
 }
 
-const channelMonitorV3ConfigColumns = `version, enabled, groups, probe, cache_average_window_days, updated_at, updated_by`
+const channelMonitorV3ConfigColumns = `version, enabled, groups, probe, cache_average_window_days, cache_average_window_value, cache_average_window_unit, updated_at, updated_by`
 
 func (r *channelMonitorV3Repository) GetConfig(ctx context.Context) (*service.ChannelMonitorV3Config, error) {
 	var cfg service.ChannelMonitorV3Config
 	var groups, probe []byte
+	var windowUnit string
 	err := r.db.QueryRowContext(ctx,
 		`SELECT `+channelMonitorV3ConfigColumns+` FROM channel_monitor_v3_config WHERE id = 1`,
-	).Scan(&cfg.Version, &cfg.Enabled, &groups, &probe, &cfg.CacheAverageWindowDays, &cfg.UpdatedAt, &cfg.UpdatedBy)
+	).Scan(&cfg.Version, &cfg.Enabled, &groups, &probe, &cfg.CacheAverageWindowDays,
+		&cfg.CacheAverageWindowValue, &windowUnit, &cfg.UpdatedAt, &cfg.UpdatedBy)
 	if err == sql.ErrNoRows {
 		// 表存在但行缺失（极少见：单行表由迁移写入）。返回默认值而不是报错，
 		// 管理页才能渲染出一份空配置让运维保存。
@@ -66,6 +68,7 @@ func (r *channelMonitorV3Repository) GetConfig(ctx context.Context) (*service.Ch
 	if err != nil {
 		return nil, fmt.Errorf("get channel monitor v3 config: %w", err)
 	}
+	cfg.CacheAverageWindowUnit = windowUnit
 	if err := decodeChannelMonitorV3ConfigPayload(&cfg, groups, probe); err != nil {
 		return nil, err
 	}
@@ -90,21 +93,27 @@ func (r *channelMonitorV3Repository) UpdateConfig(
 	}
 	var updated service.ChannelMonitorV3Config
 	var rawGroups, rawProbe []byte
+	var windowUnit string
 	err = r.db.QueryRowContext(ctx, `
 		UPDATE channel_monitor_v3_config
 		SET version = version + 1, enabled = $1, groups = $2, probe = $3,
-		    cache_average_window_days = $4, updated_by = $5, updated_at = NOW()
-		WHERE id = 1 AND version = $6
+		    cache_average_window_days = $4, cache_average_window_value = $5,
+		    cache_average_window_unit = $6, updated_by = $7, updated_at = NOW()
+		WHERE id = 1 AND version = $8
 		RETURNING `+channelMonitorV3ConfigColumns,
-		cfg.Enabled, groups, probe, cfg.CacheAverageWindowDays, cfg.UpdatedBy, expectedVersion,
+		cfg.Enabled, groups, probe, cfg.CacheAverageWindowDays,
+		cfg.CacheAverageWindowValue, cfg.CacheAverageWindowUnit,
+		cfg.UpdatedBy, expectedVersion,
 	).Scan(&updated.Version, &updated.Enabled, &rawGroups, &rawProbe,
-		&updated.CacheAverageWindowDays, &updated.UpdatedAt, &updated.UpdatedBy)
+		&updated.CacheAverageWindowDays, &updated.CacheAverageWindowValue, &windowUnit,
+		&updated.UpdatedAt, &updated.UpdatedBy)
 	if err == sql.ErrNoRows {
 		return nil, service.ErrChannelMonitorV3ConfigConflict
 	}
 	if err != nil {
 		return nil, fmt.Errorf("update channel monitor v3 config: %w", err)
 	}
+	updated.CacheAverageWindowUnit = windowUnit
 	if err := decodeChannelMonitorV3ConfigPayload(&updated, rawGroups, rawProbe); err != nil {
 		return nil, err
 	}
@@ -128,16 +137,29 @@ func decodeChannelMonitorV3ConfigPayload(cfg *service.ChannelMonitorV3Config, gr
 		cfg.Probe.ExtraModels = []string{}
 	}
 	cfg.APIKeySet = strings.TrimSpace(cfg.Probe.APIKeyEncrypted) != ""
+	for i := range cfg.Groups {
+		group := &cfg.Groups[i]
+		if group.Models == nil {
+			group.Models = []string{}
+		}
+		if group.Probe.ExtraModels == nil {
+			group.Probe.ExtraModels = []string{}
+		}
+		group.APIKeySet = strings.TrimSpace(group.Probe.APIKeyEncrypted) != ""
+		group.ProbeInherited = !group.HasOwnProbe()
+	}
 	return nil
 }
 
 func defaultChannelMonitorV3Config() *service.ChannelMonitorV3Config {
 	return &service.ChannelMonitorV3Config{
-		Version:                1,
-		Enabled:                false,
-		Groups:                 []service.ChannelMonitorV3Group{},
-		Probe:                  service.ChannelMonitorV3Probe{ExtraModels: []string{}},
-		CacheAverageWindowDays: service.ChannelMonitorV3DefaultCacheAverageWindowDays,
+		Version:                 1,
+		Enabled:                 false,
+		Groups:                  []service.ChannelMonitorV3Group{},
+		Probe:                   service.ChannelMonitorV3Probe{ExtraModels: []string{}},
+		CacheAverageWindowDays:  service.ChannelMonitorV3DefaultCacheAverageWindowDays,
+		CacheAverageWindowValue: service.ChannelMonitorV3DefaultCacheAverageWindowDays,
+		CacheAverageWindowUnit:  service.ChannelMonitorV3WindowUnitDay,
 	}
 }
 
@@ -246,14 +268,26 @@ func (r *channelMonitorV3Repository) LoadMonitorableGroups(
 	return out, rows.Err()
 }
 
+// channelMonitorV3MonitorableGroupsQuery 是设置页候选分组的唯一来源。
+//
+// 两个过滤条件都必要：deleted_at IS NULL 挡住软删除（生产上存在 status 仍是
+// 'active' 但 deleted_at 有值的行），status = 'active' 挡住临时停用的分组。
+const channelMonitorV3MonitorableGroupsQuery = `
+	SELECT id, COALESCE(name, ''), lower(COALESCE(NULLIF(TRIM(platform), ''), 'unknown')), COALESCE(status, '')
+	FROM groups
+	WHERE deleted_at IS NULL AND status = 'active'
+	ORDER BY platform, name, id
+`
+
+// channelMonitorV3CacheRateWindowExpr 是直扫 usage_logs 时的时间窗表达式。
+//
+// 用 minute 而不是 day：窗口可以是「30 分钟」，按天折叠会把 30 分钟悄悄变成
+// 30 天。它同时是一个纯滚动窗，不依赖 session 时区（与日汇总表的本地自然日口径
+// 互不影响）。
+const channelMonitorV3CacheRateWindowExpr = `ul.created_at >= NOW() - ($2::int * INTERVAL '1 minute')`
+
 func (r *channelMonitorV3Repository) ListMonitorableGroups(ctx context.Context) ([]service.ChannelMonitorV3MonitorableGroup, error) {
-	const q = `
-		SELECT id, COALESCE(name, ''), lower(COALESCE(NULLIF(TRIM(platform), ''), 'unknown')), COALESCE(status, '')
-		FROM groups
-		WHERE deleted_at IS NULL AND status = 'active'
-		ORDER BY platform, name, id
-	`
-	rows, err := r.db.QueryContext(ctx, q)
+	rows, err := r.db.QueryContext(ctx, channelMonitorV3MonitorableGroupsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("list channel monitor v3 groups: %w", err)
 	}
@@ -269,36 +303,44 @@ func (r *channelMonitorV3Repository) ListMonitorableGroups(ctx context.Context) 
 	return out, rows.Err()
 }
 
-// GroupCacheRates 取分组最近 windowDays 天真实流量的缓存率均值。
+// GroupCacheRates 取分组最近 windowMinutes 分钟真实流量的缓存率均值。
 //
 // 这是 ADR 0009 的实现：探针桶的缓存率来自真实流量，而不是探针自己。没有任何
 // 真实 token 的分组不会出现在结果里，调用方据此把该桶的缓存率标为未知。
 // 探针请求本身会被 usageLogProbeExcludeUL 排除，不会污染均值。
 //
-// 性能：直接扫 usage_logs 时，这条查询在生产（1763 万行、全部带 group_id，
-// 索引无法裁剪）实测 19,714ms —— 它扫全库只为算出每分组一个比率。汇总表可用
-// 时改走 usage_group_daily（同日区间 0.117ms，快约 16.8 万倍），今天那段仍由
-// usage_logs 现算，所以不会返回陈旧的日桶。汇总表不可用（未回填/时区漂移/
-// 被关掉）时完全回落到下面的原查询，行为与引入汇总表之前逐字相同。
+// 两条路径，按窗口粒度选：
+//
+//  1. 窗口是整天数 → 先试 usage_group_daily 汇总表。这张表的最小粒度是「天」
+//     （主键 group_id, day），无法表达「最近 30 分钟」，但正因为如此它才能把
+//     生产上的 19,714ms 降到 0.3ms。天窗口继续走这条路，性能不回退。
+//  2. 窗口不是整天数（分钟级）→ 绕过汇总表，直扫 usage_logs。窗口小，扫描范围
+//     本来就小；把 30 分钟取整到 1 天会让用户选「30 分钟」却拿到「今天整天」的
+//     均值，那是错误答案而不是慢答案。
+//
+// 直扫路径的 WHERE 用 created_at >= NOW() - ($2 * INTERVAL '1 minute')，不按
+// 「日」裁剪，也不依赖 session 时区 —— 它是一个纯滚动时间窗，与汇总表的「本地
+// 自然日」口径互不影响。
 func (r *channelMonitorV3Repository) GroupCacheRates(
 	ctx context.Context,
 	groupIDs []int64,
-	windowDays int,
+	windowMinutes int,
 ) (map[int64]float64, error) {
 	out := map[int64]float64{}
 	if len(groupIDs) == 0 {
 		return out, nil
 	}
-	if windowDays <= 0 {
-		windowDays = service.ChannelMonitorV3DefaultCacheAverageWindowDays
+	if windowMinutes <= 0 {
+		windowMinutes = service.ChannelMonitorV3DefaultCacheAverageWindowDays * 24 * 60
 	}
-	if r.groupDaily != nil {
+	// 只有整天数的窗口能用日汇总表；分钟级窗口跳过它。
+	if wholeDays := windowMinutes / (24 * 60); windowMinutes%(24*60) == 0 && wholeDays > 0 && r.groupDaily != nil {
 		usable, usableErr := r.groupDaily.RollupUsable(ctx)
 		if usableErr != nil {
 			// 汇总表探测失败不能阻断监控页面：记下原因后走原路径。
 			r.groupDailyErr = usableErr
 		} else if usable {
-			rates, readErr := r.groupDaily.CacheRates(ctx, groupIDs, windowDays, time.Now())
+			rates, readErr := r.groupDaily.CacheRates(ctx, groupIDs, wholeDays, time.Now())
 			if readErr == nil {
 				return rates, nil
 			}
@@ -311,13 +353,13 @@ func (r *channelMonitorV3Repository) GroupCacheRates(
 		         / NULLIF(SUM(ul.input_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0)::float8
 		FROM usage_logs ul
 		WHERE ul.group_id = ANY($1)
-		  AND ul.created_at >= NOW() - ($2::int * INTERVAL '1 day')
+		  AND ` + channelMonitorV3CacheRateWindowExpr + `
 		  AND ul.created_at < NOW()
 		  AND ` + usageLogProbeExcludeUL + `
 		GROUP BY ul.group_id
 		HAVING SUM(ul.input_tokens + ul.cache_creation_tokens + ul.cache_read_tokens) > 0
 	`
-	rows, err := r.db.QueryContext(ctx, q, pq.Array(groupIDs), windowDays)
+	rows, err := r.db.QueryContext(ctx, q, pq.Array(groupIDs), windowMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("query channel monitor v3 group cache rates: %w", err)
 	}
