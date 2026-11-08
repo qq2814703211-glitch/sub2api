@@ -73,14 +73,18 @@ func TestOpenAINativeAnthropicReasoningPricingUsesForwardedEffort(t *testing.T) 
 func TestOpenAIMessagesGLMReasoningPricingUsesForwardedEffort(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{false, true} {
+		// The gateway no longer rewrites the requested level: medium stays
+		// medium and xhigh stays xhigh, so billing follows the level the caller
+		// actually chose. The group policy layer (max_reasoning_effort) is a
+		// separate, explicitly configured clamp and still applies when set.
 		for _, tc := range []struct {
 			effort     string
 			maxPolicy  string
 			wantEffort string
 			wantCost   float64
 		}{
-			{"medium", "", "high", 2},
-			{"xhigh", "", "max", 3},
+			{"medium", "", "medium", 1.5},
+			{"xhigh", "", "xhigh", 2},
 			{"xhigh", "medium", "medium", 1.5},
 		} {
 			t.Run(fmt.Sprintf("stream=%t/effort=%s/policy=%s", stream, tc.effort, tc.maxPolicy), func(t *testing.T) {

@@ -80,15 +80,15 @@ func TestNormalizeOpenAIReasoningEffortForMaxCapableModels(t *testing.T) {
 	}
 }
 
-func TestNormalizeOpenAICodexCompactReasoningEffortDowngradesMax(t *testing.T) {
+func TestNormalizeOpenAICodexCompactReasoningEffortKeepsMax(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":"compact me","reasoning":{"effort":"max","summary":"auto"}}`)
 
 	normalized, changed, err := normalizeOpenAICodexCompactReasoningEffort(body, "gpt-5.6-sol")
 
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.False(t, changed, "the gateway must not lower a requested max to xhigh")
 	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(normalized, "model").String())
-	require.Equal(t, "xhigh", gjson.GetBytes(normalized, "reasoning.effort").String())
+	require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 	require.Equal(t, "auto", gjson.GetBytes(normalized, "reasoning.summary").String())
 }
 
@@ -96,37 +96,32 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-5.6-sol","input":"compact me","reasoning":{"effort":"max"}}`)
 
+	// No account/path combination lowers the requested level any more: max
+	// reaches every endpoint exactly as the caller sent it.
 	tests := []struct {
 		name    string
 		path    string
 		account *Account
-		changed bool
-		want    string
 	}{
 		{
-			name:    "OpenAI OAuth compact 降级",
+			name:    "OpenAI OAuth compact 保留 max",
 			path:    "/openai/v1/responses/compact",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
-			changed: true,
-			want:    "xhigh",
 		},
 		{
 			name:    "OpenAI OAuth 普通请求保留",
 			path:    "/openai/v1/responses",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
-			want:    "max",
 		},
 		{
 			name:    "OpenAI API Key compact 保留",
 			path:    "/openai/v1/responses/compact",
 			account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
-			want:    "max",
 		},
 		{
 			name:    "Grok OAuth compact 保留",
 			path:    "/openai/v1/responses/compact",
 			account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth},
-			want:    "max",
 		},
 	}
 
@@ -139,8 +134,8 @@ func TestNormalizeOpenAICodexCompactReasoningEffortForAccountScopesCompatibility
 			normalized, changed, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, tt.account, body)
 
 			require.NoError(t, err)
-			require.Equal(t, tt.changed, changed)
-			require.Equal(t, tt.want, gjson.GetBytes(normalized, "reasoning.effort").String())
+			require.False(t, changed)
+			require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 		})
 	}
 }
@@ -227,7 +222,7 @@ func TestOpenAIGatewayServiceForwardPreservesMappedGPT56MaxEffort(t *testing.T) 
 	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
-func TestOpenAIGatewayServiceForwardOAuthCompactDowngradesMaxEffort(t *testing.T) {
+func TestOpenAIGatewayServiceForwardOAuthCompactKeepsMaxEffort(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := &httpUpstreamRecorder{
 		resp: &http.Response{
@@ -264,9 +259,10 @@ func TestOpenAIGatewayServiceForwardOAuthCompactDowngradesMaxEffort(t *testing.T
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, chatgptCodexURL+"/compact", upstream.lastReq.URL.String())
-	require.Equal(t, "xhigh", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	// max reaches the compact endpoint unchanged; no silent xhigh downgrade.
+	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	require.NotNil(t, result.ReasoningEffort)
-	require.Equal(t, "xhigh", *result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
 }
 
 func TestOpenAIGatewayServiceForwardOAuthRemoteCompactV2PreservesResponsesWire(t *testing.T) {

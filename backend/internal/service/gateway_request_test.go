@@ -1590,110 +1590,84 @@ func TestApplyThinkingEnabledFallback(t *testing.T) {
 	}
 }
 
+// TestNormalizeGLMOpenAIReasoningEffort pins that the GLM path no longer
+// rewrites the client's reasoning effort. The production GLM upstreams accept
+// low/medium/high/xhigh/max and answer a precise 400 naming the allowed levels
+// for anything else, so the gateway forwards the value untouched and never
+// reports a body change.
 func TestNormalizeGLMOpenAIReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		input         string
-		wantApplied   bool
-		wantPath      string
-		wantValue     string
-		wantUnchanged bool
+		name  string
+		model string
+		input string
 	}{
 		{
-			name:        "flat xhigh maps to max",
-			model:       "glm-5.2",
-			input:       `{"model":"glm-5.2","reasoning_effort":"xhigh","messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning_effort",
-			wantValue:   "max",
+			name:  "flat xhigh stays xhigh",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"xhigh","messages":[]}`,
 		},
 		{
-			name:        "flat x-high maps to max",
-			model:       "GLM-5.2",
-			input:       `{"model":"glm-5.2","reasoning_effort":"x-high","messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning_effort",
-			wantValue:   "max",
+			name:  "flat x-high is not rewritten",
+			model: "GLM-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"x-high","messages":[]}`,
 		},
 		{
-			name:        "flat ultracode maps to max",
-			model:       "glm-5.2",
-			input:       `{"model":"glm-5.2","reasoning_effort":"ultracode","messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning_effort",
-			wantValue:   "max",
+			name:  "flat ultracode is not rewritten",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"ultracode","messages":[]}`,
 		},
 		{
-			name:        "flat medium maps to high",
-			model:       "glm-5.2",
-			input:       `{"model":"glm-5.2","reasoning_effort":"medium","messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning_effort",
-			wantValue:   "high",
+			name:  "flat medium stays medium",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"medium","messages":[]}`,
 		},
 		{
-			name:        "glm 5.2 low maps to high",
-			model:       "glm-5.2",
-			input:       `{"model":"glm-5.2","reasoning_effort":"low","messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning_effort",
-			wantValue:   "high",
+			name:  "glm 5.2 low stays low",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"low","messages":[]}`,
 		},
 		{
-			name:        "nested high case-normalizes",
-			model:       "glm-5.2",
-			input:       `{"model":"glm-5.2","reasoning":{"effort":"HIGH"},"messages":[]}`,
-			wantApplied: true,
-			wantPath:    "reasoning.effort",
-			wantValue:   "high",
+			name:  "nested high is not case-normalized",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning":{"effort":"HIGH"},"messages":[]}`,
 		},
 		{
-			name:          "glm 5.3 native low unchanged",
-			model:         "glm-5.3",
-			input:         `{"model":"glm-5.3","reasoning_effort":"low","messages":[]}`,
-			wantApplied:   false,
-			wantUnchanged: true,
+			name:  "glm 5.3 native low unchanged",
+			model: "glm-5.3",
+			input: `{"model":"glm-5.3","reasoning_effort":"low","messages":[]}`,
 		},
 		{
-			name:          "native max unchanged",
-			model:         "glm-5.2",
-			input:         `{"model":"glm-5.2","reasoning_effort":"max","messages":[]}`,
-			wantApplied:   false,
-			wantUnchanged: true,
+			name:  "native max unchanged",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"max","messages":[]}`,
 		},
 		{
-			name:          "non glm unchanged",
-			model:         "deepseek-v4-pro",
-			input:         `{"model":"deepseek-v4-pro","reasoning_effort":"xhigh","messages":[]}`,
-			wantApplied:   false,
-			wantUnchanged: true,
+			name:  "none is forwarded for upstream to reject",
+			model: "glm-5.3-flash",
+			input: `{"model":"glm-5.3-flash","reasoning_effort":"none","messages":[]}`,
 		},
 		{
-			name:          "missing effort unchanged",
-			model:         "glm-5.2",
-			input:         `{"model":"glm-5.2","messages":[]}`,
-			wantApplied:   false,
-			wantUnchanged: true,
+			name:  "non glm unchanged",
+			model: "deepseek-v4-pro",
+			input: `{"model":"deepseek-v4-pro","reasoning_effort":"xhigh","messages":[]}`,
 		},
 		{
-			name:          "unknown effort unchanged",
-			model:         "glm-5.2",
-			input:         `{"model":"glm-5.2","reasoning_effort":"banana","messages":[]}`,
-			wantApplied:   false,
-			wantUnchanged: true,
+			name:  "missing effort unchanged",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","messages":[]}`,
+		},
+		{
+			name:  "unknown effort unchanged",
+			model: "glm-5.2",
+			input: `{"model":"glm-5.2","reasoning_effort":"banana","messages":[]}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, applied := NormalizeGLMOpenAIReasoningEffort([]byte(tt.input), tt.model)
-			require.Equal(t, tt.wantApplied, applied)
-			if tt.wantUnchanged {
-				require.Equal(t, tt.input, string(got))
-				return
-			}
-			require.Equal(t, tt.wantValue, gjson.GetBytes(got, tt.wantPath).String())
+			require.False(t, applied, "gateway must not rewrite the requested effort")
+			require.Equal(t, tt.input, string(got))
 		})
 	}
 }
