@@ -117,6 +117,7 @@ func TestCNYOfficial_OverrideFileCarriesMarker(t *testing.T) {
 		map[string]json.RawMessage{},
 		changes,
 		map[string]struct{}{"deepseek-flash": {}},
+		map[string]struct{}{"deepseek-flash": {}},
 	)
 
 	var cnyEntry map[string]any
@@ -159,7 +160,7 @@ func TestCNYOfficial_MarkerAppliedEvenWhenPriceUnchanged(t *testing.T) {
 	existing := map[string]json.RawMessage{
 		"glm-4.6": json.RawMessage(`{"input_cost_per_token":6e-07,"output_cost_per_token":2.2e-06}`),
 	}
-	out := applyModelPricingSyncChanges(existing, nil, map[string]struct{}{"glm-4.6": {}})
+	out := applyModelPricingSyncChanges(existing, nil, map[string]struct{}{"glm-4.6": {}}, map[string]struct{}{"glm-4.6": {}})
 
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(out["glm-4.6"], &entry))
@@ -168,6 +169,73 @@ func TestCNYOfficial_MarkerAppliedEvenWhenPriceUnchanged(t *testing.T) {
 	// 原值不得被改动
 	require.InDelta(t, 6e-07, entry["input_cost_per_token"], 1e-15)
 	require.InDelta(t, 2.2e-06, entry["output_cost_per_token"], 1e-15)
+}
+
+// TestCNYOfficial_NonPriceFieldsDoNotImplyManualPricing 钉死一个曾经的真实缺陷：
+// 覆盖层条目里混着 long_context_*_multiplier / long_context_*_threshold 等非价格
+// 数值字段，它们永远不出现在同步史里。若归属判定把它们一并当价格看，每个带长
+// 上下文的模型都会被误判成「运营手配价」而整条跳过同步 —— 生产症状是 glm 全系、
+// qwen3-max、minimax-m3 等条目被打上人民币标记、值却停留在上一版 models.dev 美元
+// 换算价（0.11952 而非官方 0.8），模型广场价格与官方牌价对不上。
+func TestCNYOfficial_NonPriceFieldsDoNotImplyManualPricing(t *testing.T) {
+	// 覆盖层现状：价格字段由上一轮 models.dev 同步写入，另有长上下文倍率/阈值。
+	existing := map[string]json.RawMessage{
+		"glm-4.5-air": json.RawMessage(`{
+			"input_cost_per_token": 1.1952e-07,
+			"output_cost_per_token": 8.9637e-07,
+			"cache_read_input_token_cost": 2.39e-08,
+			"long_context_input_cost_multiplier": 1.416667,
+			"long_context_input_token_threshold": 32000,
+			"long_context_output_cost_multiplier": 1.416667
+		}`),
+	}
+	// 同步史只记价格字段，与覆盖层当前值一致。
+	synced := map[string]map[string]float64{
+		"glm-4.5-air": {
+			"input_cost_per_token":        1.1952e-07,
+			"output_cost_per_token":       8.9637e-07,
+			"cache_read_input_token_cost": 2.39e-08,
+		},
+	}
+	fields := decodeModelPricingSyncEntry(existing["glm-4.5-air"])
+	require.False(t, modelHasManualPricing(fields, synced["glm-4.5-air"]),
+		"长上下文倍率/阈值不是价格字段，不得被当成运营手配价")
+
+	// 真正的运营手配价仍必须被识别出来。
+	synced["glm-4.5-air"]["input_cost_per_token"] = 9e-07
+	require.True(t, modelHasManualPricing(fields, synced["glm-4.5-air"]),
+		"价格与同步史不一致时必须判为运营手配价并跳过")
+}
+
+// TestCNYOfficial_UnwrittenModelKeepsNoMarker 钉死第二个真实缺陷：
+// 条目因运营手配价被整条跳过时，值仍是上一版美元价。此时若照 dataset 整体打上
+// cny_official 标记，计费侧会误以为这是人民币金额而跳过美元兜底 —— 值与标记错配。
+// 标记只能给「价格确实由人民币档写入过」的条目。
+func TestCNYOfficial_UnwrittenModelKeepsNoMarker(t *testing.T) {
+	existing := map[string]json.RawMessage{
+		"glm-4.5-air": json.RawMessage(`{"input_cost_per_token":1.1952e-07,"output_cost_per_token":8.9637e-07}`),
+		"deepseek-flash": json.RawMessage(`{"input_cost_per_token":1e-06,"output_cost_per_token":4e-06}`),
+	}
+	// glm-4.5-air 本轮被跳过（无 cny 变更、历史也无 cny 写入）；
+	// deepseek-flash 本轮真实写入了人民币价。
+	changes := []modelPricingSyncChange{
+		{Model: "deepseek-flash", Field: "input_cost_per_token", NewValue: 1e-6, Source: ModelPricingSyncSourceCNYOfficial},
+	}
+	written := cnyWrittenModelSet(changes, map[string]struct{}{"deepseek-flash": {}})
+	out := applyModelPricingSyncChanges(
+		existing, changes,
+		map[string]struct{}{"glm-4.5-air": {}, "deepseek-flash": {}},
+		written,
+	)
+
+	var glm map[string]any
+	require.NoError(t, json.Unmarshal(out["glm-4.5-air"], &glm))
+	_, has := glm["cny_official"]
+	require.False(t, has, "值仍是美元价时不得打人民币标记")
+
+	var deepseek map[string]any
+	require.NoError(t, json.Unmarshal(out["deepseek-flash"], &deepseek))
+	require.Equal(t, true, deepseek["cny_official"])
 }
 
 // TestCNYOfficial_ModelSetComesFromDataset 确认集合来源是数据源而不是变更列表。
