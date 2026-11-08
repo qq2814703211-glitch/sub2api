@@ -253,3 +253,38 @@ func TestCNYOfficial_ModelSetComesFromDataset(t *testing.T) {
 	_, ok = set["glm-4.6"]
 	require.True(t, ok)
 }
+
+// TestCNYOfficial_ManualOverrideCarriesMarkerAndShowsRMB 钉死生产反馈的问题：
+// 运营在页面上给某个「官方源没有人民币牌价」的模型配了手工价，模型广场的
+// 官方参考价必须显示这个人民币数字，而不是继续显示上一版的美元价。
+//
+// 广场的官方参考价直接读覆盖层（GetModelPricing），所以手工价必须落成覆盖层
+// 条目并带 cny_official 标记，缺标记会被当成美元口径展示。
+func TestCNYOfficial_ManualOverrideCarriesMarkerAndShowsRMB(t *testing.T) {
+	existing := map[string]json.RawMessage{
+		// 线上现状：该模型只有 mistral 的美元价。
+		"deepseek-v4.1-flash-1017": json.RawMessage(`{"input_cost_per_token":3e-7,"output_cost_per_token":1.2e-6}`),
+	}
+	dataset := &cnyOfficialDataset{
+		Pricing:         map[string]*cnyOfficialPricing{},
+		National:        map[string]struct{}{},
+		ManualOverrides: map[string]struct{}{"deepseek-v4.1-flash-1017": {}},
+		ManualPricing: map[string]cnyOfficialManualPricing{
+			"deepseek-v4.1-flash-1017": {Model: "deepseek-v4.1-flash-1017", PerToken: map[string]float64{
+				"input_cost_per_token":  1e-6,
+				"output_cost_per_token": 4e-6,
+			}},
+		},
+	}
+	changes := computeCNYOfficialSyncChanges(existing, dataset, nil)
+	require.NotEmpty(t, changes, "手工价必须产生变更")
+
+	out := applyModelPricingSyncChanges(existing, changes, cnyOfficialModelSet(dataset), cnyWrittenModelSet(changes, nil))
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(out["deepseek-v4.1-flash-1017"], &entry))
+	require.Equal(t, true, entry["cny_official"],
+		"手工价条目必须带 cny_official，否则广场官方价仍按美元展示")
+	require.InDelta(t, 1e-6, entry["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 4e-6, entry["output_cost_per_token"], 1e-15)
+}
