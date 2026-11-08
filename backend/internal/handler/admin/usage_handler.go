@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -22,11 +21,10 @@ import (
 
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
-	connectionSettingsMu sync.Mutex
-	usageService         *service.UsageService
-	apiKeyService        *service.APIKeyService
-	adminService         service.AdminService
-	cleanupService       *service.UsageCleanupService
+	usageService   *service.UsageService
+	apiKeyService  *service.APIKeyService
+	adminService   service.AdminService
+	cleanupService *service.UsageCleanupService
 }
 
 // NewUsageHandler creates a new admin usage handler
