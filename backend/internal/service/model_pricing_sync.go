@@ -791,7 +791,7 @@ func computeCNYOfficialSyncChanges(
 		modelSet[model] = struct{}{}
 	}
 	for key := range dataset.ManualOverrides {
-		if model := cnyOfficialBareModelName(key); model != "" {
+		if model := cnyOfficialNormalizeManualKey(key); model != "" {
 			modelSet[model] = struct{}{}
 		}
 	}
@@ -846,20 +846,18 @@ func computeCNYOfficialSyncChanges(
 	return changes
 }
 
-// cnyOfficialBareModelName 把 manual_overrides 的键归一成裸模型名。
+// cnyOfficialNormalizeManualKey 归一 manual_overrides 的键（小写 + 去空格）。
 //
-// 配置允许 "<vendor>/<model>" 与 "<model>" 两种写法，但覆盖层键、计费查询、
-// 模型广场的官方参考价一律用裸模型名。带 vendor 前缀的条目写进覆盖层后没有任何
-// 路径会读到它，表现为「配了也不生效」。
-func cnyOfficialBareModelName(key string) string {
-	normalized := strings.ToLower(strings.TrimSpace(key))
-	if normalized == "" {
-		return ""
-	}
-	if index := strings.LastIndex(normalized, "/"); index >= 0 {
-		normalized = normalized[index+1:]
-	}
-	return normalized
+// 关键：**原样保留**，不剥任何前缀。覆盖层的键就是模型请求名，而真实模型名
+// 本身可能带斜杠（生产覆盖层里就有 `siliconflow/deepseek-v3.2` 这类真实条目）。
+// 早先版本用 LastIndex("/") 无条件剥前缀，把 `siliconflow/deepseek-v3.2`
+// 剥成 `deepseek-v3.2` —— 既写错了位置，又把同名的另一条真模型覆盖掉
+// （实测：`siliconflow/deepseek-v3.2` 从 0.27 被改成 manual 里的 55）。
+//
+// 计费侧查找（buildModelLookupCandidates）本来就会同时尝试全名和 lastSegment，
+// 所以裸名请求能命中裸名条目、带斜杠请求能命中带斜杠条目，两边都不需要剥。
+func cnyOfficialNormalizeManualKey(key string) string {
+	return strings.ToLower(strings.TrimSpace(key))
 }
 
 // cnyOfficialManualLongContext 把手工配置的长上下文三项折成覆盖层阶梯。

@@ -244,37 +244,40 @@ func TestSetCNYOfficialPricingSettings_LongContextValidation(t *testing.T) {
 	require.InDelta(t, 2, saved.LongContextOutputMultiplier, 1e-9)
 }
 
-// TestSetCNYOfficialPricingSettings_PrefixIsOptionalButUnique 前缀只是给人看的分类。
+// TestSetCNYOfficialPricingSettings_PrefixIsModelName 键就是模型请求名，原样保留。
 //
-// 匹配侧（cnyOfficialBareModelName）用 LastIndex("/") 剥掉前缀，所以前缀填错也照样
-// 命中 —— 这一点必须钉住，否则「前缀没用但强制要求填」的矛盾会被当成安全校验。
-// 反过来，剥掉前缀后撞车的两个键会互相覆盖，必须在入口拦住。
-func TestSetCNYOfficialPricingSettings_PrefixIsOptionalButUnique(t *testing.T) {
+// 真实模型名本身可能带斜杠（生产里存在 `siliconflow/deepseek-v3.2`），
+// 所以不能把斜杠前的内容当前缀剥掉 —— 会写错位置并覆盖同名的另一条真模型。
+func TestSetCNYOfficialPricingSettings_PrefixIsModelName(t *testing.T) {
+	ctx := context.Background()
+
 	// 裸模型名合法。
 	svc, _ := newCNYSettingsService()
-	_, err := svc.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+	_, err := svc.SetCNYOfficialPricingSettings(ctx, &CNYOfficialPricingSettings{
 		Enabled:         true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{"deepseek-flash": {Input: 1, Output: 4}},
 	})
 	require.NoError(t, err, "裸模型名应当直接可用")
 
-	// 前缀填「错的」厂商也接受：前缀不参与匹配。
+	// 带斜杠的键原样保留：它是模型名的一部分，不是厂商前缀。
 	svc2, _ := newCNYSettingsService()
-	_, err = svc2.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+	got, err := svc2.SetCNYOfficialPricingSettings(ctx, &CNYOfficialPricingSettings{
 		Enabled:         true,
-		ManualOverrides: map[string]CNYOfficialManualPrice{"qwen/deepseek-flash": {Input: 1, Output: 4}},
+		ManualOverrides: map[string]CNYOfficialManualPrice{"siliconflow/deepseek-v3.2": {Input: 55, Output: 55}},
 	})
-	require.NoError(t, err, "前缀不做厂商校验")
+	require.NoError(t, err)
+	require.Contains(t, got.ManualOverrides, "siliconflow/deepseek-v3.2",
+		"带斜杠的键必须原样保存，不能被剥成 deepseek-v3.2")
 
-	// 两个不同前缀指向同一个裸模型 -> 互相覆盖，必须拒绝。
+	// 两个不同的全名各自独立，不算重复。
 	svc3, _ := newCNYSettingsService()
-	_, err = svc3.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+	got3, err := svc3.SetCNYOfficialPricingSettings(ctx, &CNYOfficialPricingSettings{
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
-			"zhipuai/glm-4.6":   {Input: 11, Output: 11},
-			"alibaba-cn/glm-4.6": {Input: 22, Output: 22},
+			"siliconflow/deepseek-v3.2": {Input: 55, Output: 55},
+			"deepseek-v3.2":             {Input: 1, Output: 4},
 		},
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "指向同一个模型")
+	require.NoError(t, err)
+	require.Len(t, got3.ManualOverrides, 2, "全名与裸名是两个不同的模型键")
 }

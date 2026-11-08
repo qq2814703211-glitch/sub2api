@@ -60,28 +60,16 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 	}
 	sort.Strings(keys)
 
-	// 裸模型名 -> 首次出现的完整键，用来检测「不同前缀指向同一模型」。
-	bareKeyOwner := make(map[string]string, len(keys))
-
 	for _, rawKey := range keys {
 		key := strings.ToLower(strings.TrimSpace(rawKey))
 		if key == "" {
 			return nil, fmt.Errorf("manual_overrides 含空模型键")
 		}
-		// 前缀可选：裸模型名即可，写成 vendor/model 也对，前缀只是给人看的分类。
-		// 匹配侧（cnyOfficialBareModelName）会剥掉前缀，前缀本身不参与查找。
+		// 键原样保留，不剥前缀：覆盖层的键就是模型请求名，而真实模型名本身
+		// 可能带斜杠（生产里存在 `siliconflow/deepseek-v3.2` 这类真条目）。
+		// 剥掉前缀会把真模型写成裸名，顺带覆盖同名的另一条。
 		if _, dup := normalized.ManualOverrides[key]; dup {
 			return nil, fmt.Errorf("manual_overrides 模型键 %q 重复（大小写或空格不同）", rawKey)
-		}
-		// 前缀可选：匹配时前缀会被剥掉，裸模型名才是真正的查找键。裸名相同的
-		// 两个键会互相覆盖（写入顺序不定），配置静默失效，必须在入口拦住。
-		if bare := cnyOfficialBareModelName(key); bare != "" {
-			if prev, clash := bareKeyOwner[bare]; clash && prev != key {
-				return nil, fmt.Errorf(
-					"manual_overrides 的 %q 与 %q 指向同一个模型 %q，只能保留一个",
-					prev, key, bare)
-			}
-			bareKeyOwner[bare] = key
 		}
 		price := settings.ManualOverrides[rawKey]
 		for name, value := range map[string]float64{
