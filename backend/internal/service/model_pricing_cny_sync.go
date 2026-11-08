@@ -348,23 +348,31 @@ func (d *cnyOfficialDataset) pricing(model string) (*cnyOfficialPricing, bool) {
 	return priced, ok
 }
 
-// manualPricing 取该模型的手工价。provider 非空时优先匹配 "<provider>/<model>"，
-// 再退回裸 "<model>"，与 manualOverrideHit 的匹配顺序一致。
+// manualPricing 取该模型的手工价。
+//
+// 查找顺序：精确键 → 「<provider>/<model>」→ 裸 lastSegment。精确键优先，
+// 因为真实模型名本身可能带斜杠（`siliconflow/deepseek-v3.2`）；先试全名能
+// 命中运营给这条真模型配的价，而不是误取给裸名 `deepseek-v3.2` 配的价。
 func (d *cnyOfficialDataset) manualPricing(model, provider string) (*cnyOfficialManualPricing, bool) {
 	if d == nil || len(d.ManualPricing) == 0 {
 		return nil, false
 	}
-	model = cnyOfficialBareModelName(model)
+	model = cnyOfficialNormalizeManualKey(model)
 	if model == "" {
 		return nil, false
+	}
+	if priced, ok := d.ManualPricing[model]; ok {
+		return &priced, true
 	}
 	if provider != "" {
 		if priced, ok := d.ManualPricing[strings.ToLower(strings.TrimSpace(provider))+"/"+model]; ok {
 			return &priced, true
 		}
 	}
-	if priced, ok := d.ManualPricing[model]; ok {
-		return &priced, true
+	if index := strings.LastIndex(model, "/"); index >= 0 {
+		if priced, ok := d.ManualPricing[model[index+1:]]; ok {
+			return &priced, true
+		}
 	}
 	return nil, false
 }
@@ -642,14 +650,14 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 
 	if settings != nil {
 		for key, price := range settings.ManualOverrides {
-			normalized := strings.ToLower(strings.TrimSpace(key))
-			bare := cnyOfficialBareModelName(normalized)
-			if normalized == "" || bare == "" {
+			// 键原样使用，不剥前缀：覆盖层的键就是模型请求名，真实模型名本身
+			// 可能带斜杠（生产里就有 `siliconflow/deepseek-v3.2`）。剥前缀会把
+			// 这条真模型写成裸名，顺带覆盖掉同名的另一条。
+			name := cnyOfficialNormalizeManualKey(key)
+			if name == "" {
 				continue
 			}
-			// ManualOverrides 存裸模型名：skipForUSD、cny_official 标记都按覆盖层
-			// 键（裸名）判定，存带前缀的 key 会让这三处对不上。
-			dataset.ManualOverrides[bare] = struct{}{}
+			dataset.ManualOverrides[name] = struct{}{}
 			// 手工价是最高优先级一档：把真实价格记下来，写入阶段直接落覆盖层。
 			// 之前这里只记了一个「命中」集合，价格值被丢掉，导致页面上配的手工价
 			// 永远不生效 —— 模型继续按上一版的美元价计费。
@@ -659,10 +667,8 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 				"cache_read_input_token_cost":     price.CacheRead / 1e6,
 				"cache_creation_input_token_cost": price.CacheWrite / 1e6,
 			}
-			// 只登记裸模型名：ManualPricing 的查找也走裸名，多存一份带前缀的
-			// 只会让两处键空间不一致。
-			dataset.ManualPricing[bare] = cnyOfficialManualPricing{
-				Model:       bare,
+			dataset.ManualPricing[name] = cnyOfficialManualPricing{
+				Model:       name,
 				PerToken:    perToken,
 				LongContext: cnyOfficialManualLongContext(price),
 			}

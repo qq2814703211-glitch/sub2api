@@ -68,13 +68,14 @@ export default {
       cnyHint: 'Chinese vendors are priced in their native CNY list prices, never converted from USD.',
       sourceUrl: 'Source',
       manualTitle: 'Manual overrides',
-      manualHint: 'Prices are CNY per 1M tokens. A model listed here is skipped by sync entirely — no price is written.',
+      manualHint:
+        'CNY per 1M tokens, highest priority. Use the exact request model name — a slash is part of the name (e.g. siliconflow/deepseek-v3.2), so no vendor prefix is needed.',
       manualEmpty: 'No manual overrides yet. Add a row to pin a model price.',
       manualPriorityNote: 'Highest priority, sync never overwrites this',
       addRow: 'Add row',
       removeRow: 'Remove row',
       colModel: 'Model key (vendor/model)',
-      colModelPlaceholder: 'deepseek/deepseek-flash',
+      colModelPlaceholder: 'deepseek-v4.1-flash-1017',
       col: {
         input: 'Input',
         output: 'Output',
