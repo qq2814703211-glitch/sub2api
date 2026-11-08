@@ -113,7 +113,11 @@ func TestCNYOfficial_OverrideFileCarriesMarker(t *testing.T) {
 		// 美元档模型不得带标记
 		{Model: "gpt-6-sol", Field: "input_cost_per_token", NewValue: 2e-6, Source: ModelPricingSyncSourceModelsDev},
 	}
-	out := applyModelPricingSyncChanges(map[string]json.RawMessage{}, changes)
+	out := applyModelPricingSyncChanges(
+		map[string]json.RawMessage{},
+		changes,
+		map[string]struct{}{"deepseek-flash": {}},
+	)
 
 	var cnyEntry map[string]any
 	require.NoError(t, json.Unmarshal(out["deepseek-flash"], &cnyEntry))
@@ -144,4 +148,40 @@ func TestCNYOfficial_MarkerRoundTripsThroughParser(t *testing.T) {
 	var legacy LiteLLMRawEntry
 	require.NoError(t, json.Unmarshal([]byte(`{"input_cost_per_token": 1.5e-07}`), &legacy))
 	require.Nil(t, legacy.CNYOfficial)
+}
+
+// TestCNYOfficial_MarkerAppliedEvenWhenPriceUnchanged 钉死一个曾经的真实缺陷：
+// 标记最初按「本轮产生了变更」置位，导致已经同步过、价格未变因而没有 change 的
+// 模型永久缺标记（实测生产上 glm-4.6/glm-4.5/glm-4.5-air 就是这个症状）。
+// 标记必须按「数据源里属于人民币口径的模型」置位，与是否有变更无关。
+func TestCNYOfficial_MarkerAppliedEvenWhenPriceUnchanged(t *testing.T) {
+	// 覆盖层里 glm-4.6 已经是人民币价（0.6/2.2），本轮不会产生任何 change。
+	existing := map[string]json.RawMessage{
+		"glm-4.6": json.RawMessage(`{"input_cost_per_token":6e-07,"output_cost_per_token":2.2e-06}`),
+	}
+	out := applyModelPricingSyncChanges(existing, nil, map[string]struct{}{"glm-4.6": {}})
+
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(out["glm-4.6"], &entry))
+	require.Equal(t, true, entry["cny_official"],
+		"价格未变、无 change 的模型也必须打上 cny_official，否则人民币价会被美元兜底吞掉")
+	// 原值不得被改动
+	require.InDelta(t, 6e-07, entry["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 2.2e-06, entry["output_cost_per_token"], 1e-15)
+}
+
+// TestCNYOfficial_ModelSetComesFromDataset 确认集合来源是数据源而不是变更列表。
+func TestCNYOfficial_ModelSetComesFromDataset(t *testing.T) {
+	require.Nil(t, cnyOfficialModelSet(nil), "空 dataset 应返回 nil")
+
+	ds := &cnyOfficialDataset{Pricing: map[string]*cnyOfficialPricing{
+		"deepseek-flash": {},
+		"glm-4.6":        {},
+	}}
+	set := cnyOfficialModelSet(ds)
+	require.Len(t, set, 2)
+	_, ok := set["deepseek-flash"]
+	require.True(t, ok)
+	_, ok = set["glm-4.6"]
+	require.True(t, ok)
 }
