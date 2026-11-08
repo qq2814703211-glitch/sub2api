@@ -29,12 +29,13 @@
  * Every builder and parser here is pure so the dispatch can be unit-tested
  * without a network.
  */
-import { buildGatewayUrl } from '@/api/client'
 import { ImageGenError } from './api'
 import {
   type ResolvedRewriteRequest,
+  type RewriteContext,
   type RewriteEffort,
   type RewriteProtocol,
+  REWRITE_API_BASE_URL,
   anthropicMaxTokens,
   anthropicThinkingBudget,
   resolveRewriteRequest,
@@ -60,24 +61,16 @@ export function buildRewriteInstruction(original: string, instruction: string): 
   return `现在你是一名专业的AI提示词工程师，将以下生图内容提示词修改为用户所需要的新提示词，原提示词:"${original}",用户修改期待:"${instruction}"。直接且只能输出修改后的提示词，严禁输入非修改后提示词内容`
 }
 
-const VERSION_SEGMENT = /^v\d+[a-z0-9]*$/i
-
 /**
- * Join an API root with a protocol suffix.
+ * 地址写死之后，这里只做一件事：把固定根地址与协议后缀拼起来。
  *
- * The root is what a user copies out of a vendor's docs. Those docs stop at
- * different depths — `https://api.openai.com`, `https://api.openai.com/v1`,
- * `https://open.bigmodel.cn/api/paas/v4` — so a root whose last path segment
- * already looks like a version (`v1`, `v4`, `v1beta`) is used as-is and
- * anything else gets `/v1` appended. An empty root means this gateway, which
- * serves all three protocols on `/v1`.
+ * 上一版允许用户填任意 API root，于是要判断「末段是不是版本号、要不要补 /v1」；
+ * 现在根地址由 {@link REWRITE_API_BASE_URL} 决定，那段猜测逻辑连同它的
+ * 「地址非法」失败分支一起下线——存量配置里的脏地址不会再让改写卡死。
+ * 保留函数签名（baseUrl 参数被忽略）是为了让三协议构造的调用点保持原样。
  */
-export function buildRewriteUrl(baseUrl: string, path: string): string {
-  const root = baseUrl.trim().replace(/\/+$/, '')
-  if (!root) return buildGatewayUrl(`/v1${path}`)
-  const lastSegment = root.slice(root.lastIndexOf('/') + 1)
-  const prefix = VERSION_SEGMENT.test(lastSegment) ? root : `${root}/v1`
-  return `${prefix}${path}`
+export function buildRewriteUrl(_baseUrl: string, path: string): string {
+  return `${REWRITE_API_BASE_URL}/v1${path}`
 }
 
 /** The endpoint path (after the version segment) for each protocol. */
@@ -99,10 +92,24 @@ export interface RewriteWireRequest {
 }
 
 /**
+ * 思考强度落到具体协议字段时的取值。
+ *
+ * `off` 在 OpenAI 族里不是一个合法档位，关闭思考要发 `none`
+ * （后端 `filterOpenAIResponsesNoneReasoningEffortForAccount` 认的就是 `none`）；
+ * `xhigh` 直接透传，后端 `NormalizeMaxReasoningEffort` 接受它。
+ * `unset` 返回 null 表示「整个字段都不发」。
+ */
+function wireEffort(effort: RewriteEffort): string | null {
+  if (effort === 'unset') return null
+  if (effort === 'off') return 'none'
+  return effort
+}
+
+/**
  * Build the concrete HTTP request for one protocol.
  *
- * Reasoning effort is omitted entirely at `unset`, so a profile that never
- * touched the setting sends exactly the body the collapsed build sent.
+ * 思考强度为 `unset` 时整个字段都不发，因此没动过这项设置的 profile 发出的
+ * body 与折叠版完全一致。
  */
 export function buildRewriteWireRequest(
   request: ResolvedRewriteRequest,
@@ -112,6 +119,7 @@ export function buildRewriteWireRequest(
   const { protocol, apiKey, baseUrl, model, effort } = request
   const content = buildRewriteInstruction(original, instruction)
   const url = buildRewriteUrl(baseUrl, rewritePath(protocol))
+  const effortValue = wireEffort(effort)
 
   if (protocol === 'openai-chat') {
     const body: Record<string, unknown> = {
@@ -119,7 +127,7 @@ export function buildRewriteWireRequest(
       messages: [{ role: 'user', content }],
       temperature: 0.2,
     }
-    if (effort !== 'unset') body.reasoning_effort = effort
+    if (effortValue !== null) body.reasoning_effort = effortValue
     return {
       url,
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -134,7 +142,7 @@ export function buildRewriteWireRequest(
       // Rewrites are throwaway; nothing should be retained server-side.
       store: false,
     }
-    if (effort !== 'unset') body.reasoning = { effort }
+    if (effortValue !== null) body.reasoning = { effort: effortValue }
     return {
       url,
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -158,7 +166,8 @@ export function buildRewriteWireRequest(
     'anthropic-version': ANTHROPIC_VERSION,
     'Content-Type': 'application/json',
   }
-  if (baseUrl.trim()) headers[ANTHROPIC_BROWSER_HEADER] = 'true'
+  // 不发送浏览器直连头：改写地址固定为站内网关（同源策略下由本站反代），
+  // 而 `anthropic-dangerous-direct-browser-access` 只在打第三方 Anthropic 主机时才需要。
 
   return { url, headers, body }
 }
@@ -276,8 +285,8 @@ export function extractRewriteError(payload: unknown, response: Response): strin
 
 export interface RewriteCallOptions {
   config: RewriteConfig
-  /** The image-generation key, used only when the split config defers to it. */
-  generationKey: string
+  /** 改写令牌与分组平台，由 UI 从站内密钥列表解析得到。 */
+  context: RewriteContext
   original: string
   instruction: string
   signal: AbortSignal
@@ -285,27 +294,22 @@ export interface RewriteCallOptions {
 
 export interface RewriteCallResult {
   prompt: string
-  /** Which key actually paid for the call, for the UI to report. */
+  /** 本次请求由生图密钥（或旧版手填令牌）承担时为 true，供 UI 如实告知。 */
   usesGenerationKey: boolean
   protocol: RewriteProtocol
 }
 
 /**
- * Run one rewrite. Resolves with the raw rewritten prompt; rejects with an
- * {@link ImageGenError} carrying the upstream message.
+ * 跑一次改写。成功时给出改写后的提示词；失败时抛 {@link ImageGenError} 并带上
+ * 上游原始信息。
  *
- * Validation failures are raised here rather than by the caller so a rewrite
- * can never be attempted with an empty key or model.
+ * 校验放在这里而不是调用方，保证永远不会用空令牌或空模型发请求。
  */
 export async function requestRewrite(options: RewriteCallOptions): Promise<RewriteCallResult> {
-  const { config, generationKey, original, instruction, signal } = options
-  const resolved = resolveRewriteRequest(config, generationKey)
+  const { config, context, original, instruction, signal } = options
+  const resolved = resolveRewriteRequest(config, context)
   if (!resolved.ok) {
-    throw new ImageGenError(
-      resolved.reason === 'bad-base-url'
-        ? 'AI 改写接口地址无效，请填写 http(s) 开头的地址'
-        : 'AI 改写未配置令牌，且没有可回落的生图令牌',
-    )
+    throw new ImageGenError('AI 改写未选密钥，且没有可回落的生图密钥')
   }
 
   const wire = buildRewriteWireRequest(resolved.request, original, instruction)

@@ -187,10 +187,14 @@
               </label>
 
               <div class="flex flex-wrap items-center gap-2">
-                <label class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-dark-400">
+                <!--
+                  改写模型现在由「详细配置」里的分组模型下拉决定，
+                  这里只回显当前选中的模型名，不允许手输（用户要求模型只能选）。
+                -->
+                <span class="text-xs text-gray-500 dark:text-dark-400">
                   {{ t('imagegen.templatesRewriteModel') }}
-                  <input v-model="rewriteModelProxy" class="input w-36 py-1 text-xs" />
-                </label>
+                  <span class="ml-1 font-mono text-gray-700 dark:text-dark-200">{{ rewriteModel || '—' }}</span>
+                </span>
                 <button
                   type="button"
                   class="btn btn-secondary btn-sm"
@@ -230,15 +234,15 @@ const props = defineProps<{
   open: boolean
   customTemplates: ImageTemplate[]
   /**
-   * Rewrite model, mirrored from the shared rewrite config so editing it here
-   * and in the settings card stays one value.
+   * 当前选中的改写模型名，只做回显。
+   * 模型只能在设置卡片的「详细配置」里从分组模型列表中选择。
    */
   rewriteModel: string
   rewriting: boolean
   editStatus: string
   /** Prompt handed back by the parent after an AI rewrite. */
   rewrittenPrompt: string
-  /** True when the rewrite will bill the image token because none is dedicated. */
+  /** True when the rewrite will bill the image key because none is dedicated. */
   rewriteUsesGenerationKey?: boolean
 }>()
 
@@ -247,7 +251,6 @@ const emit = defineEmits<{
   (e: 'apply', template: ImageTemplate, prompt?: string): void
   (e: 'deleteCustom', id: string): void
   (e: 'rewrite', instruction: string): void
-  (e: 'update:rewriteModel', value: string): void
 }>()
 
 const { t } = useI18n()
@@ -257,11 +260,6 @@ const previewTemplate = ref<ImageTemplate | null>(null)
 const draftPrompt = ref('')
 const instruction = ref('')
 const aiEdited = ref(false)
-
-const rewriteModelProxy = computed({
-  get: () => props.rewriteModel,
-  set: (value: string) => emit('update:rewriteModel', value),
-})
 
 const filteredCustom = computed(() => filterByQuery(props.customTemplates))
 const filteredBuiltin = computed(() => filterByQuery(catalog.filtered.value))
