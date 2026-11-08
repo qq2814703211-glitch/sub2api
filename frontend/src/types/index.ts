@@ -110,8 +110,16 @@ export interface AdminUser extends User {
   // 为 true 时该用户仅可使用 allowed_groups 中列出的公开分组。
   // 管理侧权限开关，普通用户接口不返回。
   restrict_public_groups?: boolean
-  // 当前并发数（仅管理员列表接口返回）
+  // 当前并发数（仅管理员列表接口返回）。
+  // 语义 = 实时在途请求数，与 GET /users/:id/inflight 的 total_inflight 同源，
+  // 因此列表里的数与点开详情后按分组汇总的数能对上。
   current_concurrency?: number
+  // 并发槽位占用数（仅管理员列表接口返回）。
+  // 与 current_concurrency 是不同口径：槽位是请求准入计数，在途登记是请求级快照。
+  // 分开给出是为了避免「列表 39、详情 91」这种两个无名数字让人以为其中一个是错的。
+  slot_concurrency?: number
+  // 在途登记表是否可用；false 时 current_concurrency 已回退为槽位数。
+  inflight_available?: boolean
 }
 
 export interface LoginRequest {

@@ -47,6 +47,21 @@ func (s *adminInflightStoreStub) ListByUser(_ context.Context, userID int64) ([]
 	return out, nil
 }
 
+func (s *adminInflightStoreStub) CountByUsers(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	counts := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		for _, snapshot := range s.snapshots {
+			if snapshot.UserID == userID {
+				counts[userID]++
+			}
+		}
+	}
+	return counts, nil
+}
+
 func (s *adminInflightStoreStub) ListByGroup(_ context.Context, groupID int64) ([]service.UsageInflightSnapshot, error) {
 	if s.err != nil {
 		return nil, s.err
