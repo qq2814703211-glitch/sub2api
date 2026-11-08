@@ -17,6 +17,10 @@
       <span class="font-mono">{{ current }}</span>
       <span class="text-gray-500 dark:text-gray-400">/</span>
       <span class="font-mono">{{ max }}</span>
+      <HelpTooltip
+        v-if="slotHint"
+        :content="slotHint"
+      />
     </button>
 
     <BaseDialog :show="showDetail" :title="t('admin.users.inflight.title')" @close="showDetail = false">
@@ -69,7 +73,7 @@
               </div>
               <HelpTooltip
                 v-if="group.earliest_started_at"
-                :text="t('admin.users.inflight.sinceHint', { time: formatTime(group.earliest_started_at) })"
+                :content="t('admin.users.inflight.sinceHint', { time: formatTime(group.earliest_started_at) })"
               />
             </div>
             <div v-if="group.models.length" class="mt-1.5 flex flex-wrap gap-1">
@@ -111,6 +115,10 @@ const props = defineProps<{
   current: number
   max: number
   userId?: number
+  // 并发槽位占用数；与 current（在途请求数）是不同口径，仅在两者都有值时提示差异。
+  slotConcurrency?: number
+  // 在途登记不可用时为 false，此时 current 已回退为槽位数，不应该再声称是在途数。
+  inflightAvailable?: boolean
 }>()
 
 const { t } = useI18n()
@@ -146,6 +154,24 @@ function formatTime(value: string): string {
   }
   return date.toLocaleString()
 }
+
+// 两个数口径不同，必须各自有名字，否则用户只会觉得其中一个是错的：
+//   current（左）= 实时在途请求数，与详情弹层的按分组请求数是同一数据源
+//   slot（props.slotConcurrency）= 并发槽位占用数，请求准入计数
+// 槽位与在途在正常情况下应当相等（都是「一个请求一个成员」），但两者的过期
+// 策略不同（槽位按 TTL 清理、在途按请求注销），短暂不一致是正常的瞬态差异。
+const slotHint = computed(() => {
+  if (!props.inflightAvailable || props.slotConcurrency === undefined) {
+    return ''
+  }
+  if (props.slotConcurrency === props.current) {
+    return ''
+  }
+  return t('admin.users.inflight.slotHint', {
+    inflight: props.current,
+    slots: props.slotConcurrency
+  })
+})
 
 async function loadDetail() {
   if (!canExpand.value || !props.userId) {

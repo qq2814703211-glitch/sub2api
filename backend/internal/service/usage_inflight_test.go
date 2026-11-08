@@ -124,6 +124,23 @@ func (s *usageInflightStoreStub) ListByUser(_ context.Context, userID int64) ([]
 	return out, nil
 }
 
+func (s *usageInflightStoreStub) CountByUsers(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	if s.countErr != nil {
+		return nil, s.countErr
+	}
+	if s.failAll != nil {
+		return nil, s.failAll
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		// 与真实实现一致：只计能解析的快照，这里 byUser 里存的就是已解析的。
+		counts[userID] = len(s.byUser[userID])
+	}
+	return counts, nil
+}
+
 func (s *usageInflightStoreStub) ListByGroup(_ context.Context, groupID int64) ([]UsageInflightSnapshot, error) {
 	if s.listErr != nil {
 		return nil, s.listErr
