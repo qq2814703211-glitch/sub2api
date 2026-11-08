@@ -208,10 +208,16 @@ func (c *usageInflightCache) CountByUsers(ctx context.Context, userIDs []int64) 
 			return nil, fmt.Errorf("read usage inflight count for user %d: %w", queried[i], err)
 		}
 		n := 0
+		now := time.Now()
 		for _, value := range raw {
 			var snap service.UsageInflightSnapshot
 			if err := json.Unmarshal([]byte(value), &snap); err != nil {
 				// 与 ListByUser 一致：单条脏数据不计入，也不让整批读失败。
+				continue
+			}
+			// 陈旧条目不计入：key 级 PExpire 会让整桶漏删的条目随新请求续命，
+			// 不按年龄过滤的话并发数只增不减。
+			if snap.IsStale(now, c.ttl) {
 				continue
 			}
 			n++
@@ -268,32 +274,34 @@ func (c *usageInflightCache) ListByGroup(ctx context.Context, groupID int64) ([]
 	return snapshots, nil
 }
 
-// CountActiveUsersByGroups 批量返回每个分组当前实时使用中的用户数（COUNT(DISTINCT user_id)）。
+// CountActiveUsersByGroups 返回分组当前实时使用中的人数（COUNT(DISTINCT user_id)）。
+//
+// 不再读分组引用计数（usage:inflight_group:<gid> 的 HLEN）：那是个只会累加的
+// 计数器，请求漏注销时不会回减，实测同一分组能虚高上百倍（引用计数 351，
+// 真实活跃 2 人）。改为按分组取真实快照、按 user_id 去重，并过滤掉超过寿命的
+// 陈旧条目 —— 口径与 ListByGroup / CountByUsers 一致，三处永远对得上。
 func (c *usageInflightCache) CountActiveUsersByGroups(ctx context.Context, groupIDs []int64) (map[int64]int, error) {
 	counts := make(map[int64]int, len(groupIDs))
 	if !c.usable() || len(groupIDs) == 0 {
 		return counts, nil
 	}
-	pipe := c.rdb.Pipeline()
-	type groupCmd struct {
-		groupID int64
-		cmd     *redis.IntCmd
-	}
-	cmds := make([]groupCmd, 0, len(groupIDs))
 	for _, groupID := range groupIDs {
 		if groupID <= 0 {
 			continue
 		}
-		cmds = append(cmds, groupCmd{groupID: groupID, cmd: pipe.HLen(ctx, usageInflightGroupKey(groupID))})
-	}
-	if len(cmds) == 0 {
-		return counts, nil
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, fmt.Errorf("count usage inflight group users: %w", err)
-	}
-	for _, item := range cmds {
-		counts[item.groupID] = int(item.cmd.Val())
+		snapshots, err := c.ListByGroup(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		seen := make(map[int64]struct{}, len(snapshots))
+		for _, snap := range snapshots {
+			if snap.UserID <= 0 || snap.IsStale(now, c.ttl) {
+				continue
+			}
+			seen[snap.UserID] = struct{}{}
+		}
+		counts[groupID] = len(seen)
 	}
 	return counts, nil
 }
