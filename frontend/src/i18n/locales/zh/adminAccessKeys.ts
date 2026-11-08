@@ -222,14 +222,6 @@ export default {
       "label": "读取全站用量明细及用户用量",
       "category": "报表"
     },
-    "usage_dconnections_dread": {
-      "label": "读取全站连接诊断元数据",
-      "category": "监控"
-    },
-    "usage_dconnections_dwrite": {
-      "label": "启停全站连接诊断采集",
-      "category": "监控"
-    },
     "payment_dread": {
       "label": "读取全站支付订单与报表",
       "category": "财务"

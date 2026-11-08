@@ -43,8 +43,6 @@ func Recovery() gin.HandlerFunc {
 		c.Abort()
 	})
 	return func(c *gin.Context) {
-		c.Set(recoveryActiveKey, true)
-		defer finishTimingAfterRecovery(c)
 		recoverRequest(c)
 	}
 }
