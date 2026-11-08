@@ -10,19 +10,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ModelPricingSyncHandler 管理 models.dev 官方参考价同步的变更史。
+// ModelPricingSyncHandler 管理价格同步的变更史与三档口径配置。
 // 同步本身由后台任务按 pricing.hash_check_interval_minutes 自动跑；
-// 这里只提供「看改了什么」和「现在什么状态」两个只读接口。
+// 这里提供「看改了什么」「现在什么状态」以及人民币口径配置的读写。
 type ModelPricingSyncHandler struct {
-	syncService *service.ModelPricingSyncService
-	historyRepo service.ModelPricingSyncHistoryRepository
+	syncService    *service.ModelPricingSyncService
+	historyRepo    service.ModelPricingSyncHistoryRepository
+	settingService *service.SettingService
 }
 
 // NewModelPricingSyncHandler 创建处理器。
-func NewModelPricingSyncHandler(syncService *service.ModelPricingSyncService, historyRepo service.ModelPricingSyncHistoryRepository) *ModelPricingSyncHandler {
+func NewModelPricingSyncHandler(
+	syncService *service.ModelPricingSyncService,
+	historyRepo service.ModelPricingSyncHistoryRepository,
+	settingService *service.SettingService,
+) *ModelPricingSyncHandler {
 	return &ModelPricingSyncHandler{
-		syncService: syncService,
-		historyRepo: historyRepo,
+		syncService:    syncService,
+		historyRepo:    historyRepo,
+		settingService: settingService,
 	}
 }
 
@@ -56,4 +62,43 @@ func (h *ModelPricingSyncHandler) Status(c *gin.Context) {
 		status = map[string]any{"enabled": false}
 	}
 	response.Success(c, status)
+}
+
+// GetCNYOfficialConfig 返回人民币官方价（cny-official）口径的配置。
+// GET /api/v1/admin/model-pricing-sync/cny-official
+//
+// 不走 PUT /admin/settings：那里按 UpdateSettingsRequest 的字段白名单逐项写库，
+// 未列出的 JSON 键会被 encoding/json 静默丢弃，提交后返回 200 却什么都不写。
+func (h *ModelPricingSyncHandler) GetCNYOfficialConfig(c *gin.Context) {
+	if h.settingService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "settings service unavailable")
+		return
+	}
+	settings, err := h.settingService.GetCNYOfficialPricingSettings(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Success(c, settings)
+}
+
+// UpdateCNYOfficialConfig 写入人民币官方价口径的配置。
+// PUT /api/v1/admin/model-pricing-sync/cny-official
+func (h *ModelPricingSyncHandler) UpdateCNYOfficialConfig(c *gin.Context) {
+	if h.settingService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "settings service unavailable")
+		return
+	}
+	var payload service.CNYOfficialPricingSettings
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid payload: "+err.Error())
+		return
+	}
+	saved, err := h.settingService.SetCNYOfficialPricingSettings(c.Request.Context(), &payload)
+	if err != nil {
+		// 校验失败与写库失败都返回 400/500 的原文，前端直接展示，不吞。
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.Success(c, saved)
 }

@@ -33,3 +33,18 @@ func (r *inMemorySettingRepo) Set(_ context.Context, key, value string) error {
 	r.values[key] = value
 	return nil
 }
+
+// GetMultiple returns the stored values for the requested keys, omitting
+// missing ones — matching the real repository's behaviour that callers rely
+// on (absent key = empty string in the returned map).
+func (r *inMemorySettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := r.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
