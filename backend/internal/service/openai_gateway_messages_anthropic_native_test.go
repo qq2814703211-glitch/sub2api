@@ -147,29 +147,33 @@ func TestNativeAnthropicPassthroughNoEffortStaysNil(t *testing.T) {
 	require.Nil(t, result.ReasoningEffort)
 }
 
-func TestNativeAnthropicPassthroughNormalizesGLM53Thinking(t *testing.T) {
+// TestNativeAnthropicPassthroughForwardsGLM53ThinkingVerbatim pins that the
+// Anthropic-native path no longer rewrites the caller's thinking preference on
+// GLM-5.3. Every level reaches upstream exactly as requested, and an explicit
+// thinking.type is never turned into "enabled". An unsupported level is left
+// for the upstream to reject with its own 400.
+func TestNativeAnthropicPassthroughForwardsGLM53ThinkingVerbatim(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name       string
 		stream     bool
 		preference string
-		wantEffort string
 	}{
-		{name: "disabled buffered", preference: `"thinking":{"type":"disabled"},`, wantEffort: "low"},
-		{name: "off buffered", preference: `"thinking":{"type":"off"},`, wantEffort: "low"},
-		{name: "none buffered", preference: `"thinking":{"type":"none"},`, wantEffort: "low"},
-		{name: "enabled buffered", preference: `"thinking":{"type":"enabled"},`, wantEffort: "high"},
-		{name: "enabled streaming", stream: true, preference: `"thinking":{"type":"enabled"},`, wantEffort: "high"},
-		{name: "adaptive buffered", preference: `"thinking":{"type":"adaptive"},`, wantEffort: "high"},
-		{name: "adaptive streaming", stream: true, preference: `"thinking":{"type":"adaptive"},`, wantEffort: "high"},
-		{name: "minimal buffered", preference: `"output_config":{"effort":"minimal"},`, wantEffort: "low"},
-		{name: "low buffered", preference: `"output_config":{"effort":"low"},`, wantEffort: "low"},
-		{name: "medium streaming", stream: true, preference: `"output_config":{"effort":"medium"},`, wantEffort: "high"},
-		{name: "high buffered", preference: `"output_config":{"effort":"high"},`, wantEffort: "high"},
-		{name: "xhigh buffered", preference: `"output_config":{"effort":"xhigh"},`, wantEffort: "max"},
-		{name: "max buffered", preference: `"output_config":{"effort":"max"},`, wantEffort: "max"},
-		{name: "ultra buffered", preference: `"output_config":{"effort":"ultra"},`, wantEffort: "max"},
-		{name: "output effort wins over thinking", preference: `"thinking":{"type":"adaptive"},"output_config":{"effort":"low"},`, wantEffort: "low"},
+		{name: "disabled buffered", preference: `"thinking":{"type":"disabled"},`},
+		{name: "off buffered", preference: `"thinking":{"type":"off"},`},
+		{name: "none buffered", preference: `"thinking":{"type":"none"},`},
+		{name: "enabled buffered", preference: `"thinking":{"type":"enabled"},`},
+		{name: "enabled streaming", stream: true, preference: `"thinking":{"type":"enabled"},`},
+		{name: "adaptive buffered", preference: `"thinking":{"type":"adaptive"},`},
+		{name: "adaptive streaming", stream: true, preference: `"thinking":{"type":"adaptive"},`},
+		{name: "minimal buffered", preference: `"output_config":{"effort":"minimal"},`},
+		{name: "low buffered", preference: `"output_config":{"effort":"low"},`},
+		{name: "medium streaming", stream: true, preference: `"output_config":{"effort":"medium"},`},
+		{name: "high buffered", preference: `"output_config":{"effort":"high"},`},
+		{name: "xhigh buffered", preference: `"output_config":{"effort":"xhigh"},`},
+		{name: "max buffered", preference: `"output_config":{"effort":"max"},`},
+		{name: "ultra buffered", preference: `"output_config":{"effort":"ultra"},`},
+		{name: "output effort wins over thinking", preference: `"thinking":{"type":"adaptive"},"output_config":{"effort":"low"},`},
 	}
 
 	for _, tt := range tests {
@@ -185,8 +189,14 @@ func TestNativeAnthropicPassthroughNormalizesGLM53Thinking(t *testing.T) {
 			_, err := svc.ForwardAsAnthropic(context.Background(),
 				adaptiveProtocolTestContext("/v1/messages", body), nativeAnthropicGLMTestAccount(), body, "", "")
 			require.NoError(t, err)
-			require.Equal(t, "enabled", gjson.GetBytes(upstream.lastBody, "thinking.type").String())
-			require.Equal(t, tt.wantEffort, gjson.GetBytes(upstream.lastBody, "output_config.effort").String())
+
+			want := string(body)
+			got := string(upstream.lastBody)
+			// The model may be rewritten by mapping, everything else must match.
+			require.Equal(t, gjson.GetBytes(body, "thinking").Raw, gjson.GetBytes(upstream.lastBody, "thinking").Raw)
+			require.Equal(t, gjson.GetBytes(body, "output_config").Raw, gjson.GetBytes(upstream.lastBody, "output_config").Raw)
+			require.Equal(t, gjson.GetBytes(body, "max_tokens").Raw, gjson.GetBytes(upstream.lastBody, "max_tokens").Raw)
+			require.JSONEq(t, want, got)
 		})
 	}
 }

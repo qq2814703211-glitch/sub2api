@@ -1816,37 +1816,22 @@ func ApplyThinkingEnabledFallback(effort *string, body []byte, mappedModel strin
 	return DefaultEffortForThinkingEnabled(mappedModel)
 }
 
-// NormalizeGLMOpenAIReasoningEffort rewrites OpenAI Chat Completions
-// reasoning_effort values to the GLM native scale used by z.ai: high/max.
-// It only applies to glm-* mapped models and leaves all other providers untouched.
+// NormalizeGLMOpenAIReasoningEffort used to collapse the client's reasoning
+// effort onto the z.ai two-level scale (low/medium/high -> high,
+// xhigh/max -> max). That rewrite is gone: the upstream accepts low, medium,
+// high, xhigh and max, and answers a precise 400 listing the allowed levels
+// when a request asks for something it cannot do (verified against the
+// production GLM channels: `none` and `minimal` return
+// "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。").
+//
+// Rewriting hid that answer behind a 200 that produced different thinking than
+// requested, so the gateway now forwards the caller's value unchanged. The
+// function is kept (and still gated to glm-* models) because callers rely on
+// the bool to know whether the body changed.
 func NormalizeGLMOpenAIReasoningEffort(body []byte, mappedModel string) ([]byte, bool) {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(mappedModel)), "glm-") {
-		return body, false
-	}
-
-	path := "reasoning.effort"
-	raw := strings.TrimSpace(gjson.GetBytes(body, path).String())
-	if raw == "" {
-		path = "reasoning_effort"
-		raw = strings.TrimSpace(gjson.GetBytes(body, path).String())
-	}
-	if raw == "" {
-		return body, false
-	}
-
-	mapped := normalizeGLMOpenAIReasoningEffort(raw)
-	if isGLM53Model(mappedModel) && mapped == "high" && normalizeEffortToken(raw) == "low" {
-		mapped = "low"
-	}
-	if mapped == "" || mapped == raw {
-		return body, false
-	}
-
-	modified, err := sjson.SetBytes(body, path, mapped)
-	if err != nil {
-		return body, false
-	}
-	return modified, true
+	_ = body
+	_ = mappedModel
+	return body, false
 }
 
 func normalizeEffortToken(raw string) string {
@@ -1874,40 +1859,23 @@ func normalizeGLMOpenAIReasoningEffort(raw string) string {
 	}
 }
 
-// NormalizeGLM53AnthropicThinking maps explicit client thinking effort onto the
-// GLM-5.3 Anthropic-compatible scale. Requests without an effort or thinking
-// preference are left unchanged so the upstream default remains in effect.
+// NormalizeGLM53AnthropicThinking used to collapse the caller's thinking
+// preference onto GLM-5.3's Anthropic-compatible scale: none/minimal/low ->
+// low, medium/high -> high, xhigh/max/ultra -> max, and it forced
+// thinking.type=enabled in every one of those cases (turning an explicit
+// "disabled" into an enabled request). That rewrite is gone.
+//
+// The gateway now forwards thinking.type and output_config.effort verbatim on
+// every provider. When GLM-5.3 cannot serve a requested level it answers with
+// its own 400 naming the levels it accepts, and that answer reaches the caller
+// unchanged — the caller can see the real reason instead of silently getting a
+// different amount of thinking than it asked (and paid) for.
+//
+// The function stays because callers use the bool to know whether the body was
+// rewritten; it now always reports no change.
 func NormalizeGLM53AnthropicThinking(body []byte, mappedModel string) ([]byte, bool) {
-	if !isGLM53Model(mappedModel) {
-		return body, false
-	}
-
-	raw := gjson.GetBytes(body, "output_config.effort").String()
-	if strings.TrimSpace(raw) == "" {
-		raw = gjson.GetBytes(body, "thinking.type").String()
-	}
-
-	var effort string
-	switch normalizeEffortToken(raw) {
-	case "disabled", "off", "none", "minimal", "low":
-		effort = "low"
-	case "enabled", "adaptive", "medium", "high":
-		effort = "high"
-	case "xhigh", "max", "ultra":
-		effort = "max"
-	default:
-		return body, false
-	}
-
-	modified, err := sjson.SetBytes(body, "thinking.type", "enabled")
-	if err != nil {
-		return body, false
-	}
-	modified, err = sjson.SetBytes(modified, "output_config.effort", effort)
-	if err != nil {
-		return body, false
-	}
-	return modified, true
+	_ = mappedModel
+	return body, false
 }
 
 // =========================

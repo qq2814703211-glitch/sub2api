@@ -185,21 +185,24 @@ func TestPatchGrokResponsesBodyPreservesGrok105StructuredFunctionOutputImages(t 
 	require.Equal(t, "data:image/png;base64,QUE=", gjson.GetBytes(patched, "input.2.content.1.image_url").String())
 }
 
-func TestPatchGrokResponsesBodySanitizesComposerReasoningParameters(t *testing.T) {
+// TestPatchGrokResponsesBodyForwardsComposerReasoningParameters pins that the
+// reasoning fields reach upstream unchanged on every Grok model, including the
+// Composer family. The gateway no longer strips them: if a model truly rejects
+// a level, xAI answers 400 and that answer is forwarded to the caller.
+func TestPatchGrokResponsesBodyForwardsComposerReasoningParameters(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name          string
 		upstreamModel string
-		wantReasoning bool
 	}{
 		{name: "composer fast", upstreamModel: "grok-composer-2.5-fast"},
 		{name: "composer shorthand", upstreamModel: "grok-composer"},
 		{name: "composer legacy alias", upstreamModel: "composer-2.5"},
 		{name: "provider-prefixed composer", upstreamModel: "xai/grok-composer-2.5-fast"},
-		{name: "grok 4.5", upstreamModel: "grok-4.5", wantReasoning: true},
-		{name: "grok 4.6", upstreamModel: "grok-4.6", wantReasoning: true},
-		{name: "grok 4.6 latest", upstreamModel: "grok-4.6-latest", wantReasoning: true},
+		{name: "grok 4.5", upstreamModel: "grok-4.5"},
+		{name: "grok 4.6", upstreamModel: "grok-4.6"},
+		{name: "grok 4.6 latest", upstreamModel: "grok-4.6-latest"},
 	}
 
 	bodyTemplate := []byte(`{
@@ -217,15 +220,8 @@ func TestPatchGrokResponsesBodySanitizesComposerReasoningParameters(t *testing.T
 			require.True(t, json.Valid(patched))
 			require.Equal(t, tt.upstreamModel, gjson.GetBytes(patched, "model").String())
 
-			if tt.wantReasoning {
-				require.Equal(t, "medium", gjson.GetBytes(patched, "reasoning.effort").String())
-				require.Equal(t, "medium", gjson.GetBytes(patched, "reasoning_effort").String())
-				require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
-				return
-			}
-
-			require.False(t, gjson.GetBytes(patched, "reasoning").Exists())
-			require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
+			require.Equal(t, "medium", gjson.GetBytes(patched, "reasoning.effort").String())
+			require.Equal(t, "medium", gjson.GetBytes(patched, "reasoning_effort").String())
 			require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 		})
 	}
@@ -295,7 +291,11 @@ func TestPatchGrokResponsesBodyDropsLogprobsForGrok420Family(t *testing.T) {
 	require.False(t, gjson.GetBytes(patched, "top_logprobs").Exists())
 }
 
-func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
+// TestPatchGrokResponsesBodyPassesReasoningEffortThrough pins the contract that
+// a Grok request keeps the exact reasoning-effort value the client asked for.
+// The gateway must not downgrade, remap or drop the level: xAI validates it and
+// returns a deterministic 400, which is the caller's answer to act on.
+func TestPatchGrokResponsesBodyPassesReasoningEffortThrough(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -305,10 +305,13 @@ func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
 		path          string
 		want          string
 	}{
-		{name: "minimal nested", body: `{"input":"hi","reasoning":{"effort":"minimal"}}`, upstreamModel: "grok-4.5", path: "reasoning.effort", want: "low"},
-		{name: "xhigh stays high for 4.5", body: `{"input":"hi","reasoning_effort":"xhigh"}`, upstreamModel: "grok-4.5", path: "reasoning_effort", want: "high"},
+		{name: "minimal nested stays minimal", body: `{"input":"hi","reasoning":{"effort":"minimal"}}`, upstreamModel: "grok-4.5", path: "reasoning.effort", want: "minimal"},
+		{name: "xhigh stays xhigh for 4.5", body: `{"input":"hi","reasoning_effort":"xhigh"}`, upstreamModel: "grok-4.5", path: "reasoning_effort", want: "xhigh"},
 		{name: "xhigh nested for 4.6", body: `{"input":"hi","reasoning":{"effort":"xhigh"}}`, upstreamModel: "grok-4.6", path: "reasoning.effort", want: "xhigh"},
 		{name: "xhigh snake for 4.6 latest", body: `{"input":"hi","reasoning_effort":"xhigh"}`, upstreamModel: "grok-4.6-latest", path: "reasoning_effort", want: "xhigh"},
+		{name: "max stays max for 4.7", body: `{"input":"hi","reasoning_effort":"max"}`, upstreamModel: "grok-4.7", path: "reasoning_effort", want: "max"},
+		{name: "ultra stays ultra for 4.3", body: `{"input":"hi","reasoning_effort":"ultra"}`, upstreamModel: "grok-4.3", path: "reasoning_effort", want: "ultra"},
+		{name: "none stays none", body: `{"input":"hi","reasoning":{"effort":"none"}}`, upstreamModel: "grok-4.5", path: "reasoning.effort", want: "none"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -352,19 +355,24 @@ func TestGrokUpstreamErrorBodyForOpsHonorsConfigAndLimit(t *testing.T) {
 	}
 }
 
+// TestNormalizeGrokChatReasoningEffort pins that the raw Chat Completions route
+// forwards the requested level untouched and only folds the camelCase spelling
+// onto reasoning_effort.
 func TestNormalizeGrokChatReasoningEffort(t *testing.T) {
 	patched, err := normalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"ultra"}`), "grok-4.3")
 	require.NoError(t, err)
-	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
+	require.Equal(t, "ultra", gjson.GetBytes(patched, "reasoning_effort").String())
 	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 
 	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"xhigh"}`), "grok-4.6")
 	require.NoError(t, err)
 	require.Equal(t, "xhigh", gjson.GetBytes(patched, "reasoning_effort").String())
 
+	// A model that does not advertise configurable reasoning still gets the
+	// caller's value: upstream decides, and its 400 is forwarded verbatim.
 	patched, err = normalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"high"}`), "grok-composer-2.5-fast")
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
+	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
 }
 
 func TestPatchGrokResponsesBodyDropsNestedUnsupportedFields(t *testing.T) {
