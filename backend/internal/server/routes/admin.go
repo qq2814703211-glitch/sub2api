@@ -142,13 +142,18 @@ func RegisterAdminRoutes(
 	}
 }
 
-// registerModelPricingSyncRoutes 注册 models.dev 价格同步的只读管理接口。
-// 同步任务本身在后端定时跑，管理端只负责展示「改了什么」与当前状态。
+// registerModelPricingSyncRoutes 注册价格同步的只读管理接口与人民币口径配置。
+// 同步任务本身在后端定时跑，管理端负责展示「改了什么」「当前状态」，
+// 以及配置三档口径里的 cny-official / manual 部分。
 func registerModelPricingSyncRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	group := admin.Group("/model-pricing-sync")
 	{
 		group.GET("/history", h.Admin.ModelPricingSync.ListHistory)
 		group.GET("/status", h.Admin.ModelPricingSync.Status)
+		// 人民币官方价口径配置。独立端点而非 PUT /admin/settings：
+		// settings 的更新走字段白名单，未知键会被静默丢弃（返回 200 但没写）。
+		group.GET("/cny-official", h.Admin.ModelPricingSync.GetCNYOfficialConfig)
+		group.PUT("/cny-official", h.Admin.ModelPricingSync.UpdateCNYOfficialConfig)
 	}
 }
 
