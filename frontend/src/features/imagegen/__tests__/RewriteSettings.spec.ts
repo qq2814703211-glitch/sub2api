@@ -141,6 +141,14 @@ describe('硬约束：界面不得出现地址框 / 协议下拉 / 手填 key', 
     wrapper.unmount()
   })
 
+  it('没选改写密钥时，协议按实际生效的生图密钥分组判定', async () => {
+    // 生图密钥是 Anthropic 分组的 key-b（id=2），改写密钥未选 → 回落到它。
+    const wrapper = mountCard({ config: { ...DEFAULT_REWRITE_CONFIG, keyId: null }, generationKeyId: 2 })
+    const note = wrapper.find('[data-test="rewrite-protocol-readonly"]')
+    expect(note.text()).toContain('Anthropic Messages')
+    wrapper.unmount()
+  })
+
   it('协议说明随密钥所属分组变化（Claude 分组 → Messages）', async () => {
     const wrapper = mountCard({ config: { ...DEFAULT_REWRITE_CONFIG, keyId: 2 } })
     const note = wrapper.find('[data-test="rewrite-protocol-readonly"]')

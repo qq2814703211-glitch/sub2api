@@ -185,6 +185,18 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
   const rewriteKeyContext = computed(() => resolveKeyContext(ownKeys.value, rewriteConfig.value.keyId))
 
   /**
+   * 实际生效的令牌与分组平台。
+   *
+   * 没选改写密钥时改写回落到生图密钥，此时协议也该按**生图密钥**所属分组判定
+   * ——否则一把 Anthropic 分组的密钥被当成 OpenAI 分组，会挑到错的端点。
+   */
+  const effectiveRewriteContext = computed(() => {
+    const dedicated = rewriteKeyContext.value
+    if (dedicated.key) return dedicated
+    return resolveKeyContext(ownKeys.value, generationKeyId.value)
+  })
+
+  /**
    * 刷新改写模型候选。
    *
    * 候选来源必须是「当前改写密钥」的 /v1/models：换密钥就该换列表。没选改写
@@ -1029,7 +1041,7 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     const context = {
       rewriteKey: rewriteKeyContext.value.key,
       generationKey: apiKey.value,
-      platform: rewriteKeyContext.value.platform,
+      platform: effectiveRewriteContext.value.platform,
     }
     const resolved = resolveRewriteRequest(rewriteConfig.value, context)
     if (!resolved.ok) {

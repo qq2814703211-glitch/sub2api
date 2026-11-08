@@ -265,10 +265,22 @@ const rewriteCheckMessageClass = computed(() =>
   rewriteCheck.value?.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
 )
 
-/** 协议判定结果：密钥分组平台 + 当前模型。只做展示，没有控件。 */
+/** 协议判定结果：生效密钥的分组平台 + 当前模型。只做展示，没有控件。 */
 const resolvedProtocol = computed(() => {
-  const platform = resolveKeyContext(props.keys, props.config.keyId).platform
+  const platform = effectivePlatform.value
   return detectRewriteProtocol(platform, props.config.model)
+})
+
+/**
+ * 生效密钥的分组平台。
+ *
+ * 没选改写密钥时改写会回落到生图密钥，协议就要按生图密钥的分组判，
+ * 否则两边会用不同的端点。
+ */
+const effectivePlatform = computed(() => {
+  const dedicated = resolveKeyContext(props.keys, props.config.keyId)
+  if (dedicated.key) return dedicated.platform
+  return resolveKeyContext(props.keys, props.generationKeyId).platform
 })
 
 const protocolHint = computed(() => {
