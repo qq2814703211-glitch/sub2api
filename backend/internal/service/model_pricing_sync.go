@@ -731,9 +731,14 @@ func mergeModelPricingTierChanges(
 	syncedFields map[string]map[string]float64,
 ) []modelPricingSyncChange {
 	// 国模名单：无论人民币档是否命中，美元档都不得为这些模型写价。
+	// 运营手配的模型一并排除：手配价常用来给「官方源没有人民币牌价」的模型
+	// 定本位币价，这类模型未必在 National 里，若让美元档继续写就会把手配价改回美元。
 	skipForUSD := map[string]struct{}{}
 	if dataset != nil {
 		for model := range dataset.National {
+			skipForUSD[model] = struct{}{}
+		}
+		for model := range dataset.ManualOverrides {
 			skipForUSD[model] = struct{}{}
 		}
 	}
@@ -772,11 +777,29 @@ func computeCNYOfficialSyncChanges(
 	dataset *cnyOfficialDataset,
 	syncedFields map[string]map[string]float64,
 ) []modelPricingSyncChange {
-	if dataset == nil || len(dataset.Pricing) == 0 {
+	if dataset == nil {
 		return nil
 	}
-	models := make([]string, 0, len(dataset.Pricing))
+	// 模型集 = 官方人民币价覆盖到的模型 ∪ 运营手配的模型。
+	// 后者必须并入：手配价常用来给「官方数据源没有人民币牌价」的模型定价
+	// （典型：只有境外厂商美元价的 deepseek-v4.1-flash-1017）。只看官方表会
+	// 让这些手工配置永远不生效。
+	// 注意：键一律用裸模型名。manual_overrides 允许 "<vendor>/<model>" 写法，
+	// 但覆盖层与计费查询都用裸模型名，带前缀写进去等于写了一条查不到的孤儿条目。
+	modelSet := make(map[string]struct{}, len(dataset.Pricing)+len(dataset.ManualOverrides))
 	for model := range dataset.Pricing {
+		modelSet[model] = struct{}{}
+	}
+	for key := range dataset.ManualOverrides {
+		if model := cnyOfficialBareModelName(key); model != "" {
+			modelSet[model] = struct{}{}
+		}
+	}
+	if len(modelSet) == 0 {
+		return nil
+	}
+	models := make([]string, 0, len(modelSet))
+	for model := range modelSet {
 		models = append(models, model)
 	}
 	sort.Strings(models)
@@ -784,16 +807,17 @@ func computeCNYOfficialSyncChanges(
 	var changes []modelPricingSyncChange
 	for _, model := range models {
 		priced, ok := dataset.pricing(model)
+		// manual_overrides 命中：按运营配置的人民币价写入，优先级最高。
+		currentFields := decodeModelPricingSyncEntry(existing[model])
+		if manual, hit := dataset.manualPricing(model, providerOf(priced)); hit {
+			changes = append(changes, cnyOfficialManualChanges(model, manual.PerToken, currentFields)...)
+			continue
+		}
 		if !ok || priced == nil {
 			continue
 		}
-		// manual_overrides 命中：尊重人工，整条跳过。
-		if dataset.manualOverrideHit(model, priced.Provider) {
-			continue
-		}
-		currentFields := decodeModelPricingSyncEntry(existing[model])
 		if modelHasManualPricing(currentFields, syncedFields[model]) {
-			// 运营手配价：永不被覆盖。
+			// 运营在覆盖层里手配的价：永不被覆盖。
 			continue
 		}
 
@@ -818,6 +842,58 @@ func computeCNYOfficialSyncChanges(
 
 		// 长上下文阶梯：覆盖层只有「单阈值 + 两侧倍率」三字段，整体覆盖写入。
 		changes = append(changes, cnyOfficialLadderChanges(model, priced.LongContext, currentFields)...)
+	}
+	return changes
+}
+
+// cnyOfficialBareModelName 把 manual_overrides 的键归一成裸模型名。
+//
+// 配置允许 "<vendor>/<model>" 与 "<model>" 两种写法，但覆盖层键、计费查询、
+// 模型广场的官方参考价一律用裸模型名。带 vendor 前缀的条目写进覆盖层后没有任何
+// 路径会读到它，表现为「配了也不生效」。
+func cnyOfficialBareModelName(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "" {
+		return ""
+	}
+	if index := strings.LastIndex(normalized, "/"); index >= 0 {
+		normalized = normalized[index+1:]
+	}
+	return normalized
+}
+
+// providerOf 安全取出 priced 的厂商名，priced 为 nil 时返回空串。
+func providerOf(priced *cnyOfficialPricing) string {
+	if priced == nil {
+		return ""
+	}
+	return priced.Provider
+}
+
+// cnyOfficialManualChanges 按运营手配价生成变更。
+//
+// manual 是最高优先级一档：只要配置了，就按这份价格写覆盖层，不看官方人民币价
+// 是否有值。这样即使某个模型在官方数据源里没有人民币牌价（只有境外厂商的美元价），
+// 运营也能把它改成本位币计价。
+func cnyOfficialManualChanges(model string, perToken map[string]float64, current map[string]float64) []modelPricingSyncChange {
+	changes := make([]modelPricingSyncChange, 0, len(modelPricingSyncFields))
+	for _, field := range modelPricingSyncFields {
+		newValue, ok := perToken[field]
+		if !ok || newValue <= 0 {
+			continue
+		}
+		oldValue := current[field]
+		if oldValue == newValue {
+			continue
+		}
+		changes = append(changes, modelPricingSyncChange{
+			Model:    model,
+			Field:    field,
+			OldValue: oldValue,
+			NewValue: newValue,
+			Reason:   "按运营手工配置的人民币价写入（manual 优先级最高）",
+			Source:   ModelPricingSyncSourceCNYOfficial,
+		})
 	}
 	return changes
 }
@@ -947,15 +1023,24 @@ func decodeModelPricingSyncEntry(raw json.RawMessage) map[string]float64 {
 // cnyOfficialModelSet 返回本轮「按人民币官方价口径处理」的模型集合。
 //
 // 这个集合决定哪些覆盖层条目要打上 cny_official 标记。它必须来自数据源
-// 本身（dataset.Pricing 的键），不能从「本轮产生了变更」反推：已经同步过、
-// 价格没变的模型不产生 change，若按 change 判定标记，那些条目会永远缺标记，
-// 进而在计费时被 DeepSeek 美元谷价兜底覆盖。
+// 本身（dataset.Pricing 的键）加上运营手配的模型，不能从「本轮产生了变更」反推：
+// 已经同步过、价格没变的模型不产生 change，若按 change 判定标记，那些条目会
+// 永远缺标记，进而在计费时被 DeepSeek 美元谷价兜底覆盖。
+//
+// 手配模型必须并入：模型广场的「官方参考价」直接读覆盖层，缺标记的条目会被
+// 当成美元价展示，手配的人民币数字就白配了。
 func cnyOfficialModelSet(dataset *cnyOfficialDataset) map[string]struct{} {
-	if dataset == nil || len(dataset.Pricing) == 0 {
+	if dataset == nil {
 		return nil
 	}
-	out := make(map[string]struct{}, len(dataset.Pricing))
+	if len(dataset.Pricing) == 0 && len(dataset.ManualOverrides) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(dataset.Pricing)+len(dataset.ManualOverrides))
 	for model := range dataset.Pricing {
+		out[model] = struct{}{}
+	}
+	for model := range dataset.ManualOverrides {
 		out[model] = struct{}{}
 	}
 	return out
