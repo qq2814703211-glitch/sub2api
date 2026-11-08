@@ -83,10 +83,12 @@ describe('ImageGenView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    // The primary action and the token field are the two things a user needs.
+    // 生成按钮与密钥卡片是用户最先要用的两样东西。
     const buttons = wrapper.findAll('button').map((node) => node.text())
     expect(buttons.some((label) => label.includes(zh.imagegen.generate))).toBe(true)
-    expect(wrapper.find('input[type="password"]').exists()).toBe(true)
+    // 密钥改成下拉：页面上不再有手填令牌的密码框。
+    expect(wrapper.find('input[type="password"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="generation-key-select"]').exists()).toBe(true)
     expect(wrapper.text()).toContain(zh.imagegen.promptLabel)
 
     wrapper.unmount()
@@ -187,105 +189,94 @@ describe('ImageGenView', () => {
     wrapper.unmount()
   })
 
-  it('renders the AI rewrite settings as their own block, separate from the token', async () => {
+  it('把生图密钥与 AI 改写密钥放在同一张卡片里，并分别标注', async () => {
     const wrapper = mountView()
-    await flushPromises()
-
-    const toggle = wrapper
-      .findAll('button')
-      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
-    expect(toggle).toBeTruthy()
-
-    await toggle!.trigger('click')
     await flushPromises()
 
     const text = wrapper.text()
-    expect(text).toContain(zh.imagegen.rewriteKeyLabel)
-    expect(text).toContain(zh.imagegen.rewriteBaseUrlLabel)
-    expect(text).toContain(zh.imagegen.rewriteProtocolLabel)
-    expect(text).toContain(zh.imagegen.rewriteEffortLabel)
-    expect(text).toContain(zh.imagegen.rewriteModelLabel)
-
-    // The collapsed default is the legacy behaviour: rewrite rides the image
-    // token, and the card says so instead of silently looking configured.
-    expect(text).toContain(zh.imagegen.rewriteKeyFallbackShort)
-
-    // A second password field proves the rewrite key is a separate input; the
-    // image token field is the first.
-    expect(wrapper.findAll('input[type="password"]')).toHaveLength(2)
+    expect(text).toContain(zh.imagegen.generationKeySection)
+    expect(text).toContain(zh.imagegen.rewriteKeySection)
+    // 同卡：两个分区都在同一个 section.card 里。
+    const cards = wrapper.findAll('section.card')
+    const keyCard = cards.find((card) => card.text().includes(zh.imagegen.keyCardTitle))
+    expect(keyCard).toBeTruthy()
+    expect(keyCard!.text()).toContain(zh.imagegen.generationKeySection)
+    expect(keyCard!.text()).toContain(zh.imagegen.rewriteKeySection)
 
     wrapper.unmount()
   })
 
-  it('offers only the effort levels the selected protocol can express', async () => {
+  it('页面上没有可填地址、没有协议下拉、没有手填令牌', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const toggle = wrapper
-      .findAll('button')
-      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
-    await toggle!.trigger('click')
-    await flushPromises()
-
-    // The protocol <select> is the one carrying the anthropic option.
-    const protocolSelect = wrapper
-      .findAll('select')
-      .find((node) =>
-        Array.from((node.element as HTMLSelectElement).options).some(
-          (option) => option.value === 'openai-responses',
-        ),
-      )
-    expect(protocolSelect).toBeTruthy()
-
-    const effortSelectFor = () =>
-      wrapper
-        .findAll('select')
-        .find((node) =>
-          Array.from((node.element as HTMLSelectElement).options).some(
-            (option) => option.value === 'unset',
-          ),
-        )!
-    const effortValues = () =>
-      Array.from((effortSelectFor().element as HTMLSelectElement).options).map((option) => option.value)
-
-    // Chat completions tops out at high.
-    expect(effortValues()).toContain('high')
-    expect(effortValues()).not.toContain('max')
-
-    await protocolSelect!.setValue('anthropic-messages')
-    await flushPromises()
-
-    // Anthropic can carry max.
-    expect(effortValues()).toContain('max')
-
-    await protocolSelect!.setValue('openai-responses')
-    await flushPromises()
-    expect(effortValues()).toContain('max')
+    // 1) 没有密码框（旧的手填令牌入口）。
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)
+    // 2) 没有地址形状的输入提示：key 与地址都不再手填。
+    for (const input of wrapper.findAll('input')) {
+      expect(String(input.attributes('placeholder') ?? '')).not.toMatch(/https?:\/\//)
+      expect(String(input.attributes('autocomplete') ?? '')).not.toBe('off-url')
+    }
+    // 3) 协议选择器不存在：所有 select 都不带协议值。
+    for (const select of wrapper.findAll('select')) {
+      const values = Array.from((select.element as HTMLSelectElement).options).map((option) => option.value)
+      expect(values).not.toContain('openai-chat')
+      expect(values).not.toContain('openai-responses')
+      expect(values).not.toContain('anthropic-messages')
+    }
+    // 4) 密钥卡片内部只有下拉与按钮，没有一个输入框。
+    const keyCard = wrapper
+      .findAll('section.card')
+      .find((card) => card.text().includes(zh.imagegen.keyCardTitle))
+    expect(keyCard).toBeTruthy()
+    expect(keyCard!.findAll('input, textarea')).toHaveLength(0)
+    // 5) 文案里也不再出现「改写接口地址」这种可填项。
+    expect(wrapper.text()).not.toContain(zh.imagegen.rewriteEndpointLabel)
 
     wrapper.unmount()
   })
 
-  it('does not block generation when the rewrite side is unconfigured', async () => {
+  it('卡片默认只露两个密钥下拉与校验/详细配置按钮', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    // Turn the split config on but leave its key blank: the rewrite should be
-    // unusable on its own, while generation still validates normally.
-    const toggle = wrapper
-      .findAll('button')
-      .find((node) => node.text().includes(zh.imagegen.rewriteTitle))
-    await toggle!.trigger('click')
+    expect(wrapper.find('[data-test="generation-key-select"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rewrite-key-select"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="generation-key-check"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rewrite-key-check"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rewrite-advanced-open"]').exists()).toBe(true)
+    // 模型与思考强度收在弹窗里。
+    expect(wrapper.find('[data-test="rewrite-model-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rewrite-effort-select"]').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('点详细配置能打开弹窗，地址是只读的固定值', async () => {
+    const wrapper = mountView()
     await flushPromises()
 
-    const enableSwitch = wrapper.find('button[role="switch"]')
-    expect(enableSwitch.exists()).toBe(true)
-    await enableSwitch.trigger('click')
+    await wrapper.find('[data-test="rewrite-advanced-open"]').trigger('click')
+    await flushPromises()
+
+    // BaseDialog Teleport 到 body。
+    const endpoint = document.querySelector('[data-test="rewrite-endpoint-readonly"]')
+    expect(endpoint).toBeTruthy()
+    expect(endpoint!.textContent).toContain('https://api.example.com/v1/')
+    // 只读文本，不是输入框。
+    expect(endpoint!.tagName).toBe('P')
+
+    wrapper.unmount()
+  })
+
+  it('改写侧未配置时不影响生图按钮', async () => {
+    const wrapper = mountView()
     await flushPromises()
 
     const fetchStub = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     const before = fetchStub.mock.calls.length
 
-    // The generate button must still be live (not disabled by rewrite state).
+    // 生成按钮必须可用（不能被改写配置连带禁用）。
     const generate = wrapper
       .findAll('button')
       .find((node) => node.text().includes(zh.imagegen.generate))
