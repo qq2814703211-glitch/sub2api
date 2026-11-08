@@ -809,7 +809,7 @@ func computeCNYOfficialSyncChanges(
 		priced, ok := dataset.pricing(model)
 		// manual_overrides 命中：按运营配置的人民币价写入，优先级最高。
 		currentFields := decodeModelPricingSyncEntry(existing[model])
-		if manual, hit := dataset.manualPricing(model, providerOf(priced)); hit {
+		if manual, hit := dataset.manualPricing(model); hit {
 			changes = append(changes, cnyOfficialManualChanges(model, manual.PerToken, manual.LongContext, currentFields)...)
 			continue
 		}
@@ -887,13 +887,7 @@ func cnyOfficialManualLongContext(price CNYOfficialManualPrice) *cnyOfficialLong
 	}
 }
 
-// providerOf 安全取出 priced 的厂商名，priced 为 nil 时返回空串。
-func providerOf(priced *cnyOfficialPricing) string {
-	if priced == nil {
-		return ""
-	}
-	return priced.Provider
-}
+
 
 // cnyOfficialManualChanges 按运营手配价生成变更。
 //

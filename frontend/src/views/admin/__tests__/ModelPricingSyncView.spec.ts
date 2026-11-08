@@ -357,7 +357,6 @@ describe('ModelPricingSyncView 计价口径配置卡片', () => {
 
   it.each([
     ['empty model key', '', '1', '4', '0.02', '模型键不能为空'],
-    ['missing slash', 'deepseek-flash', '1', '4', '0.02', '模型键需为 vendor/model 格式'],
     ['negative price', 'deepseek/deepseek-flash', '-1', '4', '0.02', '需为非负数'],
     ['empty price', 'deepseek/deepseek-flash', '', '4', '0.02', '必填']
   ])('blocks the save request for %s', async (_case, model, input, output, cacheRead, expectedError) => {
@@ -380,6 +379,54 @@ describe('ModelPricingSyncView 计价口径配置卡片', () => {
     expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
     // 校验失败就把错误摊在行上，而不是只弹一次 toast。
     expect(wrapper.text()).toContain(expectedError)
+
+    wrapper.unmount()
+  })
+
+  it('裸模型名可以直接保存，不再要求含斜杠', async () => {
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = wrapper
+      .find('[data-testid^="pricing-row-model-"]')
+      .attributes('data-testid')!
+      .replace('pricing-row-model-', '')
+
+    await wrapper.find(`[data-testid="pricing-row-model-${suffix}"]`).setValue('deepseek-v4.1-flash-1017')
+    await wrapper.find(`[data-testid="pricing-row-input-${suffix}"]`).setValue('1')
+    await wrapper.find(`[data-testid="pricing-row-output-${suffix}"]`).setValue('4')
+    await wrapper.find(`[data-testid="pricing-row-cache_read-${suffix}"]`).setValue('0.02')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).toHaveBeenCalledTimes(1)
+    const payload = updateCnyOfficialConfig.mock.calls[0][0]
+    expect(Object.keys(payload.manual_overrides)).toEqual(['deepseek-v4.1-flash-1017'])
+    expect(wrapper.text()).not.toContain('vendor/model')
+
+    wrapper.unmount()
+  })
+
+  it('带斜杠的真实模型名原样提交，不被剥前缀', async () => {
+    const wrapper = await mountReady()
+
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    const suffix = wrapper
+      .find('[data-testid^="pricing-row-model-"]')
+      .attributes('data-testid')!
+      .replace('pricing-row-model-', '')
+
+    await wrapper.find(`[data-testid="pricing-row-model-${suffix}"]`).setValue('siliconflow/deepseek-v3.2')
+    await wrapper.find(`[data-testid="pricing-row-input-${suffix}"]`).setValue('55')
+    await wrapper.find(`[data-testid="pricing-row-output-${suffix}"]`).setValue('55')
+    await wrapper.find(`[data-testid="pricing-row-cache_read-${suffix}"]`).setValue('0.02')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    const payload = updateCnyOfficialConfig.mock.calls[0][0]
+    expect(Object.keys(payload.manual_overrides)).toEqual(['siliconflow/deepseek-v3.2'])
 
     wrapper.unmount()
   })
