@@ -1,28 +1,4 @@
 export default {
-  connectionDiagnostics: {
-    title: 'Connection Diagnostics',
-    description: 'Metadata-only HTTP and WebSocket lifecycle traces',
-    retention: 'Retained for {days} days',
-    enabled: 'Enable metadata diagnostics',
-    state: 'State',
-    allStates: 'All states',
-    abnormal: 'Abnormal',
-    source: 'Source',
-    requestId: 'Request ID',
-    model: 'Model',
-    empty: 'No connection traces found',
-    time: 'Time',
-    result: 'Result',
-    route: 'Route',
-    latency: 'Latency',
-    identity: 'Identity',
-    detail: 'Detail',
-    toggleDetail: 'Toggle detail',
-    network: 'Network',
-    flags: 'Flags',
-    page: 'Page {page}',
-    queue: 'Queue', dropped: 'Dropped', writeFailures: 'Write failures', previous: 'Previous', turn: 'Turn {turn}'
-  },
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',

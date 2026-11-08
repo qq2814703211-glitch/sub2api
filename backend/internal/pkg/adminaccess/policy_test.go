@@ -9,19 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConnectionDiagnosticPermissionsAreNarrowAndDefaultDeny(t *testing.T) {
-	for _, method := range []string{"GET", "PUT", "POST", "DELETE"} {
-		require.False(t, RouteAllowed(Policy{}, method, "/api/v1/admin/usage/connections"))
-	}
-	read := Policy{GlobalPermissions: []string{"usage.connections.read"}}
-	write := Policy{GlobalPermissions: []string{"usage.connections.write"}}
-	require.True(t, RouteAllowed(read, "GET", "/api/v1/admin/usage/connections"))
-	require.True(t, RouteAllowed(read, "GET", "/api/v1/admin/usage/connection-diagnostics"))
-	require.False(t, RouteAllowed(read, "PUT", "/api/v1/admin/usage/connection-diagnostics"))
-	require.False(t, RouteAllowed(write, "GET", "/api/v1/admin/usage/connections"))
-	require.True(t, RouteAllowed(write, "PUT", "/api/v1/admin/usage/connection-diagnostics"))
-}
-
 func TestScopedAdminPolicyDefaultDeny(t *testing.T) {
 	selectedGroupsOnly := Policy{Rules: []Rule{{GroupIDs: []int64{1}, AccountTypes: []string{"oauth"}}}}
 	for _, policy := range []Policy{{}, selectedGroupsOnly} {

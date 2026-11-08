@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -209,13 +207,7 @@ func (l *openAIWSConnLease) WriteJSONWithContextTimeout(ctx context.Context, val
 	if err != nil {
 		return err
 	}
-	err = conn.writeJSONWithTimeout(ctx, value, timeout)
-	if col := requesttiming.From(ctx); col != nil {
-		if raw, ok := value.(json.RawMessage); ok {
-			col.WSFrame(true, len(raw), false, err)
-		}
-	}
-	return err
+	return conn.writeJSONWithTimeout(ctx, value, timeout)
 }
 
 func (l *openAIWSConnLease) WriteJSONContext(ctx context.Context, value any) error {
@@ -247,11 +239,7 @@ func (l *openAIWSConnLease) ReadMessageWithContextTimeout(ctx context.Context, t
 	if err != nil {
 		return nil, err
 	}
-	payload, err := conn.readMessageWithContextTimeout(ctx, timeout)
-	if col := requesttiming.From(ctx); col != nil {
-		col.WSFrame(false, len(payload), openAIWSPassthroughStartsSemanticOutput(payload), err)
-	}
-	return payload, err
+	return conn.readMessageWithContextTimeout(ctx, timeout)
 }
 
 func (l *openAIWSConnLease) PingWithTimeout(timeout time.Duration) error {
@@ -2138,13 +2126,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
-	dialCtx, finishDiagnosticHandshake := requesttiming.StartHandshake(ctx, req.Account.ID)
-	conn, status, handshakeHeaders, err := p.clientDialer.Dial(dialCtx, req.WSURL, headers, req.ProxyURL)
-	if err == nil {
-		finishDiagnosticHandshake(http.StatusSwitchingProtocols, nil)
-	} else {
-		finishDiagnosticHandshake(status, err)
-	}
+	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
 		var responseBody []byte

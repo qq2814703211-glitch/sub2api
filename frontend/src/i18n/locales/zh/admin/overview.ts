@@ -1,28 +1,4 @@
 export default {
-  connectionDiagnostics: {
-    title: '连接诊断',
-    description: '仅保存元数据的 HTTP 与 WebSocket 生命周期记录',
-    retention: '保留 {days} 天',
-    enabled: '启用元数据诊断',
-    state: '状态',
-    allStates: '全部状态',
-    abnormal: '异常',
-    source: '来源',
-    requestId: '请求 ID',
-    model: '模型',
-    empty: '暂无连接诊断记录',
-    time: '时间',
-    result: '结果',
-    route: '路由',
-    latency: '延迟',
-    identity: '身份',
-    detail: '详情',
-    toggleDetail: '展开详情',
-    network: '网络',
-    flags: '标记',
-    page: '第 {page} 页',
-    queue: '队列', dropped: '已丢弃', writeFailures: '写入失败', previous: '上一页', turn: '第 {turn} 轮'
-  },
     // Dashboard
     dashboard: {
       title: '管理控制台',
