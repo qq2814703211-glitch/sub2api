@@ -145,9 +145,9 @@ func TestChannelMonitorV3FailedProbeBucketKeepsCacheUnknown(t *testing.T) {
 // allow-list or a platform gate of its own: empty models == show every model.
 func TestChannelMonitorV3BoardConfigImposesNoAllowList(t *testing.T) {
 	cfg := v3BoardConfig(service.ChannelMonitorV3BoardScope{
-		GroupIDs:               []int64{7, 9},
-		Platforms:              []string{"anthropic", "openai"},
-		CacheAverageWindowDays: 30,
+		GroupIDs:                  []int64{7, 9},
+		Platforms:                 []string{"anthropic", "openai"},
+		CacheAverageWindowMinutes: 30 * 24 * 60,
 	})
 
 	require.True(t, cfg.Enabled)
