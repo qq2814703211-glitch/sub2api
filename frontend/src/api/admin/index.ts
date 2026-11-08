@@ -123,7 +123,10 @@ export type {
   ModelPricingSyncHistoryRow,
   ModelPricingSyncHistoryQuery,
   ModelPricingSyncHistoryResponse,
-  ModelPricingSyncStatus
+  ModelPricingSyncStatus,
+  PricingCnyOfficialConfig,
+  PricingCnyOfficialUpdate,
+  PricingManualOverride
 } from './modelPricingSync'
 export type { BalanceHistoryItem } from './users'
 export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from './errorPassthrough'

@@ -649,16 +649,20 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 	return sink
 }
 
-// ProvideModelPricingSyncService 创建 models.dev 官方参考价同步服务。
+// ProvideModelPricingSyncService 创建官方参考价同步服务（三档口径）。
 //
 // 只在配置了 pricing.override_file 时才启动：没有写入目标就没有同步的意义，
 // 也避免在只读部署上无谓地打外网。同步间隔沿用 pricing.hash_check_interval_minutes，
 // 与覆盖层热重载的检查节奏一致。
+//
+// settingService 用来读 pricing.cny_official：该键缺失时人民币档整体关闭，
+// 行为退化成只有 usd 一档（与引入三档前一致）。
 func ProvideModelPricingSyncService(
 	cfg *config.Config,
 	pricingService *PricingService,
 	historyRepo ModelPricingSyncHistoryRepository,
 	remoteClient PricingRemoteClient,
+	settingService *SettingService,
 ) *ModelPricingSyncService {
 	if cfg == nil {
 		return NewModelPricingSyncService(nil, pricingService, historyRepo, nil)
@@ -666,6 +670,9 @@ func ProvideModelPricingSyncService(
 	syncCfg := &ModelPricingSyncConfig{
 		OverrideFile: strings.TrimSpace(cfg.Pricing.OverrideFile),
 		Interval:     time.Duration(cfg.Pricing.HashCheckIntervalMinutes) * time.Minute,
+	}
+	if settingService != nil {
+		syncCfg.SettingsReader = settingService
 	}
 	// 复用定价远程客户端（已带代理与连接池配置），不另建 HTTP 栈。
 	var fetcher modelPricingSyncFetcher
