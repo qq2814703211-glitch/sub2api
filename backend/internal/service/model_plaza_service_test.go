@@ -643,9 +643,10 @@ func TestListPlazaGroups_GroupCardsBoundModelSet(t *testing.T) {
 			got[g.Name] = names
 		}
 
-		// 国产分组恰好两个国产模型，不含渠道多的 gpt-6 / grok-4.7。
-		require.ElementsMatch(t, []string{"glm-5.3", "kimi-k3"}, got["cn"],
-			"switch=%v: 国产分组只能展示自己价卡里的模型", switchOn)
+		// 白名单开启时它就是售卖清单：勾选的四个都要出现，即使其中两个
+		// （gpt-6 / grok-4.7）不在这张价卡里、价格由官方参考价兜底。
+		require.ElementsMatch(t, []string{"glm-5.3", "kimi-k3", "gpt-6", "grok-4.7"}, got["cn"],
+			"switch=%v: 白名单勾选的模型必须全部展示", switchOn)
 		require.ElementsMatch(t, []string{"gpt-6", "grok-4.7"}, got["us"],
 			"switch=%v: 另一分组不受影响", switchOn)
 	}
@@ -691,11 +692,76 @@ func TestListPlazaGroups_AllowlistOnlyWhenNoCards(t *testing.T) {
 		}
 		switch g.Name {
 		case "priced":
-			require.ElementsMatch(t, []string{"gpt-6"}, names, "有价卡时不得掺入白名单条目")
+			// 白名单是售卖清单：other-model 没配价也要展示，价卡里的 gpt-6
+			// 因为不在白名单里而被收敛掉。
+			require.ElementsMatch(t, []string{"other-model"}, names,
+				"白名单开启时以白名单为准，价卡外的模型不展示")
 		case "unpriced":
-			// 没有价卡就没有收敛依据，渠道枚举（gpt-6）加白名单兜底（only-model）都在。
-			require.ElementsMatch(t, []string{"gpt-6", "only-model"}, names,
-				"无价卡时退回渠道口径并用白名单兜底，分组不得消失")
+			require.ElementsMatch(t, []string{"only-model"}, names,
+				"白名单开启时渠道枚举的多余模型一并收敛掉")
 		}
 	}
+}
+
+// TestListPlazaGroups_AllowlistFiltersCards 钉死本次口径：白名单开启时
+// 价卡里有、但没勾选的模型不展示（Grok Ultra 只勾 4 个，grok-4.3 不显示）。
+func TestListPlazaGroups_AllowlistFiltersCards(t *testing.T) {
+	channels := []Channel{{
+		ID: 1, Name: "grok", Status: StatusActive, GroupIDs: []int64{17},
+		ModelPricing: []ChannelModelPricing{{
+			Platform: PlatformGrok,
+			Models:   []string{"grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7", "grok-4.7-build-fast"},
+			BillingMode: BillingModeToken, InputPrice: testPtrFloat64(2e-6),
+		}},
+	}}
+	groups := []Group{{
+		ID: 17, Name: "Grok Ultra", Platform: PlatformGrok, RateMultiplier: 1,
+		ModelPlazaEnabled: true,
+		ModelPricing: []ChannelModelPricing{{
+			Platform: PlatformGrok,
+			Models:   []string{"grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7", "grok-4.7-build-fast"},
+			BillingMode: BillingModeToken, InputPrice: testPtrFloat64(1e-6),
+		}},
+		ModelAllowlist: GroupModelAllowlist{
+			Enabled: true,
+			Models:  []string{"grok-4.5", "grok-4.6", "grok-4.7", "grok-4.7-build-fast"},
+		},
+	}}
+
+	out, err := newPlazaService(channels, groups, nil).ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+
+	names := make([]string, 0, len(out[0].Models))
+	for _, m := range out[0].Models {
+		names = append(names, m.Name)
+	}
+	require.ElementsMatch(t, []string{"grok-4.5", "grok-4.6", "grok-4.7", "grok-4.7-build-fast"}, names,
+		"只展示白名单勾选的模型，未勾选的 grok-4.3 不得出现")
+}
+
+// TestListPlazaGroups_AllowlistWildcardStillFilters 确认通配白名单同样生效：
+// claude-* 只放行 claude 系，价卡里的其它模型被收敛掉。
+func TestListPlazaGroups_AllowlistWildcardStillFilters(t *testing.T) {
+	channels := []Channel{{
+		ID: 1, Name: "mix", Status: StatusActive, GroupIDs: []int64{5},
+		ModelPricing: []ChannelModelPricing{{
+			Platform: PlatformAnthropic, Models: []string{"claude-opus-5", "gpt-6"},
+			BillingMode: BillingModeToken, InputPrice: testPtrFloat64(1e-6),
+		}},
+	}}
+	groups := []Group{{
+		ID: 5, Name: "Claude", Platform: PlatformAnthropic, RateMultiplier: 1,
+		ModelPlazaEnabled: true,
+		ModelAllowlist:    GroupModelAllowlist{Enabled: true, Models: []string{"claude-*"}},
+	}}
+
+	out, err := newPlazaService(channels, groups, nil).ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	names := make([]string, 0, len(out[0].Models))
+	for _, m := range out[0].Models {
+		names = append(names, m.Name)
+	}
+	require.Equal(t, []string{"claude-opus-5"}, names, "通配白名单只放行匹配的模型")
 }
