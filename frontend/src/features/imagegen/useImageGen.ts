@@ -24,14 +24,18 @@ import { requestRewrite } from './rewriteApi'
 import {
   LEGACY_REWRITE_MODEL_KEY,
   REWRITE_CONFIG_STORAGE_KEY,
-  coerceEffortForProtocol,
-  normalizeRewriteBaseUrl,
-  normalizeRewriteConfig,
-  resolveRewriteRequest,
   type RewriteConfig,
   type RewriteEffort,
-  type RewriteProtocol,
+  type RewriteModelOption,
+  normalizeRewriteConfig,
+  resolveRewriteRequest,
 } from './rewriteConfig'
+import {
+  fetchRewriteModels,
+  listOwnKeys,
+  resolveKeyContext,
+} from './rewriteCatalog'
+import type { ApiKey } from '@/types'
 import type {
   GeneratedImage,
   HistoryItem,
@@ -129,9 +133,19 @@ export const STYLE_OPTIONS = [
 export type ToastKind = 'success' | 'error' | 'info'
 
 export function useImageGen(toast: (message: string, kind?: ToastKind) => void) {
-  // ==================== Form state ====================
-
+  // ==================== 密钥（生图 / AI 改写） ====================
+  //
+  // 两个密钥都从「我的密钥」列表里选，不再手填：
+  //   - 生图密钥：真正打 /v1/images/*，记在 `ig_apiKey`。
+  //   - AI 改写密钥：打 /v1/chat|responses|messages 改写提示词，只存密钥 id。
+  // 协议与模型都跟着密钥所属分组走，用户不需要理解协议差异。
   const apiKey = ref(safeGet(API_KEY_STORAGE) ?? '')
+  /** 生图密钥在列表里的 id，用于回显下拉选中项。 */
+  const generationKeyId = ref<number | null>(null)
+  /** 当前用户自己的密钥列表；两个下拉共用。 */
+  const ownKeys = ref<ApiKey[]>([])
+  const keysLoading = ref(false)
+
   const prompt = ref('')
   const model = ref('gpt-image-2')
   const size = ref('1024x1024')
@@ -145,13 +159,12 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
   const compression = ref(80)
   const style = ref('')
 
-  // ==================== AI rewrite config ====================
+  // ==================== AI 改写配置 ====================
   //
-  // Split from the image key on purpose: the rewrite LLM may live on another
-  // vendor entirely, so it carries its own credential, base URL, protocol,
-  // model and reasoning effort. `loadRewriteConfig` tolerates every shape an
-  // older profile could hold (see `normalizeRewriteConfig`), and `enabled`
-  // defaults to false so an untouched install keeps using the image key.
+  // 只保留用户真正要做的两个决定：用哪把密钥、选哪个模型（外加思考强度）。
+  // 地址写死成站内网关，协议按密钥所属分组自动判定，所以配置里不再有 baseUrl /
+  // protocol 字段。`loadRewriteConfig` 仍能读旧 profile（手填 apiKey 降级成只读
+  // 兜底令牌），迁移不会丢能力。
   const rewriteConfig = ref<RewriteConfig>(loadRewriteConfig())
   const rewriteModel = computed({
     get: () => rewriteConfig.value.model,
@@ -159,8 +172,74 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
       rewriteConfig.value = { ...rewriteConfig.value, model: value }
     },
   })
-  /** Persist on change rather than on every keystroke of the key field. */
+  /** 变了就落盘；弹窗里的选择也要能回读。 */
   watch(rewriteConfig, (value) => saveRewriteConfig(value), { deep: true })
+
+  /** 改写密钥分组内可用的文本模型。 */
+  const rewriteModels = ref<RewriteModelOption[]>([])
+  const rewriteModelsLoading = ref(false)
+  /** 用于丢弃过期响应的序号：快速换密钥时只认最后一次。 */
+  let rewriteModelsRequest = 0
+
+  /** 改写令牌（明文）与分组平台，供协议自适应与请求构造。 */
+  const rewriteKeyContext = computed(() => resolveKeyContext(ownKeys.value, rewriteConfig.value.keyId))
+
+  /**
+   * 实际生效的令牌与分组平台。
+   *
+   * 没选改写密钥时改写回落到生图密钥，此时协议也该按**生图密钥**所属分组判定
+   * ——否则一把 Anthropic 分组的密钥被当成 OpenAI 分组，会挑到错的端点。
+   */
+  const effectiveRewriteContext = computed(() => {
+    const dedicated = rewriteKeyContext.value
+    if (dedicated.key) return dedicated
+    return resolveKeyContext(ownKeys.value, generationKeyId.value)
+  })
+
+  /**
+   * 刷新改写模型候选。
+   *
+   * 候选来源必须是「当前改写密钥」的 /v1/models：换密钥就该换列表。没选改写
+   * 密钥时回落到生图密钥——那正是改写会用的令牌，列表也就该一致。
+   */
+  async function reloadRewriteModels(): Promise<void> {
+    const context = resolveKeyContext(ownKeys.value, rewriteConfig.value.keyId)
+    const key = context.key || resolveKeyContext(ownKeys.value, generationKeyId.value).key
+    const requestId = ++rewriteModelsRequest
+    if (!key) {
+      rewriteModels.value = []
+      return
+    }
+    rewriteModelsLoading.value = true
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15000)
+    try {
+      const models = await fetchRewriteModels(key, controller.signal)
+      if (requestId !== rewriteModelsRequest) return
+      rewriteModels.value = models
+      // 选中的模型不在新列表里就自动落到第一个，避免下拉显示空值却发出旧模型名。
+      if (models.length > 0 && !models.some((item) => item.id === rewriteConfig.value.model)) {
+        rewriteConfig.value = { ...rewriteConfig.value, model: models[0].id }
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestId === rewriteModelsRequest) rewriteModelsLoading.value = false
+    }
+  }
+
+  /** 拉一次「我的密钥」，并把已存下的生图令牌匹配回某个 id 以便回显。 */
+  async function loadOwnKeys(): Promise<void> {
+    keysLoading.value = true
+    try {
+      ownKeys.value = await listOwnKeys()
+      if (generationKeyId.value === null && apiKey.value) {
+        const matched = ownKeys.value.find((item) => String(item.key ?? '').trim() === apiKey.value.trim())
+        if (matched) generationKeyId.value = matched.id
+      }
+    } finally {
+      keysLoading.value = false
+    }
+  }
 
   const isCustomSize = computed(() => size.value === 'custom')
 
@@ -593,20 +672,19 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     safeSet(API_KEY_STORAGE, cleaned)
   }
 
-  // ==================== AI rewrite config persistence ====================
+  // ==================== AI 改写配置持久化 ====================
 
   /**
-   * Read the persisted rewrite config.
+   * 读取持久化的改写配置。
    *
-   * Backward compatibility, in order of preference:
-   *   1. `ig_rewriteConfig` — the shape this build writes.
-   *   2. A bare model string under the same key (nothing else wrote it, but a
-   *      hand-edited profile could have).
-   *   3. `ig_rewriteModel` — the seed the collapsed build never persisted but a
-   *      port-era profile might carry.
-   *   4. Nothing at all — the defaults, i.e. `gpt-6-astra` on the image key.
-   * A config whose fields are individually corrupt keeps whatever is valid,
-   * because `normalizeRewriteConfig` falls back per field.
+   * 兼容顺序：
+   *   1. `ig_rewriteConfig` —— 本版本写的形状（keyId/legacyApiKey/model/effort）。
+   *   2. 同一键下的裸模型名字符串（手改过的 profile 可能有）。
+   *   3. `ig_rewriteModel` —— 折叠版没写过、但移植期 profile 可能带。
+   *   4. 什么都没有 —— 默认值。
+   * 旧版的 `apiKey` 迁移成 `legacyApiKey`（只读兜底令牌），`baseUrl` 与 `protocol`
+   * 直接丢弃：地址写死、协议自适应，留着它们只会制造「地址无效」这种假错误。
+   * 字段逐个兜底，一个坏值不会带走其余字段。
    */
   function loadRewriteConfig(): RewriteConfig {
     const legacyModel = safeGet(LEGACY_REWRITE_MODEL_KEY)
@@ -615,61 +693,55 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     try {
       return normalizeRewriteConfig(JSON.parse(raw), legacyModel)
     } catch {
-      // Stored as a bare model name rather than JSON.
+      // 存的是裸模型名而不是 JSON。
       return normalizeRewriteConfig(raw, legacyModel)
     }
   }
 
   function saveRewriteConfig(value: RewriteConfig): void {
     safeSet(REWRITE_CONFIG_STORAGE_KEY, JSON.stringify(normalizeRewriteConfig(value)))
-    // The legacy key is now redundant; drop it so a later rename cannot
-    // resurrect a stale seed. Harmless to call on every save.
+    // 旧键已冗余，存一次就清掉，免得日后改名把它复活。
     safeRemove(LEGACY_REWRITE_MODEL_KEY)
   }
 
-  /** Switch protocol, stepping the effort down to a level it can express. */
-  function setRewriteProtocol(protocol: RewriteProtocol): void {
-    const effort = coerceEffortForProtocol(rewriteConfig.value.effort, protocol)
-    rewriteConfig.value = { ...rewriteConfig.value, protocol, effort }
+  /** 选中的 AI 改写密钥 id。改密钥要重算模型候选与协议。 */
+  function setRewriteKeyId(keyId: number | null): void {
+    rewriteConfig.value = { ...rewriteConfig.value, keyId }
+    void reloadRewriteModels()
   }
 
   function setRewriteEffort(effort: RewriteEffort): void {
-    rewriteConfig.value = {
-      ...rewriteConfig.value,
-      effort: coerceEffortForProtocol(effort, rewriteConfig.value.protocol),
-    }
-  }
-
-  function setRewriteEnabled(enabled: boolean): void {
-    rewriteConfig.value = { ...rewriteConfig.value, enabled }
-  }
-
-  function setRewriteApiKey(value: string): void {
-    rewriteConfig.value = { ...rewriteConfig.value, apiKey: value }
-  }
-
-  function setRewriteBaseUrl(value: string): void {
-    rewriteConfig.value = { ...rewriteConfig.value, baseUrl: normalizeRewriteBaseUrl(value) }
+    rewriteConfig.value = { ...rewriteConfig.value, effort }
   }
 
   function setRewriteModel(value: string): void {
     rewriteConfig.value = { ...rewriteConfig.value, model: value }
   }
 
-  /**
-   * Whether the next rewrite will bill the image token.
-   *
-   * This is exactly the `usesGenerationKey` rule in `resolveRewriteRequest`
-   * (off, or on-but-keyless), derived from the config alone. The UI shows it as
-   * an advisory badge — the authoritative decision is still made at call time.
-   */
-  const rewriteUsesGenerationKey = computed(() => {
-    const current = rewriteConfig.value
-    if (!current.enabled) return true
-    return !current.apiKey.trim()
-  })
+  /** 生图密钥改用下拉后，这一支负责把明文写进 `apiKey` 并落盘。 */
+  function setGenerationKeyId(keyId: number | null): void {
+    generationKeyId.value = keyId
+    const context = resolveKeyContext(ownKeys.value, keyId)
+    if (context.key) {
+      apiKey.value = context.key
+      safeSet(API_KEY_STORAGE, context.key)
+    }
+    // 生图密钥换了 → 兜底改写令牌也换了 → 模型候选要跟着换。
+    void reloadRewriteModels()
+  }
 
-  // ==================== Key verification ====================
+  /**
+   * 下一次改写是否会花生图令牌。
+   *
+   * 与 `resolveRewriteRequest` 的 `usesGenerationKey` 规则一致（有没有选中
+   * 改写密钥，或是否存着旧版手填令牌），UI 只拿它做提示徽标；真正的决定仍在
+   * 调用时做出。
+   */
+  const rewriteUsesGenerationKey = computed(
+    () => !rewriteConfig.value.keyId && !rewriteConfig.value.legacyApiKey.trim(),
+  )
+
+  // ==================== 密钥校验 ====================
 
   const keyStatus = ref<'unknown' | 'verified' | 'invalid'>('unknown')
   const checkingKey = ref(false)
@@ -680,7 +752,7 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     safeSet(API_KEY_STORAGE, cleaned)
     if (!cleaned) {
       keyStatus.value = 'invalid'
-      toast('请输入令牌', 'error')
+      toast('请选择生图密钥', 'error')
       return
     }
     try {
@@ -964,14 +1036,16 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
       return
     }
 
-    // Validate the resolved key/URL up front so the failure names the field
-    // that is wrong instead of surfacing as an opaque fetch TypeError.
-    const resolved = resolveRewriteRequest(rewriteConfig.value, apiKey.value)
+    // 先把解析出来的令牌校验一遍，让「哪一项没配好」这句话有落点，
+    // 而不是变成一个看不出所以然的 fetch TypeError。
+    const context = {
+      rewriteKey: rewriteKeyContext.value.key,
+      generationKey: apiKey.value,
+      platform: effectiveRewriteContext.value.platform,
+    }
+    const resolved = resolveRewriteRequest(rewriteConfig.value, context)
     if (!resolved.ok) {
-      const message =
-        resolved.reason === 'bad-base-url'
-          ? 'AI 改写接口地址无效，请填写 http(s) 开头的地址'
-          : '请输入令牌：AI 改写未单独配置令牌，也没有可回落的生图令牌'
+      const message = '请选择生图密钥或 AI 改写密钥：两者都没有时无法改写提示词'
       rewriteStatus.value = message
       toast(message, 'error')
       return
@@ -992,14 +1066,14 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     try {
       const result = await requestRewrite({
         config: rewriteConfig.value,
-        generationKey: apiKey.value,
+        context,
         original,
         instruction,
         signal: controller.signal,
       })
       rewrittenPrompt.value = result.prompt
       rewriteStatus.value = result.usesGenerationKey
-        ? '已生成新提示词（本次使用生图令牌，可在设置中单独配置改写令牌）'
+        ? '已生成新提示词（本次使用生图密钥，可在 AI 改写密钥里单独指定）'
         : '已生成新提示词，可继续修改或应用'
       toast('提示词已修改', 'success')
     } catch (error) {
@@ -1038,13 +1112,19 @@ export function useImageGen(toast: (message: string, kind?: ToastKind) => void) 
     compression,
     style,
     rewriteModel,
-    // AI rewrite config (split from the image key)
+    // 密钥（生图 / AI 改写共用一份「我的密钥」）
+    ownKeys,
+    keysLoading,
+    generationKeyId,
+    setGenerationKeyId,
+    loadOwnKeys,
+    // AI 改写配置
     rewriteConfig,
     rewriteUsesGenerationKey,
-    setRewriteEnabled,
-    setRewriteApiKey,
-    setRewriteBaseUrl,
-    setRewriteProtocol,
+    rewriteModels,
+    rewriteModelsLoading,
+    reloadRewriteModels,
+    setRewriteKeyId,
     setRewriteModel,
     setRewriteEffort,
     isCustomSize,
