@@ -81,6 +81,28 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 				return nil, fmt.Errorf("manual_overrides[%s].%s 不能为负", key, name)
 			}
 		}
+		// 长上下文阶梯：阈值必须是 ≥0 的整数（0 = 不启用），倍率留空按 0 存、
+		// 填了必须 ≥1。写坏这三个字段会让计费侧读到「有阈值但倍率无效」的组合。
+		if price.LongContextThreshold < 0 {
+			return nil, fmt.Errorf("manual_overrides[%s].long_context_threshold 不能为负", key)
+		}
+		for name, value := range map[string]float64{
+			"long_context_input_multiplier":  price.LongContextInputMultiplier,
+			"long_context_output_multiplier": price.LongContextOutputMultiplier,
+		} {
+			if value < 0 {
+				return nil, fmt.Errorf("manual_overrides[%s].%s 不能为负", key, name)
+			}
+			if value > 0 && value < 1 {
+				return nil, fmt.Errorf("manual_overrides[%s].%s 必须 ≥1（留空表示不涨价）", key, name)
+			}
+		}
+		// 只在配了倍率却没有阈值时拦：倍率没有阈值不生效，属于静默失效的配置。
+		if price.LongContextThreshold == 0 &&
+			(price.LongContextInputMultiplier > 0 || price.LongContextOutputMultiplier > 0) {
+			return nil, fmt.Errorf(
+				"manual_overrides[%s] 配置了长上下文倍率但 long_context_threshold 为空，倍率不会生效", key)
+		}
 		normalized.ManualOverrides[key] = price
 	}
 

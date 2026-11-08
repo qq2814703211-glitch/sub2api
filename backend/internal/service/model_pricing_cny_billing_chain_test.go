@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -287,4 +288,51 @@ func TestCNYOfficial_ManualOverrideCarriesMarkerAndShowsRMB(t *testing.T) {
 		"手工价条目必须带 cny_official，否则广场官方价仍按美元展示")
 	require.InDelta(t, 1e-6, entry["input_cost_per_token"], 1e-15)
 	require.InDelta(t, 4e-6, entry["output_cost_per_token"], 1e-15)
+}
+
+// TestCNYOfficial_ManualLongContextTakesEffectInBilling 端到端：手工配的长上下文
+// 阶梯写进覆盖层后，计费侧必须真的按倍率涨价 —— 写进去不生效等于没配。
+//
+// 缓存读/写跟输入倍率走，这里一并钉住，避免「只涨输入、缓存按原价」的漏收。
+func TestCNYOfficial_ManualLongContextTakesEffectInBilling(t *testing.T) {
+	body := []byte(`{
+		"deepseek-v4.1-flash-1017": {
+			"input_cost_per_token": 1e-6,
+			"output_cost_per_token": 4e-6,
+			"cache_read_input_token_cost": 0.02e-6,
+			"long_context_input_token_threshold": 32000,
+			"long_context_input_cost_multiplier": 1.5,
+			"long_context_output_cost_multiplier": 2,
+			"cny_official": true
+		}
+	}`)
+	cfg := &config.Config{}
+	svc := NewPricingService(cfg, nil)
+	parsed, err := svc.parsePricingData(body)
+	require.NoError(t, err)
+	svc.pricingData = parsed
+	bs := NewBillingService(cfg, svc)
+
+	pricing, err := bs.GetModelPricing("deepseek-v4.1-flash-1017")
+	require.NoError(t, err)
+	require.Equal(t, 32000, pricing.LongContextInputThreshold)
+	require.InDelta(t, 1.5, pricing.LongContextInputMultiplier, 1e-9)
+	require.InDelta(t, 2, pricing.LongContextOutputMultiplier, 1e-9)
+
+	// 短请求：不触发阶梯。
+	short, err := bs.CalculateCost("deepseek-v4.1-flash-1017", UsageTokens{
+		InputTokens: 10000, OutputTokens: 1000, CacheReadTokens: 1000,
+	}, 1)
+	require.NoError(t, err)
+	require.False(t, short.LongContextBillingApplied)
+
+	// 长请求：输入 ×1.5、输出 ×2、缓存读 ×1.5（跟输入侧倍率）。
+	long, err := bs.CalculateCost("deepseek-v4.1-flash-1017", UsageTokens{
+		InputTokens: 40000, OutputTokens: 1000, CacheReadTokens: 1000,
+	}, 1)
+	require.NoError(t, err)
+	require.True(t, long.LongContextBillingApplied, "超过阈值必须进入长上下文档")
+	require.InDelta(t, 0.06, long.InputCost, 1e-12)     // 40000 * 1e-6 * 1.5
+	require.InDelta(t, 0.008, long.OutputCost, 1e-12)   // 1000 * 4e-6 * 2
+	require.InDelta(t, 0.00003, long.CacheReadCost, 1e-12) // 1000 * 0.02e-6 * 1.5
 }
