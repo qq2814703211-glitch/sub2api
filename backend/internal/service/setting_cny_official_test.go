@@ -159,3 +159,75 @@ func TestCNYOfficialSettingsJSONShape(t *testing.T) {
 	require.Contains(t, entry, "output")
 	require.Contains(t, entry, "cache_read")
 }
+
+// TestSetCNYOfficialPricingSettings_LongContextValidation 校验长上下文三字段：
+// 写坏配置会让计费侧读到「有阈值但倍率无效」的组合，必须在写入前拦住。
+func TestSetCNYOfficialPricingSettings_LongContextValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		price CNYOfficialManualPrice
+		want  string
+	}{
+		{
+			name:  "负阈值被拒",
+			price: CNYOfficialManualPrice{Input: 1, Output: 4, LongContextThreshold: -1},
+			want:  "long_context_threshold 不能为负",
+		},
+		{
+			name:  "倍率小于1被拒",
+			price: CNYOfficialManualPrice{Input: 1, Output: 4, LongContextThreshold: 32000, LongContextInputMultiplier: 0.5},
+			want:  "必须 ≥1",
+		},
+		{
+			name:  "只有倍率没有阈值被拒",
+			price: CNYOfficialManualPrice{Input: 1, Output: 4, LongContextOutputMultiplier: 2},
+			want:  "倍率不会生效",
+		},
+		{
+			name:  "负倍率被拒",
+			price: CNYOfficialManualPrice{Input: 1, Output: 4, LongContextThreshold: 32000, LongContextInputMultiplier: -2},
+			want:  "不能为负",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := newCNYSettingsService()
+			_, err := svc.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+				Enabled:         true,
+				ManualOverrides: map[string]CNYOfficialManualPrice{"deepseek/deepseek-flash": tc.price},
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	// 阈值 0 + 倍率留空 = 不启用阶梯，合法。
+	svc, _ := newCNYSettingsService()
+	got, err := svc.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"deepseek/deepseek-flash": {Input: 1, Output: 4},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, got.ManualOverrides["deepseek/deepseek-flash"].LongContextThreshold)
+
+	// 完整配置留得下、读得回。
+	svc2, _ := newCNYSettingsService()
+	got2, err := svc2.SetCNYOfficialPricingSettings(context.Background(), &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"deepseek/deepseek-flash": {
+				Input: 1, Output: 4, CacheRead: 0.02,
+				LongContextThreshold:        32000,
+				LongContextInputMultiplier:  1.5,
+				LongContextOutputMultiplier: 2,
+			},
+		},
+	})
+	require.NoError(t, err)
+	saved := got2.ManualOverrides["deepseek/deepseek-flash"]
+	require.Equal(t, 32000, saved.LongContextThreshold)
+	require.InDelta(t, 1.5, saved.LongContextInputMultiplier, 1e-9)
+	require.InDelta(t, 2, saved.LongContextOutputMultiplier, 1e-9)
+}

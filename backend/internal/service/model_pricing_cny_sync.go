@@ -113,11 +113,24 @@ type CNYOfficialPricingSettings struct {
 // CNYOfficialManualPrice 是 manual_overrides 里的一个价位（人民币 / 百万 token）。
 // 它是最高优先级的一档：命中后同步按这份价格写入覆盖层，并用 cny_official 标记
 // 打通计费，永远不被人民币官方价或美元价覆盖。
+//
+// 长上下文阶梯也在这一档里配置：覆盖层只有「单阈值 + 输入/输出两个倍率」三个
+// 字段，缓存读/写不需要单独配倍率 —— 计费时长上下文输入倍率同时乘到输入、
+// 缓存读、缓存写三项上（缓存本质是输入侧复用）。
+// 三个阶梯字段全留空表示不开长上下文。
 type CNYOfficialManualPrice struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
 	CacheRead  float64 `json:"cache_read"`
 	CacheWrite float64 `json:"cache_write"`
+
+	// LongContextThreshold 是进入长上下文档的输入 token 阈值（含缓存读/写 token），
+	// 0 表示不配置阶梯。
+	LongContextThreshold int `json:"long_context_threshold,omitempty"`
+	// LongContextInputMultiplier 超阈值后输入侧（输入 + 缓存读 + 缓存写）的倍率。
+	LongContextInputMultiplier float64 `json:"long_context_input_multiplier,omitempty"`
+	// LongContextOutputMultiplier 超阈值后输出的倍率。
+	LongContextOutputMultiplier float64 `json:"long_context_output_multiplier,omitempty"`
 }
 
 // cnyOfficialSettingsReader 是本服务读取 settings 需要的最小接口。
@@ -323,6 +336,8 @@ type cnyOfficialManualPricing struct {
 	Model string
 	// PerToken 与官方价同口径（每 token）。
 	PerToken map[string]float64
+	// LongContext 是运营手配的长上下文阶梯；nil 表示不开。
+	LongContext *cnyOfficialLongContext
 }
 
 func (d *cnyOfficialDataset) pricing(model string) (*cnyOfficialPricing, bool) {
@@ -646,7 +661,11 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 			}
 			// 只登记裸模型名：ManualPricing 的查找也走裸名，多存一份带前缀的
 			// 只会让两处键空间不一致。
-			dataset.ManualPricing[bare] = cnyOfficialManualPricing{Model: bare, PerToken: perToken}
+			dataset.ManualPricing[bare] = cnyOfficialManualPricing{
+				Model:       bare,
+				PerToken:    perToken,
+				LongContext: cnyOfficialManualLongContext(price),
+			}
 		}
 	}
 	sort.Strings(report.Ladders)

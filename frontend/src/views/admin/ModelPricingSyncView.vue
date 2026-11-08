@@ -244,6 +244,45 @@
                     <Icon name="trash" size="sm" />
                   </button>
                 </div>
+
+                <!-- 长上下文阶梯：留空即不启用，所以这三列共用一排、字号更小。 -->
+                <div class="sm:col-span-12" :data-testid="`pricing-row-long-context-${row.id}`">
+                  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                      {{ t('admin.modelPricingSync.pricingSource.longContextTitle') }}
+                    </span>
+                    <span class="text-[11px] text-gray-400 dark:text-dark-500">
+                      {{ t('admin.modelPricingSync.pricingSource.longContextHint') }}
+                    </span>
+                  </div>
+                  <div class="mt-1 grid gap-3 sm:grid-cols-12">
+                    <label
+                      v-for="field in LONG_CONTEXT_FIELDS"
+                      :key="field"
+                      class="block sm:col-span-3"
+                    >
+                      <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                        {{ t(`admin.modelPricingSync.pricingSource.col.${field}`) }}
+                      </span>
+                      <input
+                        v-model.trim="row[field]"
+                        type="text"
+                        :inputmode="field === 'long_context_threshold' ? 'numeric' : 'decimal'"
+                        class="input mt-1 w-full font-mono text-xs"
+                        :class="{ 'input-error': rowErrors[row.id]?.[field] }"
+                        :placeholder="t(`admin.modelPricingSync.pricingSource.colPlaceholder.${field}`)"
+                        :data-testid="`pricing-row-${field}-${row.id}`"
+                      />
+                      <span
+                        v-if="rowErrors[row.id]?.[field]"
+                        class="input-error-text mt-1 block"
+                        :data-testid="`pricing-row-${field}-error-${row.id}`"
+                      >
+                        {{ rowErrors[row.id]?.[field] }}
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -443,7 +482,8 @@ import {
   adminAPI,
   type ModelPricingSyncHistoryRow,
   type ModelPricingSyncStatus,
-  type PricingCnyOfficialConfig
+  type PricingCnyOfficialConfig,
+  type PricingManualOverride
 } from '@/api/admin'
 import { DEFAULT_CN_VENDORS, DEFAULT_CNY_SOURCE_URL } from '@/api/admin/modelPricingSync'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -581,6 +621,17 @@ const PRICE_FIELDS = ['input', 'output', 'cache_read'] as const
 type PriceField = (typeof PRICE_FIELDS)[number]
 
 /**
+ * 长上下文阶梯三列。与 `PRICE_FIELDS` 分开：这三项留空合法，价格列留空报错。
+ * 顺序即界面顺序（阈值 → 输入倍率 → 输出倍率）。
+ */
+const LONG_CONTEXT_FIELDS = [
+  'long_context_threshold',
+  'long_context_input_multiplier',
+  'long_context_output_multiplier'
+] as const
+type LongContextField = (typeof LONG_CONTEXT_FIELDS)[number]
+
+/**
  * 编辑行用字符串存价格：`type="number"` 在清空时给空串，直接绑 number 会
  * 把 NaN 写进模型，保存时无从分辨「空」与「0」。
  *
@@ -592,9 +643,12 @@ interface OverrideRow {
   input: string
   output: string
   cache_read: string
+  long_context_threshold: string
+  long_context_input_multiplier: string
+  long_context_output_multiplier: string
 }
 
-type RowErrors = { model?: string } & Partial<Record<PriceField, string>>
+type RowErrors = { model?: string } & Partial<Record<PriceField | LongContextField, string>>
 
 const configLoading = ref(true)
 const configError = ref('')
@@ -650,13 +704,28 @@ const cnVendors = computed<string[]>(() => {
   return [...DEFAULT_CN_VENDORS]
 })
 
-function makeRow(model = '', price?: { input: number; output: number; cache_read: number }): OverrideRow {
+function makeRow(
+  model = '',
+  price?: {
+    input: number
+    output: number
+    cache_read: number
+    long_context_threshold?: number
+    long_context_input_multiplier?: number
+    long_context_output_multiplier?: number
+  }
+): OverrideRow {
+  // 后端这三个字段带 omitempty，缺省表示「不启用阶梯」，回填成空串才对得上语义。
+  const optionalText = (value: number | undefined) => (value === undefined ? '' : String(value))
   return {
     id: nextRowId++,
     model,
     input: price ? String(price.input) : '',
     output: price ? String(price.output) : '',
-    cache_read: price ? String(price.cache_read) : ''
+    cache_read: price ? String(price.cache_read) : '',
+    long_context_threshold: optionalText(price?.long_context_threshold),
+    long_context_input_multiplier: optionalText(price?.long_context_input_multiplier),
+    long_context_output_multiplier: optionalText(price?.long_context_output_multiplier)
   }
 }
 
@@ -701,6 +770,60 @@ function priceError(raw: string): string | undefined {
   return undefined
 }
 
+/** 阈值：留空合法；填了必须是 ≥0 的整数。 */
+function thresholdError(raw: string): string | undefined {
+  const text = raw.trim()
+  if (text === '') return undefined
+  const parsed = Number(text)
+  if (!Number.isFinite(parsed)) return t('admin.modelPricingSync.pricingSource.errThresholdInvalid')
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return t('admin.modelPricingSync.pricingSource.errThresholdInvalid')
+  }
+  return undefined
+}
+
+/** 倍率：留空合法；填了必须是 ≥1 的有限数。 */
+function multiplierError(raw: string): string | undefined {
+  const text = raw.trim()
+  if (text === '') return undefined
+  const parsed = Number(text)
+  if (!Number.isFinite(parsed)) return t('admin.modelPricingSync.pricingSource.errMultiplierInvalid')
+  if (parsed < 1) return t('admin.modelPricingSync.pricingSource.errMultiplierInvalid')
+  return undefined
+}
+
+/**
+ * 校验单行的三个长上下文字段。
+ *
+ * 单独抽出来是因为有一条跨字段规则：倍率填了但阈值留空 → 倍率没有阈值不生效，
+ * 必须拦。阈值为 0 时也确实不启用阶梯，所以填了倍率同样算错。
+ */
+function longContextErrors(row: OverrideRow): Partial<Record<LongContextField, string>> {
+  const errors: Partial<Record<LongContextField, string>> = {}
+
+  const thresholdMessage = thresholdError(row.long_context_threshold)
+  if (thresholdMessage) errors.long_context_threshold = thresholdMessage
+
+  const inputMessage = multiplierError(row.long_context_input_multiplier)
+  if (inputMessage) errors.long_context_input_multiplier = inputMessage
+
+  const outputMessage = multiplierError(row.long_context_output_multiplier)
+  if (outputMessage) errors.long_context_output_multiplier = outputMessage
+
+  // 阈值本身已经有错时不再叠加「缺阈值」，那只是同一个问题的两种说法。
+  if (errors.long_context_threshold) return errors
+
+  const thresholdText = row.long_context_threshold.trim()
+  const threshold = thresholdText === '' ? 0 : Number(thresholdText)
+  const hasMultiplier =
+    row.long_context_input_multiplier.trim() !== '' || row.long_context_output_multiplier.trim() !== ''
+  if (hasMultiplier && threshold <= 0) {
+    errors.long_context_threshold = t('admin.modelPricingSync.pricingSource.errThresholdRequiredForMultiplier')
+  }
+
+  return errors
+}
+
 /** 校验全部行，返回 id → 错误。纯函数，不改组件状态。 */
 function collectErrors(): Record<number, RowErrors> {
   const errors: Record<number, RowErrors> = {}
@@ -726,6 +849,8 @@ function collectErrors(): Record<number, RowErrors> {
       if (message) rowError[field] = message
     }
 
+    Object.assign(rowError, longContextErrors(row))
+
     if (Object.keys(rowError).length > 0) errors[row.id] = rowError
   }
 
@@ -739,18 +864,35 @@ function validate(): Record<number, RowErrors> {
   return errors
 }
 
+/**
+ * 行 → 提交用的 override 条目。
+ *
+ * 长上下文字段留空就整键省略（不是写 0）：后端带 `omitempty`，省略才是
+ * 「不启用阶梯」。快照与真实提交共用这一个函数，dirty 判断才不会与载荷漂移。
+ */
+function rowToOverride(row: OverrideRow): PricingManualOverride {
+  const override: PricingManualOverride = {
+    input: Number(row.input) || 0,
+    output: Number(row.output) || 0,
+    cache_read: Number(row.cache_read) || 0
+  }
+  const thresholdText = row.long_context_threshold.trim()
+  const inputMultiplierText = row.long_context_input_multiplier.trim()
+  const outputMultiplierText = row.long_context_output_multiplier.trim()
+  if (thresholdText !== '') override.long_context_threshold = Number(thresholdText)
+  if (inputMultiplierText !== '') override.long_context_input_multiplier = Number(inputMultiplierText)
+  if (outputMultiplierText !== '') override.long_context_output_multiplier = Number(outputMultiplierText)
+  return override
+}
+
 /** 稳定的载荷快照，字段顺序固定，供 dirty 比较与测试断言。 */
 function snapshot(): string {
   if (!config.value) return ''
-  const overrides: Record<string, { input: number; output: number; cache_read: number }> = {}
+  const overrides: Record<string, PricingManualOverride> = {}
   for (const row of overrideRows.value) {
     const model = row.model.trim()
     if (!model) continue
-    overrides[model] = {
-      input: Number(row.input) || 0,
-      output: Number(row.output) || 0,
-      cache_read: Number(row.cache_read) || 0
-    }
+    overrides[model] = rowToOverride(row)
   }
   return JSON.stringify({
     enabled: config.value.enabled,
@@ -800,14 +942,10 @@ async function save() {
     return
   }
 
-  const manualOverrides: Record<string, { input: number; output: number; cache_read: number }> = {}
+  const manualOverrides: Record<string, PricingManualOverride> = {}
   for (const row of overrideRows.value) {
     const model = row.model.trim()
-    manualOverrides[model] = {
-      input: Number(row.input),
-      output: Number(row.output),
-      cache_read: Number(row.cache_read)
-    }
+    manualOverrides[model] = rowToOverride(row)
   }
 
   saving.value = true

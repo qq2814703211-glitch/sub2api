@@ -126,6 +126,7 @@ export type {
   ModelPricingSyncStatus,
   PricingCnyOfficialConfig,
   PricingCnyOfficialUpdate,
+  PricingManualLongContext,
   PricingManualOverride
 } from './modelPricingSync'
 export type { BalanceHistoryItem } from './users'

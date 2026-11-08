@@ -120,8 +120,25 @@ export const DEFAULT_CN_VENDORS = [
   'zhipuai-coding-plan'
 ] as const
 
+/**
+ * 单模型的长上下文阶梯三字段，字段名与后端 `CNYOfficialManualPrice` 的
+ * json tag 一一对应，不要改名。
+ *
+ * - `long_context_threshold`：进入长上下文档的输入 token 阈值（含缓存读/写 token）。
+ * - `long_context_input_multiplier`：超阈值后输入侧（输入 + 缓存读 + 缓存写）的倍率。
+ * - `long_context_output_multiplier`：超阈值后输出的倍率。
+ *
+ * 三个字段后端都带 `omitempty`：留空就不落库；阈值 0 等价于不启用阶梯。
+ * 缓存读/写没有独立倍率，计费时与输入一起乘输入倍率。
+ */
+export interface PricingManualLongContext {
+  long_context_threshold?: number
+  long_context_input_multiplier?: number
+  long_context_output_multiplier?: number
+}
+
 /** 单模型手动覆盖价，单位「元 / 百万 tokens」。 */
-export interface PricingManualOverride {
+export interface PricingManualOverride extends PricingManualLongContext {
   input: number
   output: number
   cache_read: number
@@ -149,6 +166,19 @@ function toPrice(value: unknown): number {
   return parsed
 }
 
+/**
+ * 可选的数值字段（长上下文三兄弟）。与 `toPrice` 不同：缺省/空串/非数一律
+ * 返回 `undefined`，让调用方把键整个省掉 —— 后端这三个字段带 `omitempty`，
+ * 写 0 和不写并不完全等价，少写才是「不启用」的准确表达。
+ */
+function toOptionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string' && value.trim() === '') return undefined
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return undefined
+  return parsed
+}
+
 function normalizeOverrides(value: unknown): Record<string, PricingManualOverride> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const out: Record<string, PricingManualOverride> = {}
@@ -156,11 +186,18 @@ function normalizeOverrides(value: unknown): Record<string, PricingManualOverrid
     const key = model.trim()
     if (!key) continue
     const entry = (price && typeof price === 'object' ? price : {}) as Record<string, unknown>
-    out[key] = {
+    const override: PricingManualOverride = {
       input: toPrice(entry.input),
       output: toPrice(entry.output),
       cache_read: toPrice(entry.cache_read)
     }
+    const threshold = toOptionalNumber(entry.long_context_threshold)
+    const inputMultiplier = toOptionalNumber(entry.long_context_input_multiplier)
+    const outputMultiplier = toOptionalNumber(entry.long_context_output_multiplier)
+    if (threshold !== undefined) override.long_context_threshold = threshold
+    if (inputMultiplier !== undefined) override.long_context_input_multiplier = inputMultiplier
+    if (outputMultiplier !== undefined) override.long_context_output_multiplier = outputMultiplier
+    out[key] = override
   }
   return out
 }

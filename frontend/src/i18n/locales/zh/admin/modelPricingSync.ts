@@ -78,8 +78,18 @@ export default {
       col: {
         input: '输入价',
         output: '输出价',
-        cache_read: '缓存读取价'
+        cache_read: '缓存读取价',
+        long_context_threshold: '阈值（tokens）',
+        long_context_input_multiplier: '输入倍率',
+        long_context_output_multiplier: '输出倍率'
       },
+      colPlaceholder: {
+        long_context_threshold: '如 32000',
+        long_context_input_multiplier: '如 1.5',
+        long_context_output_multiplier: '如 2'
+      },
+      longContextTitle: '长上下文阶梯（留空不启用）',
+      longContextHint: '输入超阈值后，输入倍率同时乘到输入、缓存读、缓存写三项。',
       vendorsTitle: '国模厂商清单',
       vendorsHint: '（{count} 个，走 CNY 官方价）',
       save: '保存',
@@ -91,7 +101,10 @@ export default {
       errModelFormat: '模型键需为 vendor/model 格式（含斜杠）',
       errModelDuplicate: '模型键重复',
       errPriceRequired: '必填',
-      errPriceInvalid: '需为非负数'
+      errPriceInvalid: '需为非负数',
+      errThresholdInvalid: '需为不小于 0 的整数',
+      errMultiplierInvalid: '需为不小于 1 的数字',
+      errThresholdRequiredForMultiplier: '填了倍率必须同时填阈值（阈值需大于 0），否则阶梯不生效'
     }
   }
 }
