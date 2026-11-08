@@ -23,7 +23,16 @@ import (
 // UserWithConcurrency wraps AdminUser with current concurrency info
 type UserWithConcurrency struct {
 	dto.AdminUser
+	// CurrentConcurrency 是此刻的在途请求数，与 GET /users/:id/inflight 的
+	// total_inflight 同源（usage:inflight 登记表），列表与详情因此能对上。
 	CurrentConcurrency int `json:"current_concurrency"`
+	// SlotConcurrency 是并发槽位占用数（concurrency 槽位 ZSET）。
+	// 与 CurrentConcurrency 是不同口径：槽位由请求占用的准入计数构成，
+	// 在途登记是请求级快照，两者不一定相等，所以分开给出、各自带标签。
+	SlotConcurrency int `json:"slot_concurrency"`
+	// InflightAvailable 表示在途登记表是否可用；false 时 CurrentConcurrency
+	// 已回退为槽位数，前端据此避免把回退值当在途数展示。
+	InflightAvailable bool `json:"inflight_available"`
 }
 
 // UserHandler handles admin user management
@@ -59,6 +68,15 @@ func NewUserHandler(
 		userService:           userService,
 		settingService:        settingService,
 	}
+}
+
+// AdminService 返回 handler 持有的 admin 服务，供 wiring 层挂接可选能力。
+// 返回接口而不是 *adminServiceImpl：调用方只做窄接口断言，不依赖具体实现。
+func (h *UserHandler) AdminService() service.AdminService {
+	if h == nil {
+		return nil
+	}
+	return h.adminService
 }
 
 // SetUsageInflightService attaches the inflight aggregation service used by
@@ -197,6 +215,20 @@ func (h *UserHandler) List(c *gin.Context) {
 		loadInfo, _ = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
 	}
 
+	// 在途请求数：与 GET /users/:id/inflight 的 total_inflight 严格同源。
+	// 列表原先展示的是并发槽位数（concurrency 槽位 ZSET），详情展示在途请求数
+	// （usage:inflight:<uid>），同一个用户在列表看到 39、点开却看到 91——两个
+	// 无名数字只能让人怀疑其中一个是错的。统一到在途请求数（用户理解的就是
+	// "他此刻在跑几个请求"），槽位数继续在 slot_concurrency 里给出并带标签。
+	var inflightCounts map[int64]int
+	if len(users) > 0 && h.usageInflightService != nil {
+		userIDs := make([]int64, len(users))
+		for i := range users {
+			userIDs[i] = users[i].ID
+		}
+		inflightCounts, _ = h.usageInflightService.CountUserInflightBatch(c.Request.Context(), userIDs)
+	}
+
 	// Build response with concurrency info
 	out := make([]UserWithConcurrency, len(users))
 	for i := range users {
@@ -204,7 +236,14 @@ func (h *UserHandler) List(c *gin.Context) {
 			AdminUser: *dto.UserFromServiceAdmin(&users[i]),
 		}
 		if info := loadInfo[users[i].ID]; info != nil {
-			out[i].CurrentConcurrency = info.CurrentConcurrency
+			out[i].SlotConcurrency = info.CurrentConcurrency
+		}
+		// 在途登记不可用时退回槽位数，避免整列显示 0 让人误判用户完全空闲。
+		if n, ok := inflightCounts[users[i].ID]; ok {
+			out[i].CurrentConcurrency = n
+			out[i].InflightAvailable = true
+		} else {
+			out[i].CurrentConcurrency = out[i].SlotConcurrency
 		}
 	}
 

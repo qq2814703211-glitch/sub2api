@@ -718,6 +718,22 @@ type adminServiceImpl struct {
 	compositeResolver    *CompositeRouteResolver
 	// 分组平台变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）
 	channelCacheInvalidator ChannelCacheInvalidator
+	// usageInflight 提供实时在途请求数，用于「按当前并发排序」与列表口径统一。
+	// 可为 nil（未接线或 Redis 不可用时排序回落到按上限）。
+	usageInflight UserInflightCounter
+}
+
+// UserInflightCounter 是批量读取在途请求数的能力，只取 AdminService 需要的那一个方法，
+// 避免把整个 UsageInflightService 的读路径都暴露给 admin 服务。
+// 导出是为了让 handler 层能在不依赖 *adminServiceImpl 具体类型的前提下完成挂接。
+type UserInflightCounter interface {
+	CountUserInflightBatch(ctx context.Context, userIDs []int64) (map[int64]int, error)
+}
+
+// UserInflightCounterSetter 让在途请求数读取能力可被挂接到 admin 服务上。
+// 定义在 service 包，handler 层与 wire 都只依赖这个窄接口。
+type UserInflightCounterSetter interface {
+	SetUsageInflightCounter(counter UserInflightCounter)
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。
@@ -789,4 +805,13 @@ func NewAdminService(
 
 		channelCacheInvalidator: channelCacheInvalidator,
 	}
+}
+
+// SetUsageInflightCounter 挂接在途请求数读取能力，供「按当前并发排序」使用。
+// 用 setter 而不是改构造函数签名：wire 生成代码与大量测试桩都依赖现有签名。
+func (s *adminServiceImpl) SetUsageInflightCounter(counter UserInflightCounter) {
+	if s == nil {
+		return
+	}
+	s.usageInflight = counter
 }

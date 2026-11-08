@@ -20,6 +20,13 @@ import (
 
 // User management implementations
 func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, filters UserListFilters, sortBy, sortOrder string) ([]User, int64, error) {
+	// 按实时并发排序：实时值在 Redis（usage:inflight 登记表）里，SQL 排不了。
+	// 只排当前页是错的（翻页既非全局序，又可能重复/遗漏），所以走
+	// 「全量 ID → 批量取在途数 → 应用层排序 → 再分页取详情」。
+	if isCurrentConcurrencySort(sortBy) {
+		return s.listUsersByCurrentConcurrency(ctx, page, pageSize, filters, sortOrder)
+	}
+
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	users, result, err := s.userRepo.ListWithFilters(ctx, params, filters)
 	if err != nil {
@@ -62,6 +69,129 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, fi
 		}
 	}
 	return users, result.Total, nil
+}
+
+// adminUserSortCurrentConcurrency 是「按当前并发（实时在途请求数）排序」的排序键。
+// 与既有 "concurrency"（并发上限配额，users.concurrency 列）刻意分开：
+// 上限几乎人人相同，按它排看起来就像按 ID 排，正是用户报的现象。
+const adminUserSortCurrentConcurrency = "current_concurrency"
+
+func isCurrentConcurrencySort(sortBy string) bool {
+	return strings.ToLower(strings.TrimSpace(sortBy)) == adminUserSortCurrentConcurrency
+}
+
+// listUsersByCurrentConcurrency 按实时在途请求数做全局排序并分页。
+//
+// 取舍说明：在途数存在 Redis（usage:inflight:<uid>），SQL 排不了。
+//   - 只排当前页不可接受：那样第 2 页的「最大值」可能比第 1 页还大，翻页既非
+//     全局序，也无法保证不重复不遗漏。
+//   - 因此取全量 ID → 一次批量读在途数 → 应用层稳定排序 → 按 offset/limit 切页
+//     → 只对当页 ID 回表取详情。代价是一次全量 ID 扫描（只取 id 列）和一次
+//     Redis pipeline，换来正确的跨页语义。
+//
+// 在途读取不可用（未接线 / Redis 故障）时不静默给错序：回落到按并发上限排序，
+// 并让调用方通过排序键的原始语义继续工作，而不是返回看似排过实则随机的顺序。
+func (s *adminServiceImpl) listUsersByCurrentConcurrency(ctx context.Context, page, pageSize int, filters UserListFilters, sortOrder string) ([]User, int64, error) {
+	if s.usageInflight == nil {
+		// 没有实时数据源：退化为按上限排，至少语义明确且稳定。
+		params := pagination.PaginationParams{
+			Page: page, PageSize: pageSize,
+			SortBy:    "concurrency",
+			SortOrder: sortOrder,
+		}
+		users, result, err := s.userRepo.ListWithFilters(ctx, params, filters)
+		if err != nil {
+			return nil, 0, err
+		}
+		return users, result.Total, nil
+	}
+
+	reader, ok := s.userRepo.(userIDListReader)
+	if !ok {
+		return nil, 0, fmt.Errorf("list users by current concurrency: repository does not support unpaginated id listing")
+	}
+
+	ids, err := reader.ListIDsWithFilters(ctx, filters)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(ids))
+	if len(ids) == 0 {
+		return []User{}, 0, nil
+	}
+
+	counts, err := s.usageInflight.CountUserInflightBatch(ctx, ids)
+	if err != nil {
+		// 在途读失败同样不能给错序：退化为按上限排。
+		params := pagination.PaginationParams{
+			Page: page, PageSize: pageSize,
+			SortBy:    "concurrency",
+			SortOrder: sortOrder,
+		}
+		users, result, fallbackErr := s.userRepo.ListWithFilters(ctx, params, filters)
+		if fallbackErr != nil {
+			return nil, 0, fallbackErr
+		}
+		return users, result.Total, nil
+	}
+
+	desc := pagination.NormalizeSortOrder(sortOrder, pagination.SortOrderDesc) != pagination.SortOrderAsc
+	// 稳定排序 + ID 兜底：并发数相同时顺序固定，翻页不会因相等值抖动而重复/遗漏。
+	sort.SliceStable(ids, func(i, j int) bool {
+		ci, cj := counts[ids[i]], counts[ids[j]]
+		if ci != cj {
+			if desc {
+				return ci > cj
+			}
+			return ci < cj
+		}
+		if desc {
+			return ids[i] > ids[j]
+		}
+		return ids[i] < ids[j]
+	})
+
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: adminUserSortCurrentConcurrency, SortOrder: sortOrder}
+	offset := params.Offset()
+	if offset >= len(ids) {
+		return []User{}, total, nil
+	}
+	end := offset + params.Limit()
+	if end > len(ids) {
+		end = len(ids)
+	}
+	pageIDs := ids[offset:end]
+
+	detailReader, ok := s.userRepo.(userDetailByIDsReader)
+	if !ok {
+		return nil, 0, fmt.Errorf("list users by current concurrency: repository does not support batch detail loading")
+	}
+	pageUsers, err := detailReader.ListByIDsWithFilters(ctx, pageIDs, filters)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 回表结果顺序不保证，按排好的顺序重排，分页才与排序一致。
+	byID := make(map[int64]User, len(pageUsers))
+	for i := range pageUsers {
+		byID[pageUsers[i].ID] = pageUsers[i]
+	}
+	ordered := make([]User, 0, len(pageIDs))
+	for _, id := range pageIDs {
+		if u, found := byID[id]; found {
+			ordered = append(ordered, u)
+		}
+	}
+	return ordered, total, nil
+}
+
+// userIDListReader 是「取全量匹配 ID」的可选仓储能力。
+type userIDListReader interface {
+	ListIDsWithFilters(ctx context.Context, filters UserListFilters) ([]int64, error)
+}
+
+// userDetailByIDsReader 是「按 ID 批量取用户详情」的可选仓储能力。
+type userDetailByIDsReader interface {
+	ListByIDsWithFilters(ctx context.Context, ids []int64, filters UserListFilters) ([]User, error)
 }
 
 func (s *adminServiceImpl) loadUserGroupRatesOneByOne(ctx context.Context, users []User) {
