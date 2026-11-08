@@ -89,6 +89,9 @@ export default {
         long_context_output_multiplier: 'e.g. 2'
       },
       longContextTitle: 'Long-context tier (leave blank to disable)',
+      longContextBadge: 'tier',
+      expandAll: 'Expand all',
+      collapseAll: 'Collapse all',
       longContextHint:
         'Above the threshold, the input multiplier also applies to cache read and cache write.',
       vendorsTitle: 'Chinese vendor list',

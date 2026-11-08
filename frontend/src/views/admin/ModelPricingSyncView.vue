@@ -151,15 +151,35 @@
                   {{ t('admin.modelPricingSync.pricingSource.manualHint') }}
                 </p>
               </div>
-              <button
-                type="button"
-                class="btn btn-secondary btn-sm"
-                data-testid="pricing-add-row"
-                @click="addRow"
-              >
-                <Icon name="plus" size="sm" />
-                {{ t('admin.modelPricingSync.pricingSource.addRow') }}
-              </button>
+              <div class="flex items-center gap-2">
+                <template v-if="overrideRows.length > 0">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    data-testid="pricing-expand-all"
+                    @click="toggleAllRows(true)"
+                  >
+                    {{ t('admin.modelPricingSync.pricingSource.expandAll') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    data-testid="pricing-collapse-all"
+                    @click="toggleAllRows(false)"
+                  >
+                    {{ t('admin.modelPricingSync.pricingSource.collapseAll') }}
+                  </button>
+                </template>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  data-testid="pricing-add-row"
+                  @click="addRow"
+                >
+                  <Icon name="plus" size="sm" />
+                  {{ t('admin.modelPricingSync.pricingSource.addRow') }}
+                </button>
+              </div>
             </div>
 
             <div
@@ -177,65 +197,45 @@
               <div
                 v-for="row in overrideRows"
                 :key="row.id"
-                class="grid gap-3 py-3 sm:grid-cols-12"
+                class="py-2"
                 :data-testid="`pricing-row-${row.id}`"
+                :data-expanded="row.expanded ? 'true' : 'false'"
               >
-                <label class="block sm:col-span-4">
-                  <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
-                    {{ t('admin.modelPricingSync.pricingSource.colModel') }}
-                  </span>
-                  <input
-                    v-model.trim="row.model"
-                    type="text"
-                    class="input mt-1 w-full font-mono text-sm"
-                    :class="{ 'input-error': rowErrors[row.id]?.model }"
-                    :placeholder="t('admin.modelPricingSync.pricingSource.colModelPlaceholder')"
-                    :data-testid="`pricing-row-model-${row.id}`"
-                  />
-                  <span
-                    v-if="rowErrors[row.id]?.model"
-                    class="input-error-text mt-1 block"
-                    :data-testid="`pricing-row-model-error-${row.id}`"
-                  >
-                    {{ rowErrors[row.id]?.model }}
-                  </span>
-                </label>
-
-                <label
-                  v-for="field in PRICE_FIELDS"
-                  :key="field"
-                  class="block sm:col-span-2"
-                >
-                  <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
-                    {{ t(`admin.modelPricingSync.pricingSource.col.${field}`) }}
-                  </span>
-                  <input
-                    v-model.trim="row[field]"
-                    type="text"
-                    inputmode="decimal"
-                    class="input mt-1 w-full font-mono text-sm"
-                    :class="{ 'input-error': rowErrors[row.id]?.[field] }"
-                    :data-testid="`pricing-row-${field}-${row.id}`"
-                  />
-                  <span
-                    v-if="rowErrors[row.id]?.[field]"
-                    class="input-error-text mt-1 block"
-                    :data-testid="`pricing-row-${field}-error-${row.id}`"
-                  >
-                    {{ rowErrors[row.id]?.[field] }}
-                  </span>
-                </label>
-
-                <div class="flex items-end justify-between gap-2 sm:col-span-2">
-                  <span
-                    class="text-[11px] leading-tight text-primary-600 dark:text-primary-300"
-                    data-testid="pricing-row-priority-note"
-                  >
-                    {{ t('admin.modelPricingSync.pricingSource.manualPriorityNote') }}
-                  </span>
+                <!-- 收起态：一行摘要。模型名 + 价格 + 阶梯标记，点整行展开。 -->
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <button
                     type="button"
-                    class="btn btn-ghost btn-sm text-red-600 hover:text-red-700 dark:text-red-400"
+                    class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    :aria-expanded="row.expanded"
+                    :data-testid="`pricing-row-toggle-${row.id}`"
+                    @click="toggleRow(row.id)"
+                  >
+                    <Icon
+                      name="chevronRight"
+                      size="sm"
+                      class="h-4 w-4 shrink-0 text-gray-400 transition-transform"
+                      :class="{ 'rotate-90': row.expanded }"
+                    />
+                    <code class="truncate font-mono text-sm text-gray-800 dark:text-gray-200">
+                      {{ row.model || t('admin.modelPricingSync.pricingSource.colModelPlaceholder') }}
+                    </code>
+                  </button>
+
+                  <code class="shrink-0 font-mono text-[11px] text-gray-500 dark:text-dark-400">
+                    {{ rowSummary(row) }}
+                  </code>
+
+                  <span
+                    v-if="hasLongContext(row)"
+                    class="shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                    :data-testid="`pricing-row-lc-badge-${row.id}`"
+                  >
+                    {{ t('admin.modelPricingSync.pricingSource.longContextBadge') }}
+                  </span>
+
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm shrink-0 text-red-600 hover:text-red-700 dark:text-red-400"
                     :title="t('admin.modelPricingSync.pricingSource.removeRow')"
                     :aria-label="t('admin.modelPricingSync.pricingSource.removeRow')"
                     :data-testid="`pricing-remove-row-${row.id}`"
@@ -245,21 +245,34 @@
                   </button>
                 </div>
 
-                <!-- 长上下文阶梯：留空即不启用，所以这三列共用一排、字号更小。 -->
-                <div class="sm:col-span-12" :data-testid="`pricing-row-long-context-${row.id}`">
-                  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
-                      {{ t('admin.modelPricingSync.pricingSource.longContextTitle') }}
-                    </span>
-                    <span class="text-[11px] text-gray-400 dark:text-dark-500">
-                      {{ t('admin.modelPricingSync.pricingSource.longContextHint') }}
-                    </span>
-                  </div>
-                  <div class="mt-1 grid gap-3 sm:grid-cols-12">
+                <!-- 展开态：完整字段。 -->
+                <div v-show="row.expanded" class="mt-2">
+                  <div class="grid gap-3 sm:grid-cols-12">
+                    <label class="block sm:col-span-4">
+                      <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                        {{ t('admin.modelPricingSync.pricingSource.colModel') }}
+                      </span>
+                      <input
+                        v-model.trim="row.model"
+                        type="text"
+                        class="input mt-1 w-full font-mono text-sm"
+                        :class="{ 'input-error': rowErrors[row.id]?.model }"
+                        :placeholder="t('admin.modelPricingSync.pricingSource.colModelPlaceholder')"
+                        :data-testid="`pricing-row-model-${row.id}`"
+                      />
+                      <span
+                        v-if="rowErrors[row.id]?.model"
+                        class="input-error-text mt-1 block"
+                        :data-testid="`pricing-row-model-error-${row.id}`"
+                      >
+                        {{ rowErrors[row.id]?.model }}
+                      </span>
+                    </label>
+
                     <label
-                      v-for="field in LONG_CONTEXT_FIELDS"
+                      v-for="field in PRICE_FIELDS"
                       :key="field"
-                      class="block sm:col-span-3"
+                      class="block sm:col-span-2"
                     >
                       <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
                         {{ t(`admin.modelPricingSync.pricingSource.col.${field}`) }}
@@ -267,10 +280,9 @@
                       <input
                         v-model.trim="row[field]"
                         type="text"
-                        :inputmode="field === 'long_context_threshold' ? 'numeric' : 'decimal'"
-                        class="input mt-1 w-full font-mono text-xs"
+                        inputmode="decimal"
+                        class="input mt-1 w-full font-mono text-sm"
                         :class="{ 'input-error': rowErrors[row.id]?.[field] }"
-                        :placeholder="t(`admin.modelPricingSync.pricingSource.colPlaceholder.${field}`)"
                         :data-testid="`pricing-row-${field}-${row.id}`"
                       />
                       <span
@@ -281,6 +293,54 @@
                         {{ rowErrors[row.id]?.[field] }}
                       </span>
                     </label>
+
+                    <div class="flex items-end justify-end sm:col-span-2">
+                      <span
+                        class="text-[11px] leading-tight text-primary-600 dark:text-primary-300"
+                        data-testid="pricing-row-priority-note"
+                      >
+                        {{ t('admin.modelPricingSync.pricingSource.manualPriorityNote') }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- 长上下文阶梯：留空即不启用，所以这三列共用一排、字号更小。 -->
+                  <div class="mt-2" :data-testid="`pricing-row-long-context-${row.id}`">
+                    <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                        {{ t('admin.modelPricingSync.pricingSource.longContextTitle') }}
+                      </span>
+                      <span class="text-[11px] text-gray-400 dark:text-dark-500">
+                        {{ t('admin.modelPricingSync.pricingSource.longContextHint') }}
+                      </span>
+                    </div>
+                    <div class="mt-1 grid gap-3 sm:grid-cols-12">
+                      <label
+                        v-for="field in LONG_CONTEXT_FIELDS"
+                        :key="field"
+                        class="block sm:col-span-3"
+                      >
+                        <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                          {{ t(`admin.modelPricingSync.pricingSource.col.${field}`) }}
+                        </span>
+                        <input
+                          v-model.trim="row[field]"
+                          type="text"
+                          :inputmode="field === 'long_context_threshold' ? 'numeric' : 'decimal'"
+                          class="input mt-1 w-full font-mono text-xs"
+                          :class="{ 'input-error': rowErrors[row.id]?.[field] }"
+                          :placeholder="t(`admin.modelPricingSync.pricingSource.colPlaceholder.${field}`)"
+                          :data-testid="`pricing-row-${field}-${row.id}`"
+                        />
+                        <span
+                          v-if="rowErrors[row.id]?.[field]"
+                          class="input-error-text mt-1 block"
+                          :data-testid="`pricing-row-${field}-error-${row.id}`"
+                        >
+                          {{ rowErrors[row.id]?.[field] }}
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -646,6 +706,8 @@ interface OverrideRow {
   long_context_threshold: string
   long_context_input_multiplier: string
   long_context_output_multiplier: string
+  /** 行是否展开。默认收起 —— manual 一多，全展开会把卡片拉成几十屏。 */
+  expanded: boolean
 }
 
 type RowErrors = { model?: string } & Partial<Record<PriceField | LongContextField, string>>
@@ -725,8 +787,32 @@ function makeRow(
     cache_read: price ? String(price.cache_read) : '',
     long_context_threshold: optionalText(price?.long_context_threshold),
     long_context_input_multiplier: optionalText(price?.long_context_input_multiplier),
-    long_context_output_multiplier: optionalText(price?.long_context_output_multiplier)
+    long_context_output_multiplier: optionalText(price?.long_context_output_multiplier),
+    // 已有行默认收起；新增行由 addRow 展开（见那里），避免点「添加」后还得再点一次。
+    expanded: false
   }
+}
+
+/** 收起态的一行摘要：¥输入/输出/缓存读。空值用 — 占位。 */
+function rowSummary(row: OverrideRow): string {
+  const parts = PRICE_FIELDS.map((field) => (row[field] ? row[field] : '—'))
+  return `¥${parts.join(' / ')}`
+}
+
+/** 收了长上下文阶梯才算有；只填阈值不填倍率等于没配，不亮标记。 */
+function hasLongContext(row: OverrideRow): boolean {
+  if (!row.long_context_threshold) return false
+  return Boolean(row.long_context_input_multiplier || row.long_context_output_multiplier)
+}
+
+function toggleRow(id: number) {
+  const row = overrideRows.value.find((item) => item.id === id)
+  if (row) row.expanded = !row.expanded
+}
+
+/** 展开所有行 / 收起所有行 —— manual 多的时候省得一个个点。 */
+function toggleAllRows(expand: boolean) {
+  for (const row of overrideRows.value) row.expanded = expand
 }
 
 function applyConfig(next: PricingCnyOfficialConfig) {
@@ -741,6 +827,8 @@ function applyConfig(next: PricingCnyOfficialConfig) {
 
 function addRow() {
   const row = makeRow()
+  // 新增行直接展开：刚点完「添加」就是要填，再点一次展开是多余的。
+  row.expanded = true
   overrideRows.value = [...overrideRows.value, row]
   // 新行默认聚焦到模型键，省一次点击。
   void nextTickFocus(`[data-testid="pricing-row-model-${row.id}"]`)
