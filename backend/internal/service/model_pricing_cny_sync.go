@@ -111,8 +111,8 @@ type CNYOfficialPricingSettings struct {
 }
 
 // CNYOfficialManualPrice 是 manual_overrides 里的一个价位（人民币 / 百万 token）。
-// 本版同步只用它做「跳过」判定，不会把它写进覆盖层：人工价由运营自己在价卡
-// 或覆盖层里配，同步只负责不覆盖。
+// 它是最高优先级的一档：命中后同步按这份价格写入覆盖层，并用 cny_official 标记
+// 打通计费，永远不被人民币官方价或美元价覆盖。
 type CNYOfficialManualPrice struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
@@ -311,7 +311,18 @@ type cnyOfficialDataset struct {
 	Pricing         map[string]*cnyOfficialPricing
 	National        map[string]struct{}
 	ManualOverrides map[string]struct{}
-	Report          *CNYOfficialSyncReport
+	// ManualPricing 是 manual_overrides 解析出的真实价格，键为归一化后的模型名
+	// （同时收录 "<vendor>/<model>" 与裸 "<model>" 两种写法）。它是最高优先级
+	// 一档：命中后同步按这份价格写入覆盖层，不用官方人民币价。
+	ManualPricing map[string]cnyOfficialManualPricing
+	Report        *CNYOfficialSyncReport
+}
+
+// cnyOfficialManualPricing 是 manual_overrides 落成覆盖层条目所需的信息。
+type cnyOfficialManualPricing struct {
+	Model string
+	// PerToken 与官方价同口径（每 token）。
+	PerToken map[string]float64
 }
 
 func (d *cnyOfficialDataset) pricing(model string) (*cnyOfficialPricing, bool) {
@@ -320,6 +331,27 @@ func (d *cnyOfficialDataset) pricing(model string) (*cnyOfficialPricing, bool) {
 	}
 	priced, ok := d.Pricing[model]
 	return priced, ok
+}
+
+// manualPricing 取该模型的手工价。provider 非空时优先匹配 "<provider>/<model>"，
+// 再退回裸 "<model>"，与 manualOverrideHit 的匹配顺序一致。
+func (d *cnyOfficialDataset) manualPricing(model, provider string) (*cnyOfficialManualPricing, bool) {
+	if d == nil || len(d.ManualPricing) == 0 {
+		return nil, false
+	}
+	model = cnyOfficialBareModelName(model)
+	if model == "" {
+		return nil, false
+	}
+	if provider != "" {
+		if priced, ok := d.ManualPricing[strings.ToLower(strings.TrimSpace(provider))+"/"+model]; ok {
+			return &priced, true
+		}
+	}
+	if priced, ok := d.ManualPricing[model]; ok {
+		return &priced, true
+	}
+	return nil, false
 }
 
 // isNationalModel 报告该模型是否属于「国模」（出现在白名单厂商或 CNY 计价厂商下）。
@@ -520,6 +552,7 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 		Pricing:         map[string]*cnyOfficialPricing{},
 		National:        map[string]struct{}{},
 		ManualOverrides: map[string]struct{}{},
+		ManualPricing:   map[string]cnyOfficialManualPricing{},
 		Report:          report,
 	}
 
@@ -593,12 +626,27 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 	sort.Strings(report.SkippedNoCNY)
 
 	if settings != nil {
-		for key := range settings.ManualOverrides {
+		for key, price := range settings.ManualOverrides {
 			normalized := strings.ToLower(strings.TrimSpace(key))
-			if normalized == "" {
+			bare := cnyOfficialBareModelName(normalized)
+			if normalized == "" || bare == "" {
 				continue
 			}
-			dataset.ManualOverrides[normalized] = struct{}{}
+			// ManualOverrides 存裸模型名：skipForUSD、cny_official 标记都按覆盖层
+			// 键（裸名）判定，存带前缀的 key 会让这三处对不上。
+			dataset.ManualOverrides[bare] = struct{}{}
+			// 手工价是最高优先级一档：把真实价格记下来，写入阶段直接落覆盖层。
+			// 之前这里只记了一个「命中」集合，价格值被丢掉，导致页面上配的手工价
+			// 永远不生效 —— 模型继续按上一版的美元价计费。
+			perToken := map[string]float64{
+				"input_cost_per_token":            price.Input / 1e6,
+				"output_cost_per_token":           price.Output / 1e6,
+				"cache_read_input_token_cost":     price.CacheRead / 1e6,
+				"cache_creation_input_token_cost": price.CacheWrite / 1e6,
+			}
+			// 只登记裸模型名：ManualPricing 的查找也走裸名，多存一份带前缀的
+			// 只会让两处键空间不一致。
+			dataset.ManualPricing[bare] = cnyOfficialManualPricing{Model: bare, PerToken: perToken}
 		}
 	}
 	sort.Strings(report.Ladders)

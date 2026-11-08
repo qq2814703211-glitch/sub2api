@@ -447,9 +447,12 @@ func TestCNYOfficial_NationalModelWithoutCNYPriceIsSkipped(t *testing.T) {
 	require.Contains(t, report.SkippedNoCNY, "glm-4.5-flash")
 }
 
-// TestCNYOfficial_ManualOverridesHitSkipsModel settings 里 manual_overrides 命中的
-// 模型本轮跳过不写（settings 配置的人工价与覆盖层手配价同等尊重）。
-func TestCNYOfficial_ManualOverridesHitSkipsModel(t *testing.T) {
+// TestCNYOfficial_ManualOverridesWriteConfiguredPrice settings 里 manual_overrides
+// 命中的模型必须按配置的人民币价写入覆盖层（manual 是最高优先级一档）。
+//
+// 历史缺陷：这一档最初只用来「跳过」，价格值被丢弃，导致页面上配置的手工价
+// 永远不生效，模型继续按上一版的美元价计费。
+func TestCNYOfficial_ManualOverridesWriteConfiguredPrice(t *testing.T) {
 	settings := &CNYOfficialPricingSettings{
 		Enabled: true,
 		ManualOverrides: map[string]CNYOfficialManualPrice{
@@ -465,12 +468,44 @@ func TestCNYOfficial_ManualOverridesHitSkipsModel(t *testing.T) {
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
-	require.NotContains(t, entries, "deepseek-flash", "manual_overrides 命中的模型必须跳过")
-	require.NotContains(t, entries, "qwen3-max", "裸模型名命中同样跳过")
-	// 未命中的国模照常写入。
+	// 命中的模型按手工价写入，且带人民币标记打通计费。
+	require.Contains(t, entries, "deepseek-flash", "manual 命中的模型必须写入")
+	require.InDelta(t, 1e-6, entries["deepseek-flash"]["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 4e-6, entries["deepseek-flash"]["output_cost_per_token"], 1e-15)
+	require.InDelta(t, 0.02e-6, entries["deepseek-flash"]["cache_read_input_token_cost"], 1e-15)
+
+	require.Contains(t, entries, "qwen3-max", "裸模型名命中同样写入")
+	require.InDelta(t, 0.5e-6, entries["qwen3-max"]["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 2e-6, entries["qwen3-max"]["output_cost_per_token"], 1e-15)
+
+	// 未命中的国模照常写入官方价。
 	require.Contains(t, entries, "deepseek-v4-pro")
 	require.InDelta(t, 4.5e-6, entries["deepseek-v4-pro"]["input_cost_per_token"], 1e-15)
-	require.Contains(t, entries, "qwen3-coder-plus")
+}
+
+// TestCNYOfficial_ManualOverrideWithoutOfficialPrice 钉死一个真实的生产问题：
+// 某个模型在官方人民币源里没有牌价（只有境外厂商的美元价），运营在页面上手工
+// 给它配了人民币价。此时必须按手工价写入，不能因为「官方表里没有」就跳过。
+func TestCNYOfficial_ManualOverrideWithoutOfficialPrice(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			// 该模型不在人民币数据源里（模拟只有 mistral 美元价的场景）。
+			"deepseek/deepseek-v4.1-flash-1017": {Input: 1, Output: 4, CacheRead: 0.02},
+		},
+	}
+	// 覆盖层里先放一个美元价，模拟线上现状。
+	existing := `{"deepseek-v4-1-flash-1017":{"input_cost_per_token":3e-7,"output_cost_per_token":1.2e-6}}`
+	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entries := readOverrideEntries(t, path)
+
+	require.Contains(t, entries, "deepseek-v4.1-flash-1017",
+		"官方无人民币价但手工配了价的模型必须写入")
+	require.InDelta(t, 1e-6, entries["deepseek-v4.1-flash-1017"]["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 4e-6, entries["deepseek-v4.1-flash-1017"]["output_cost_per_token"], 1e-15)
 }
 
 // TestCNYOfficial_TimezoneShiftUTCToShanghai brief 第 5 条：
