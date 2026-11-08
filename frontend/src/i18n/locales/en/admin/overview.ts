@@ -643,12 +643,16 @@ export default {
         requestsUnit: 'requests',
         modelPending: 'Model not resolved yet',
         startedAt: 'Earliest started {time}',
-        sinceHint: 'Earliest request started {time}'
+        sinceHint: 'Earliest request started {time}',
+        slotHint: 'Currently {inflight} in-flight request(s), occupying {slots} concurrency slot(s). These differ slightly: slots expire by TTL while in-flight entries are released when the request ends.'
       },
       today: 'Today',
       total: 'Last 30d',
       sortBy: 'Sort By',
       sortCurrentPageOnly: 'Sorts current page only',
+      concurrencySortCurrent: 'Current in-flight',
+      concurrencySortLimit: 'Concurrency limit',
+      concurrencySortHint: 'Current = live in-flight requests, sorted across all pages',
       noSubscription: 'No subscription',
       publicGroupCount: '+{count} public',
       exclusiveLabel: 'exclusive',
