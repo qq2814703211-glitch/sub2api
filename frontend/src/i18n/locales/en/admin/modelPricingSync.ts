@@ -80,9 +80,37 @@ export default {
         input: 'Input',
         output: 'Output',
         cache_read: 'Cache read',
+        cache_write: 'Cache write',
         long_context_threshold: 'Threshold (tokens)',
         long_context_input_multiplier: 'Input multiplier',
         long_context_output_multiplier: 'Output multiplier'
+      },
+      extraTitle: 'Other billing fields',
+      extraHint: 'Only the four above are shown by default — add more from the catalog.',
+      addExtra: 'Add field',
+      removeExtra: 'Remove this field',
+      extraGroup: {
+        cache: 'Cache write tiers',
+        priority: 'Priority service tier',
+        image: 'Image billing',
+        storage: 'Context cache storage'
+      },
+      extra: {
+        cache_write_1h: '1-hour cache write',
+        input_priority: 'Priority input',
+        output_priority: 'Priority output',
+        cache_read_priority: 'Priority cache read',
+        cache_write_priority: 'Priority cache write',
+        image_input: 'Image input',
+        image_cache_read: 'Image cache read',
+        image_output_token: 'Image output (tokens)',
+        image_output_per_image: 'Image output (per image)',
+        cache_storage_per_hour: 'Cache storage'
+      },
+      extraUnit: {
+        per_million_tokens: 'CNY / 1M tokens',
+        per_million_tokens_hour: 'CNY / 1M tokens · hour',
+        per_image: 'CNY / image'
       },
       colPlaceholder: {
         long_context_threshold: 'e.g. 32000',

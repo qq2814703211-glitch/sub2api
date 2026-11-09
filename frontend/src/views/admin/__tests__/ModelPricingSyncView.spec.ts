@@ -877,3 +877,246 @@ describe('manual 行折叠', () => {
     expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('¥9')
   })
 })
+
+describe('manual 其他计费项（添加目录 / 删除）', () => {
+  beforeEach(() => {
+    listHistory.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+    getStatus.mockReset().mockResolvedValue({ enabled: true, interval_seconds: 21600 })
+    getCnyOfficialConfig.mockReset()
+    updateCnyOfficialConfig.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+  })
+
+  /** 建一行并返回该行的 id 后缀。 */
+  async function addRow(wrapper: Awaited<ReturnType<typeof mountReady>>) {
+    await wrapper.find('[data-testid="pricing-add-row"]').trigger('click')
+    return wrapper
+      .find('[data-testid^="pricing-row-model-"]')
+      .attributes('data-testid')!
+      .replace('pricing-row-model-', '')
+  }
+
+  it('默认只展示输入 / 输出 / 缓存读 / 缓存写四项', async () => {
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    expect(wrapper.find(`[data-testid="pricing-row-input-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-output-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-cache_read-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-cache_write-${id}"]`).exists()).toBe(true)
+
+    // 其他计费项默认一个都不渲染。
+    expect(wrapper.find(`[data-testid="pricing-row-extras-list-${id}"]`).exists()).toBe(false)
+  })
+
+  it('点「添加计费项」展开目录，按分组列出全部可选计费项', async () => {
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+
+    const menu = wrapper.find(`[data-testid="pricing-row-extra-menu-${id}"]`)
+    expect(menu.exists()).toBe(true)
+    // 十项全在目录里（1h 缓存 + 4 个 priority + 4 个图片 + 1 个存储）。
+    for (const key of [
+      'cache_write_1h',
+      'input_priority',
+      'output_priority',
+      'cache_read_priority',
+      'cache_write_priority',
+      'image_input',
+      'image_cache_read',
+      'image_output_token',
+      'image_output_per_image',
+      'cache_storage_per_hour'
+    ]) {
+      expect(
+        wrapper.find(`[data-testid="pricing-row-extra-option-${key}-${id}"]`).exists(),
+        `目录里应有 ${key}`
+      ).toBe(true)
+    }
+  })
+
+  it('从目录选中后该计费项出现输入框，目录里置灰不可重复添加', async () => {
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    await wrapper
+      .find(`[data-testid="pricing-row-extra-option-image_output_per_image-${id}"]`)
+      .trigger('click')
+
+    expect(wrapper.find(`[data-testid="pricing-row-extra-input-image_output_per_image-${id}"]`).exists()).toBe(true)
+    // 添加后目录自动关闭。
+    expect(wrapper.find(`[data-testid="pricing-row-extra-menu-${id}"]`).exists()).toBe(false)
+
+    // 再开目录，该项已置灰。
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    const option = wrapper.find(`[data-testid="pricing-row-extra-option-image_output_per_image-${id}"]`)
+    expect(option.attributes('disabled')).toBeDefined()
+  })
+
+  it('已添加的计费项可以删除，删除后输入框消失', async () => {
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    await wrapper.find(`[data-testid="pricing-row-extra-option-cache_write_1h-${id}"]`).trigger('click')
+    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_write_1h-${id}"]`).exists()).toBe(true)
+
+    await wrapper.find(`[data-testid="pricing-row-remove-extra-cache_write_1h-${id}"]`).trigger('click')
+
+    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_write_1h-${id}"]`).exists()).toBe(false)
+    // 整组都空了就整块不渲染。
+    expect(wrapper.find(`[data-testid="pricing-row-extras-list-${id}"]`).exists()).toBe(false)
+  })
+
+  it('已添加的计费项随保存载荷一起提交', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => ({
+      ...(payload as object),
+      cn_vendors: ['zhipuai']
+    }))
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-model-${id}"]`).setValue('glm-4.6')
+    await wrapper.find(`[data-testid="pricing-row-input-${id}"]`).setValue('0.6')
+    await wrapper.find(`[data-testid="pricing-row-output-${id}"]`).setValue('2.2')
+    await wrapper.find(`[data-testid="pricing-row-cache_read-${id}"]`).setValue('0.11')
+    await wrapper.find(`[data-testid="pricing-row-cache_write-${id}"]`).setValue('0.11')
+
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    await wrapper
+      .find(`[data-testid="pricing-row-extra-option-image_output_per_image-${id}"]`)
+      .trigger('click')
+    await wrapper
+      .find(`[data-testid="pricing-row-extra-input-image_output_per_image-${id}"]`)
+      .setValue('0.5')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).toHaveBeenCalledWith({
+      enabled: true,
+      source_url: 'https://raw.githubusercontent.com/basellm/llm-metadata/main/dist/api/all.json',
+      manual_overrides: {
+        'glm-4.6': {
+          input: 0.6,
+          output: 2.2,
+          cache_read: 0.11,
+          cache_write: 0.11,
+          image_output_per_image: 0.5
+        }
+      }
+    })
+  })
+
+  it('删除已添加的计费项后，该键从载荷里消失', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => ({
+      ...(payload as object),
+      cn_vendors: ['zhipuai']
+    }))
+    // 后端回传的行自带一个可选计费项。
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'glm-4.6': {
+          input: 0.6,
+          output: 2.2,
+          cache_read: 0.11,
+          cache_write: 0.11,
+          image_output_per_image: 0.5
+        }
+      }
+    })
+    await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
+
+    // 回填：该计费项确实出现在界面上。
+    expect(wrapper.find('[data-testid="pricing-row-extra-input-image_output_per_image-1"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="pricing-row-remove-extra-image_output_per_image-1"]').trigger('click')
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    const payload = updateCnyOfficialConfig.mock.calls[0][0] as {
+      manual_overrides: Record<string, Record<string, number>>
+    }
+    expect(payload.manual_overrides['glm-4.6']).not.toHaveProperty('image_output_per_image')
+    expect(payload.manual_overrides['glm-4.6'].input).toBe(0.6)
+  })
+
+  it('回填后端返回的可选计费项，只渲染已配置的项', async () => {
+    const wrapper = await mountReady({
+      enabled: true,
+      manual_overrides: {
+        'glm-4.6': {
+          input: 0.6,
+          output: 2.2,
+          cache_read: 0.11,
+          cache_write: 0.11,
+          cache_write_1h: 0.22,
+          cache_storage_per_hour: 4.5
+        }
+      }
+    })
+    await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
+
+    expect(
+      (wrapper.find('[data-testid="pricing-row-extra-input-cache_write_1h-1"]').element as HTMLInputElement).value
+    ).toBe('0.22')
+    expect(
+      (wrapper.find('[data-testid="pricing-row-extra-input-cache_storage_per_hour-1"]').element as HTMLInputElement)
+        .value
+    ).toBe('4.5')
+    // 没配的项不出现。
+    expect(wrapper.find('[data-testid="pricing-row-extra-input-image_input-1"]').exists()).toBe(false)
+  })
+
+  it('已添加的计费项填了非法值时拦截保存', async () => {
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-model-${id}"]`).setValue('glm-4.6')
+    await wrapper.find(`[data-testid="pricing-row-input-${id}"]`).setValue('0.6')
+    await wrapper.find(`[data-testid="pricing-row-output-${id}"]`).setValue('2.2')
+    await wrapper.find(`[data-testid="pricing-row-cache_read-${id}"]`).setValue('0.11')
+
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    await wrapper.find(`[data-testid="pricing-row-extra-option-input_priority-${id}"]`).trigger('click')
+    await wrapper.find(`[data-testid="pricing-row-extra-input-input_priority-${id}"]`).setValue('-1')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('请先修正标红的行')
+  })
+
+  it('空着的计费项不算错、也不进载荷', async () => {
+    updateCnyOfficialConfig.mockImplementation(async (payload: unknown) => ({
+      ...(payload as object),
+      cn_vendors: ['zhipuai']
+    }))
+    const wrapper = await mountReady()
+    const id = await addRow(wrapper)
+
+    await wrapper.find(`[data-testid="pricing-row-model-${id}"]`).setValue('glm-4.6')
+    await wrapper.find(`[data-testid="pricing-row-input-${id}"]`).setValue('0.6')
+    await wrapper.find(`[data-testid="pricing-row-output-${id}"]`).setValue('2.2')
+    await wrapper.find(`[data-testid="pricing-row-cache_read-${id}"]`).setValue('0.11')
+
+    // 添加了但一个数字都不填。
+    await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
+    await wrapper.find(`[data-testid="pricing-row-extra-option-input_priority-${id}"]`).trigger('click')
+
+    await wrapper.find('[data-testid="pricing-save"]').trigger('click')
+    await flushPromises()
+
+    expect(updateCnyOfficialConfig).toHaveBeenCalledTimes(1)
+    const payload = updateCnyOfficialConfig.mock.calls[0][0] as {
+      manual_overrides: Record<string, Record<string, number>>
+    }
+    expect(payload.manual_overrides['glm-4.6']).not.toHaveProperty('input_priority')
+  })
+})

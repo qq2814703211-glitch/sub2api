@@ -304,6 +304,113 @@
                     </div>
                   </div>
 
+                  <!-- 可选计费项：默认不显示，「添加计费项」目录按需添加，已添加的可删。 -->
+                  <div class="mt-2" :data-testid="`pricing-row-extras-${row.id}`">
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                        {{ t('admin.modelPricingSync.pricingSource.extraTitle') }}
+                      </span>
+                      <span class="text-[11px] text-gray-400 dark:text-dark-500">
+                        {{ t('admin.modelPricingSync.pricingSource.extraHint') }}
+                      </span>
+                      <div class="relative">
+                        <button
+                          type="button"
+                          class="btn btn-ghost btn-sm gap-1 text-primary-600 hover:text-primary-700 dark:text-primary-300"
+                          :data-testid="`pricing-row-add-extra-${row.id}`"
+                          :aria-expanded="openExtraMenuId === row.id"
+                          @click.stop="toggleExtraMenu(row.id)"
+                        >
+                          <Icon name="plus" size="xs" />
+                          {{ t('admin.modelPricingSync.pricingSource.addExtra') }}
+                        </button>
+                        <!-- 目录：按分组列出，已添加的项置灰不可重复添加。 -->
+                        <div
+                          v-if="openExtraMenuId === row.id"
+                          class="absolute left-0 z-20 mt-1 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-dark-600 dark:bg-dark-800"
+                          :data-testid="`pricing-row-extra-menu-${row.id}`"
+                        >
+                          <div
+                            v-for="group in extraCatalogGroups"
+                            :key="group.key"
+                            class="mb-1 last:mb-0"
+                          >
+                            <div class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-dark-500">
+                              {{ t(`admin.modelPricingSync.pricingSource.extraGroup.${group.key}`) }}
+                            </div>
+                            <button
+                              v-for="spec in group.fields"
+                              :key="spec.key"
+                              type="button"
+                              class="flex w-full items-center justify-between gap-2 rounded px-1.5 py-1 text-left text-xs disabled:opacity-40"
+                              :class="
+                                hasExtra(row, spec.key)
+                                  ? 'cursor-not-allowed text-gray-400 dark:text-dark-500'
+                                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700'
+                              "
+                              :disabled="hasExtra(row, spec.key)"
+                              :data-testid="`pricing-row-extra-option-${spec.key}-${row.id}`"
+                              @click.stop="addExtra(row, spec.key)"
+                            >
+                              <span class="truncate">
+                                {{ t(`admin.modelPricingSync.pricingSource.extra.${spec.key}`) }}
+                              </span>
+                              <span class="shrink-0 text-[10px] text-gray-400 dark:text-dark-500">
+                                {{ extraUnitLabel(spec.unit) }}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 已添加的计费项：一行一个，右侧可删除。 -->
+                    <div
+                      v-if="row.extras.length > 0"
+                      class="mt-1 grid gap-3 sm:grid-cols-12"
+                      :data-testid="`pricing-row-extras-list-${row.id}`"
+                    >
+                      <div
+                        v-for="key in row.extras"
+                        :key="key"
+                        class="sm:col-span-4"
+                        :data-testid="`pricing-row-extra-field-${key}-${row.id}`"
+                      >
+                        <div class="flex items-baseline justify-between gap-1">
+                          <span class="truncate text-[11px] font-medium text-gray-600 dark:text-dark-300">
+                            {{ t(`admin.modelPricingSync.pricingSource.extra.${key}`) }}
+                          </span>
+                          <button
+                            type="button"
+                            class="shrink-0 text-red-500 hover:text-red-600 dark:text-red-400"
+                            :title="t('admin.modelPricingSync.pricingSource.removeExtra')"
+                            :aria-label="t('admin.modelPricingSync.pricingSource.removeExtra')"
+                            :data-testid="`pricing-row-remove-extra-${key}-${row.id}`"
+                            @click.stop="removeExtra(row, key)"
+                          >
+                            <Icon name="trash" size="xs" />
+                          </button>
+                        </div>
+                        <input
+                          v-model.trim="row[key]"
+                          type="text"
+                          inputmode="decimal"
+                          class="input mt-1 w-full font-mono text-xs"
+                          :class="{ 'input-error': rowErrors[row.id]?.[key] }"
+                          :placeholder="t(`admin.modelPricingSync.pricingSource.extraUnit.${extraUnitOf(key)}`)"
+                          :data-testid="`pricing-row-extra-input-${key}-${row.id}`"
+                        />
+                        <span
+                          v-if="rowErrors[row.id]?.[key]"
+                          class="input-error-text mt-1 block"
+                          :data-testid="`pricing-row-extra-error-${key}-${row.id}`"
+                        >
+                          {{ rowErrors[row.id]?.[key] }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- 长上下文阶梯：留空即不启用，所以这三列共用一排、字号更小。 -->
                   <div class="mt-2" :data-testid="`pricing-row-long-context-${row.id}`">
                     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -543,9 +650,10 @@ import {
   type ModelPricingSyncHistoryRow,
   type ModelPricingSyncStatus,
   type PricingCnyOfficialConfig,
+  type PricingManualExtraFields,
   type PricingManualOverride
 } from '@/api/admin'
-import { DEFAULT_CN_VENDORS, DEFAULT_CNY_SOURCE_URL } from '@/api/admin/modelPricingSync'
+import { DEFAULT_CN_VENDORS, DEFAULT_CNY_SOURCE_URL, MANUAL_EXTRA_FIELDS } from '@/api/admin/modelPricingSync'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -676,9 +784,34 @@ function onPageSizeChange(next: number) {
 
 // ==================== 计价口径配置（pricing.cny_official） ====================
 
-/** 单价列固定三个，顺序即界面顺序。 */
-const PRICE_FIELDS = ['input', 'output', 'cache_read'] as const
+/** 单价列固定四个，顺序即界面顺序。cache_write 与 cache_read 同属缓存，放末尾。 */
+const PRICE_FIELDS = ['input', 'output', 'cache_read', 'cache_write'] as const
 type PriceField = (typeof PRICE_FIELDS)[number]
+
+/**
+ * 可选计费项按分组展示，顺序即目录顺序。
+ *
+ * 目录本身来自 `MANUAL_EXTRA_FIELDS`（与后端登记表一一对应），这里只负责分组。
+ */
+const EXTRA_GROUPS = ['cache', 'priority', 'image', 'storage'] as const
+type ExtraField = keyof PricingManualExtraFields & string
+
+const extraCatalogGroups = computed(() =>
+  EXTRA_GROUPS.map((key) => ({
+    key,
+    fields: MANUAL_EXTRA_FIELDS.filter((spec) => spec.group === key)
+  })).filter((group) => group.fields.length > 0)
+)
+
+/** 该计费项在目录里的单位，用于占位提示。 */
+function extraUnitOf(key: string): string {
+  const spec = MANUAL_EXTRA_FIELDS.find((item) => item.key === key)
+  return spec ? spec.unit : 'per_million_tokens'
+}
+
+function extraUnitLabel(unit: string): string {
+  return t(`admin.modelPricingSync.pricingSource.extraUnit.${unit}`)
+}
 
 /**
  * 长上下文阶梯三列。与 `PRICE_FIELDS` 分开：这三项留空合法，价格列留空报错。
@@ -692,10 +825,13 @@ const LONG_CONTEXT_FIELDS = [
 type LongContextField = (typeof LONG_CONTEXT_FIELDS)[number]
 
 /**
- * 编辑行用字符串存价格：`type="number"` 在清空时给空串，直接绑 number 会
- * 把 NaN 写进模型，保存时无从分辨「空」与「0」。
+ * 编辑行。价格、可选计费项都用字符串存：`type="number"` 在清空时给空串，
+ * 直接绑 number 会把 NaN 写进模型，保存时无从分辨「空」与「0」。
  *
  * `id` 只用于 v-for 的稳定 key 与错误定位 —— 模型键可被用户随便改，不能当 key。
+ *
+ * 索引签名只为让模板里 `row[spec.key]` 能双向绑定动态计费项；实际有值的键由
+ * `extras` 约束（添加时初始化、删除时一并清掉）。
  */
 interface OverrideRow {
   id: number
@@ -703,14 +839,20 @@ interface OverrideRow {
   input: string
   output: string
   cache_read: string
+  cache_write: string
+  /** 已添加的可选计费项（目录键），决定展开态里渲染哪些输入框。 */
+  extras: ExtraField[]
   long_context_threshold: string
   long_context_input_multiplier: string
   long_context_output_multiplier: string
   /** 行是否展开。默认收起 —— manual 一多，全展开会把卡片拉成几十屏。 */
   expanded: boolean
+  [extra: string]: string | string[] | boolean | number
 }
 
-type RowErrors = { model?: string } & Partial<Record<PriceField | LongContextField, string>>
+type RowErrors = { model?: string } & Partial<
+  Record<PriceField | LongContextField | ExtraField, string>
+>
 
 const configLoading = ref(true)
 const configError = ref('')
@@ -768,35 +910,44 @@ const cnVendors = computed<string[]>(() => {
 
 function makeRow(
   model = '',
-  price?: {
-    input: number
-    output: number
-    cache_read: number
-    long_context_threshold?: number
-    long_context_input_multiplier?: number
-    long_context_output_multiplier?: number
-  }
+  price?: PricingManualOverride
 ): OverrideRow {
-  // 后端这三个字段带 omitempty，缺省表示「不启用阶梯」，回填成空串才对得上语义。
+  // 后端这几个字段带 omitempty，缺省表示「不启用 / 不配置」，回填成空串才对得上语义。
   const optionalText = (value: number | undefined) => (value === undefined ? '' : String(value))
-  return {
+  const row: OverrideRow = {
     id: nextRowId++,
     model,
     input: price ? String(price.input) : '',
     output: price ? String(price.output) : '',
     cache_read: price ? String(price.cache_read) : '',
+    cache_write: price && price.cache_write ? String(price.cache_write) : '',
+    extras: [],
     long_context_threshold: optionalText(price?.long_context_threshold),
     long_context_input_multiplier: optionalText(price?.long_context_input_multiplier),
     long_context_output_multiplier: optionalText(price?.long_context_output_multiplier),
     // 已有行默认收起；新增行由 addRow 展开（见那里），避免点「添加」后还得再点一次。
     expanded: false
   }
+  // 回填已配置的可选计费项：只认值 > 0 的，缺席的项不占位置。
+  if (price) {
+    for (const spec of MANUAL_EXTRA_FIELDS) {
+      const value = price[spec.key]
+      if (typeof value === 'number' && value > 0) {
+        row.extras.push(spec.key)
+        row[spec.key] = String(value)
+      }
+    }
+  }
+  return row
 }
 
-/** 收起态的一行摘要：¥输入/输出/缓存读。空值用 — 占位。 */
+/** 收起态的一行摘要：¥输入/输出/缓存读/缓存写，末尾标注已添加的自定义项个数。 */
 function rowSummary(row: OverrideRow): string {
   const parts = PRICE_FIELDS.map((field) => (row[field] ? row[field] : '—'))
-  return `¥${parts.join(' / ')}`
+  const summary = `¥${parts.join(' / ')}`
+  const extraCount = row.extras.filter((key) => String(row[key] ?? '').trim() !== '').length
+  if (extraCount === 0) return summary
+  return `${summary} +${extraCount}`
 }
 
 /** 收了长上下文阶梯才算有；只填阈值不填倍率等于没配，不亮标记。 */
@@ -808,6 +959,54 @@ function hasLongContext(row: OverrideRow): boolean {
 function toggleRow(id: number) {
   const row = overrideRows.value.find((item) => item.id === id)
   if (row) row.expanded = !row.expanded
+}
+
+// ==================== 可选计费项（添加 / 删除） ====================
+
+/**
+ * 当前打开目录的行 id。同一时刻只开一个目录 —— 多个悬浮层叠在一起会互相遮挡，
+ * 而且关掉一个再开另一个的交互本来就是「单选」语义。
+ */
+const openExtraMenuId = ref<number | null>(null)
+
+function toggleExtraMenu(id: number) {
+  openExtraMenuId.value = openExtraMenuId.value === id ? null : id
+}
+
+/** 该行是否已添加某计费项。已添加的在目录里置灰，避免重复添加。 */
+function hasExtra(row: OverrideRow, key: ExtraField): boolean {
+  return row.extras.includes(key)
+}
+
+/** 添加计费项：插到 extras 末尾并把值初始化成空串，等用户填。 */
+function addExtra(row: OverrideRow, key: ExtraField) {
+  if (row.extras.includes(key)) return
+  row.extras.push(key)
+  row[key] = ''
+  openExtraMenuId.value = null
+}
+
+/**
+ * 删除已添加的计费项：从 extras 移除并清掉值。
+ *
+ * 清值很关键 —— 同步是按「值 > 0 才写覆盖层」判定的，留着值只从 extras 移除会让
+ * 页面上看不见、覆盖层里仍有旧价。后端另有 cnyOfficialManualPruneFields 兜底删除
+ * 已写入的旧值。
+ */
+function removeExtra(row: OverrideRow, key: ExtraField) {
+  row.extras = row.extras.filter((item) => item !== key)
+  row[key] = ''
+  const errors = { ...rowErrors.value }
+  if (errors[row.id]) {
+    const next = { ...errors[row.id] }
+    delete next[key]
+    if (Object.keys(next).length > 0) {
+      errors[row.id] = next
+    } else {
+      delete errors[row.id]
+    }
+    rowErrors.value = errors
+  }
 }
 
 /** 展开所有行 / 收起所有行 —— manual 多的时候省得一个个点。 */
@@ -930,8 +1129,21 @@ function collectErrors(): Record<number, RowErrors> {
     }
 
     for (const field of PRICE_FIELDS) {
+      // cache_write 归默认四项，但历史配置可能没这个键：留空合法（= 不配置），
+      // 填了才校验。其余三项必填。
+      if (field === 'cache_write' && row[field].trim() === '') continue
       const message = priceError(row[field])
       if (message) rowError[field] = message
+    }
+
+    // 已添加的可选计费项：留空合法（等价于不配置），填了必须是有限非负数。
+    for (const key of row.extras) {
+      const raw = String(row[key] ?? '').trim()
+      if (raw === '') continue
+      const parsed = Number(raw)
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        rowError[key] = t('admin.modelPricingSync.pricingSource.errPriceInvalid')
+      }
     }
 
     Object.assign(rowError, longContextErrors(row))
@@ -961,6 +1173,20 @@ function rowToOverride(row: OverrideRow): PricingManualOverride {
     output: Number(row.output) || 0,
     cache_read: Number(row.cache_read) || 0
   }
+  // cache_write 留空时整个键省略：后端把它当「不配置」，写 0 语义不同。
+  const cacheWriteText = row.cache_write.trim()
+  if (cacheWriteText !== '') override.cache_write = Number(cacheWriteText)
+
+  // 可选计费项：只有已添加且填了值的才提交。已从条目上删掉的项连同值一起消失，
+  // 后端据此把覆盖层里的旧值删掉（cnyOfficialManualPruneFields）。
+  for (const key of row.extras) {
+    const raw = String(row[key] ?? '').trim()
+    if (raw === '') continue
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed <= 0) continue
+    override[key] = parsed
+  }
+
   const thresholdText = row.long_context_threshold.trim()
   const inputMultiplierText = row.long_context_input_multiplier.trim()
   const outputMultiplierText = row.long_context_output_multiplier.trim()

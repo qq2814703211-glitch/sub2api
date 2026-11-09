@@ -124,6 +124,21 @@ type CNYOfficialManualPrice struct {
 	CacheRead  float64 `json:"cache_read"`
 	CacheWrite float64 `json:"cache_write"`
 
+	// 可选计费项（前端「添加计费项」目录）。默认不在页面上显示，运营按需添加。
+	// 填 0 或留空等价于「不配置」，写入时整键省略；把已配置的项从页面移除，
+	// 同步会删掉覆盖层里的旧值（见 computeCNYManualPruneChanges）。
+	// 字段与覆盖层的对应关系、计价单位统一登记在 cnyOfficialManualExtraFields。
+	CacheWrite1h        float64 `json:"cache_write_1h,omitempty"`
+	InputPriority       float64 `json:"input_priority,omitempty"`
+	OutputPriority      float64 `json:"output_priority,omitempty"`
+	CacheReadPriority   float64 `json:"cache_read_priority,omitempty"`
+	CacheWritePriority  float64 `json:"cache_write_priority,omitempty"`
+	ImageInput          float64 `json:"image_input,omitempty"`
+	ImageCacheRead      float64 `json:"image_cache_read,omitempty"`
+	ImageOutputToken    float64 `json:"image_output_token,omitempty"`
+	ImageOutputPerImage float64 `json:"image_output_per_image,omitempty"`
+	CacheStoragePerHour float64 `json:"cache_storage_per_hour,omitempty"`
+
 	// LongContextThreshold 是进入长上下文档的输入 token 阈值（含缓存读/写 token），
 	// 0 表示不配置阶梯。
 	LongContextThreshold int `json:"long_context_threshold,omitempty"`
@@ -334,8 +349,11 @@ type cnyOfficialDataset struct {
 // cnyOfficialManualPricing 是 manual_overrides 落成覆盖层条目所需的信息。
 type cnyOfficialManualPricing struct {
 	Model string
-	// PerToken 与官方价同口径（每 token）。
+	// PerToken 与官方价同口径（每 token），只含默认四项。
 	PerToken map[string]float64
+	// Extras 是已添加的可选计费项，键为覆盖层字段名、值为每 token（或每张/每小时）
+	// 的单价。未添加的项不出现在这里 —— 与「添加了但填 0」等价，都不写覆盖层。
+	Extras map[string]float64
 	// LongContext 是运营手配的长上下文阶梯；nil 表示不开。
 	LongContext *cnyOfficialLongContext
 }
@@ -649,9 +667,20 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 				"cache_read_input_token_cost":     price.CacheRead / 1e6,
 				"cache_creation_input_token_cost": price.CacheWrite / 1e6,
 			}
+			// 可选计费项按登记表折算：元/百万 → 每 token，按张计价的除数为 1。
+			// 只收录值 > 0 的项，未添加 / 填 0 的项保持缺席，写入侧据此判定「不配置」。
+			extras := make(map[string]float64, len(cnyOfficialManualExtraFields))
+			for _, extra := range cnyOfficialManualExtraFields {
+				value := price.extraValue(extra.Key)
+				if value <= 0 {
+					continue
+				}
+				extras[extra.OverrideField] = value / extra.extraDivisor()
+			}
 			dataset.ManualPricing[name] = cnyOfficialManualPricing{
 				Model:       name,
 				PerToken:    perToken,
+				Extras:      extras,
 				LongContext: cnyOfficialManualLongContext(price),
 			}
 		}

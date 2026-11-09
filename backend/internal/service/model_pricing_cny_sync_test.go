@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -962,4 +964,204 @@ func TestCNYOfficial_ManualKeyIsExactModelName(t *testing.T) {
 		"裸名配置应写到裸名条目")
 	require.InDelta(t, 2.7e-7, entries["siliconflow/deepseek-v3.2"]["input_cost_per_token"], 1e-15,
 		"带斜杠的同名模型是完全不同的模型，不能被裸名配置波及")
+}
+
+// TestCNYOfficial_ManualExtraFieldsWriteToOverride 确认「可选计费项」真的落到
+// 覆盖层的对应字段上，且单位折算正确：
+//
+//   - token 类按「元 / 百万」÷ 1e6（与默认四项同口径）
+//   - 图片按张价（元 / 张）不除 1e6
+//
+// 未填写的项必须不出现在覆盖层里 —— 写 0 会让计费侧把它当成「显式配置了 0 价」。
+func TestCNYOfficial_ManualExtraFieldsWriteToOverride(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"glm-4.6": {
+				Input: 0.6, Output: 2.2, CacheRead: 0.11, CacheWrite: 0.11,
+				CacheWrite1h:        0.22,
+				InputPriority:       1.2,
+				OutputPriority:      4.4,
+				CacheReadPriority:   0.22,
+				CacheWritePriority:  0.22,
+				ImageInput:          1.8,
+				ImageCacheRead:      0.2,
+				ImageOutputToken:    8.8,
+				ImageOutputPerImage: 0.5,
+				CacheStoragePerHour: 4.5,
+			},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entry := readOverrideEntries(t, path)["glm-4.6"]
+	require.NotNil(t, entry)
+
+	// token 类：÷ 1e6
+	require.InDelta(t, 0.22e-6, entry["cache_creation_input_token_cost_above_1hr"], 1e-15)
+	require.InDelta(t, 1.2e-6, entry["input_cost_per_token_priority"], 1e-15)
+	require.InDelta(t, 4.4e-6, entry["output_cost_per_token_priority"], 1e-15)
+	require.InDelta(t, 0.22e-6, entry["cache_read_input_token_cost_priority"], 1e-15)
+	require.InDelta(t, 0.22e-6, entry["cache_creation_input_token_cost_priority"], 1e-15)
+	require.InDelta(t, 1.8e-6, entry["input_cost_per_image_token"], 1e-15)
+	require.InDelta(t, 0.2e-6, entry["cache_read_input_image_token_cost"], 1e-15)
+	require.InDelta(t, 8.8e-6, entry["output_cost_per_image_token"], 1e-15)
+	require.InDelta(t, 4.5e-6, entry["cache_storage_cost_per_token_per_hour"], 1e-15)
+
+	// 按张价：不除 1e6
+	require.InDelta(t, 0.5, entry["output_cost_per_image"], 1e-12)
+
+	// 默认四项仍在
+	require.InDelta(t, 0.6e-6, entry["input_cost_per_token"], 1e-15)
+	require.InDelta(t, 2.2e-6, entry["output_cost_per_token"], 1e-15)
+}
+
+// TestCNYOfficial_ManualExtraFieldsOmittedWhenZero 确认没填的可选计费项不写入。
+// 写 0 与不写语义不同：0 会被计费侧当成「显式配置了免费」。
+func TestCNYOfficial_ManualExtraFieldsOmittedWhenZero(t *testing.T) {
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"glm-4.6": {Input: 0.6, Output: 2.2, CacheRead: 0.11, CacheWrite: 0.11},
+		},
+	}
+	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entry := readOverrideEntries(t, path)["glm-4.6"]
+	require.NotNil(t, entry)
+
+	for _, extra := range cnyOfficialManualExtraFields {
+		_, exists := entry[extra.OverrideField]
+		require.False(t, exists, "未填写的计费项 %s 不应出现在覆盖层", extra.OverrideField)
+	}
+}
+
+// TestCNYOfficial_ManualRemovedExtraFieldIsPruned 确认把已添加的计费项从条目上
+// 删掉后，覆盖层里的旧值也被删掉。
+//
+// 这是本功能最容易漏的一条：页面上看不见了，计费却还按旧值收，运营无从察觉。
+// 判据用同步史（history）确认该值确实是自己写的，不碰运营在文件里手配的值。
+func TestCNYOfficial_ManualRemovedExtraFieldIsPruned(t *testing.T) {
+	// 覆盖层里已有上次写入的 image_output_token 与 1h 缓存价。
+	const seeded = `{
+		"glm-4.6": {
+			"input_cost_per_token": 6e-7,
+			"output_cost_per_token": 2.2e-6,
+			"output_cost_per_image_token": 8.8e-6,
+			"cache_creation_input_token_cost_above_1hr": 2.2e-7
+		}
+	}`
+	// 这次配置里这两个项都被删掉了（不再出现）。
+	settings := &CNYOfficialPricingSettings{
+		Enabled: true,
+		ManualOverrides: map[string]CNYOfficialManualPrice{
+			"glm-4.6": {Input: 0.6, Output: 2.2},
+		},
+	}
+	svc, path, history := newCNYSyncTestService(t, seeded, settings, nil)
+	// 同步史声明这两个字段是 cny-official 写的、值就是覆盖层里的值。
+	history.syncedSets = map[string]map[string]float64{
+		"glm-4.6": {
+			"output_cost_per_image_token":               8.8e-6,
+			"cache_creation_input_token_cost_above_1hr": 2.2e-7,
+		},
+	}
+
+	_, err := svc.Sync(context.Background())
+	require.NoError(t, err)
+	entry := readOverrideEntries(t, path)["glm-4.6"]
+	require.NotNil(t, entry)
+
+	_, hasImage := entry["output_cost_per_image_token"]
+	require.False(t, hasImage, "从条目上删掉的按张图片价应同时从覆盖层删除")
+	_, has1h := entry["cache_creation_input_token_cost_above_1hr"]
+	require.False(t, has1h, "从条目上删掉的 1h 缓存写价应同时从覆盖层删除")
+
+	// 默认四项不受影响。
+	require.InDelta(t, 0.6e-6, entry["input_cost_per_token"], 1e-15)
+}
+
+// TestCNYOfficial_ManualPruneRespectsOperatorHandEdits 是上一条的阴性对照：
+// 覆盖层里的值若与同步史不符（运营直接在文件里改过），或有值但从未被同步写过，
+// 都不能删 —— 那不是本功能的产物。
+//
+// 没有这条，「删除」会变成把别人手配的价一起清掉。
+func TestCNYOfficial_ManualPruneRespectsOperatorHandEdits(t *testing.T) {
+	current := map[string]float64{
+		// 同步史说写过 8.8e-6，实际是 9.9e-6 → 运营改过，不算自己的，不删。
+		"output_cost_per_image_token": 9.9e-6,
+		// 从未被同步写过 → 来自目录或文件手配，不删。
+		"input_cost_per_image_token": 1.8e-6,
+	}
+	history := map[string]float64{
+		"output_cost_per_image_token": 8.8e-6,
+	}
+
+	pruned := cnyOfficialManualPruneFields(nil, nil, current, history)
+	require.Empty(t, pruned, "运营改过的值与从未同步过的值都不能被删除")
+
+	// 正控：值确实由同步写入且没人改过时，才删。
+	current["input_cost_per_image_token"] = 1.8e-6
+	history["input_cost_per_image_token"] = 1.8e-6
+	current["output_cost_per_image_token"] = 8.8e-6
+	pruned = cnyOfficialManualPruneFields(nil, nil, current, history)
+	require.ElementsMatch(t, []string{"input_cost_per_image_token", "output_cost_per_image_token"}, pruned)
+}
+
+// TestCNYOfficial_ManualExtraFieldsMatchOverrideTags 是「可选计费项登记表」与
+// 覆盖层结构体的一致性守卫。
+//
+// 登记表里的 OverrideField 拼错一个字母，值照样写进覆盖层，但计费侧永远读不到
+// 那个字段 —— 页面上配了、钱不算，而且没有任何报错。这条测试用内省把名字钉死。
+func TestCNYOfficial_ManualExtraFieldsMatchOverrideTags(t *testing.T) {
+	tags := map[string]bool{}
+	typ := reflect.TypeOf(LiteLLMModelPricing{})
+	for i := 0; i < typ.NumField(); i++ {
+		tag := typ.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		tags[strings.Split(tag, ",")[0]] = true
+	}
+
+	for _, extra := range cnyOfficialManualExtraFields {
+		require.True(t, tags[extra.OverrideField],
+			"计费项 %q 的覆盖层字段 %q 在 LiteLLMModelPricing 里不存在", extra.Key, extra.OverrideField)
+	}
+	// 默认四项与阶梯三字段也一起核，防止同步字段表被改坏。
+	for _, field := range modelPricingSyncFields {
+		require.True(t, tags[field], "默认字段 %q 在 LiteLLMModelPricing 里不存在", field)
+	}
+	for _, field := range cnyOfficialLadderOverrideFields() {
+		require.True(t, tags[field], "阶梯字段 %q 在 LiteLLMModelPricing 里不存在", field)
+	}
+
+	// 负控：证明内省真有检测力，不是恒真。
+	require.False(t, tags["cache_creation_input_token_cost_above_2hr"],
+		"不存在的字段却被查到，说明本测试失去了检测力")
+}
+
+// TestCNYOfficial_ManualExtraValueCoversAllKeys 确保每个登记项都能被 extraValue
+// 取到值。漏一个就是「页面上能填、后端永远读到 0」。
+func TestCNYOfficial_ManualExtraValueCoversAllKeys(t *testing.T) {
+	probe := CNYOfficialManualPrice{
+		CacheWrite1h: 1, InputPriority: 2, OutputPriority: 3, CacheReadPriority: 4,
+		CacheWritePriority: 5, ImageInput: 6, ImageCacheRead: 7, ImageOutputToken: 8,
+		ImageOutputPerImage: 9, CacheStoragePerHour: 10,
+	}
+	want := map[string]float64{
+		"cache_write_1h": 1, "input_priority": 2, "output_priority": 3,
+		"cache_read_priority": 4, "cache_write_priority": 5, "image_input": 6,
+		"image_cache_read": 7, "image_output_token": 8, "image_output_per_image": 9,
+		"cache_storage_per_hour": 10,
+	}
+	for _, extra := range cnyOfficialManualExtraFields {
+		expected, ok := want[extra.Key]
+		require.True(t, ok, "登记表里的 key %q 没有对应的取值用例", extra.Key)
+		require.Equal(t, expected, probe.extraValue(extra.Key), "extraValue(%q) 取值不对", extra.Key)
+	}
 }
