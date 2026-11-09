@@ -36,10 +36,48 @@ func isGrokContentPolicyRejection(statusCode int, responseBody []byte) bool {
 	if grokContentPolicyMessage(string(responseBody)) {
 		return true
 	}
+	// xAI also answers a request that carries a media input the plan does not
+	// include with permission-denied, for example
+	// {"code":"permission-denied","error":"Your team does not have access to video inputs."}
+	// The trigger is the request body (a video_url or input_audio part), not
+	// account health: the same credential serves text-only traffic normally, so
+	// no other account can serve the request either. Treat it as request-scoped
+	// to keep the pool schedulable.
+	for _, candidate := range grokStructuredErrorMessageCandidates(responseBody) {
+		if grokMediaInputEntitlementMessage(candidate) {
+			return true
+		}
+	}
 	// xAI also returns permission-denied for an explicit request refusal.
 	// Match only structured message/error text (or a non-JSON body). A refusal
 	// sentence parked in unknown metadata must not hide an account error.
 	return grokExplicitRequestRefusal(responseBody)
+}
+
+// grokMediaInputEntitlementMessage reports a plan-scoped rejection of a media
+// input the requested account does not include. The wording names the team, but
+// the deciding factor is the request body: swapping credentials cannot change
+// the answer, and the credential stays healthy for text traffic. Quarantining
+// accounts on this body drains an entire pool from a single client request.
+func grokMediaInputEntitlementMessage(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	if !strings.Contains(normalized, "does not have access to") {
+		return false
+	}
+	for _, mediaInput := range []string{
+		"video inputs",
+		"audio inputs",
+		"image inputs",
+		"file inputs",
+	} {
+		if strings.Contains(normalized, mediaInput) {
+			return true
+		}
+	}
+	return false
 }
 
 func grokStructuredAccountAccessMarker(value any) bool {
