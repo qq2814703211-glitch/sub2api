@@ -127,7 +127,9 @@ export type {
   PricingCnyOfficialConfig,
   PricingCnyOfficialUpdate,
   PricingManualLongContext,
-  PricingManualOverride
+  PricingManualOverride,
+  PricingManualExtraFields,
+  ManualExtraFieldSpec
 } from './modelPricingSync'
 export type { BalanceHistoryItem } from './users'
 export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from './errorPassthrough'

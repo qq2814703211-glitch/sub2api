@@ -97,6 +97,12 @@ type modelPricingSyncChange struct {
 	// Source 是写入该变更的口径来源（models.dev / cny-official）。变更史按来源
 	// 分列，才能追溯「这个数字是美元参考价还是人民币官方牌价」。
 	Source string `json:"source"`
+	// Remove 表示该字段要从覆盖层条目里删掉，而不是写新值。
+	//
+	// 用于「运营把已添加的可选计费项从 manual 条目上删掉」：页面不显示了、计费
+	// 却还按覆盖层里的旧值收，是最难察觉的错账。删除在 JSON 层用 null 表达
+	// （见 mergePricingOverrideEntry），所以 NewValue 为 0 且 Remove 为真。
+	Remove bool `json:"-"`
 }
 
 // source 返回变更的口径来源，缺省按美元档处理（兼容未填 Source 的历史路径）。
@@ -475,7 +481,6 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 		slog.Warn("model pricing sync history insert failed", "rows", len(rows), "error", err)
 	}
 }
-
 // loadSyncedFields 读取变更史里由各口径同步任务写过的字段集合。
 //
 // 两个来源都要读：字段归属判定必须知道「当前值是哪个口径写的」。只读 models.dev
@@ -810,7 +815,22 @@ func computeCNYOfficialSyncChanges(
 		// manual_overrides 命中：按运营配置的人民币价写入，优先级最高。
 		currentFields := decodeModelPricingSyncEntry(existing[model])
 		if manual, hit := dataset.manualPricing(model); hit {
-			changes = append(changes, cnyOfficialManualChanges(model, manual.PerToken, manual.LongContext, currentFields)...)
+			changes = append(changes, cnyOfficialManualChanges(
+				model, manual.PerToken, manual.Extras, manual.LongContext, currentFields)...)
+			// 已从页面上删掉的可选计费项 / 长上下文阶梯，要把覆盖层里的旧值一并
+			// 删掉。否则页面上看不见、计费仍按旧值收，是最难察觉的错账。
+			for _, field := range cnyOfficialManualPruneFields(
+				manual.Extras, manual.LongContext, currentFields, syncedFields[model]) {
+				changes = append(changes, modelPricingSyncChange{
+					Model:    model,
+					Field:    field,
+					OldValue: currentFields[field],
+					NewValue: 0,
+					Reason:   "运营已从 manual 条目移除该计费项，按配置删除覆盖层旧值",
+					Source:   ModelPricingSyncSourceCNYOfficial,
+					Remove:   true,
+				})
+			}
 			continue
 		}
 		if !ok || priced == nil {
@@ -860,6 +880,78 @@ func cnyOfficialNormalizeManualKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
 
+// cnyOfficialManualExtraField 描述一个「可选计费项」如何落到覆盖层。
+//
+// 默认展示的四个计费项（输入 / 输出 / 缓存读 / 缓存写）之外，覆盖层还认这些字段。
+// 全部在计费链路上有真实扣费点，不是仅供展示：
+//
+//   - cache_write_1h        → Anthropic 1 小时缓存写入，5m/1h 分档计费
+//   - *_priority            → priority 服务档单价（usePriorityServiceTierPricing 命中时替换基准价）
+//   - image_*               → 图片输入 / 图片缓存读 / 图片输出 token 与按张价
+//   - cache_storage_per_hour→ 显式上下文缓存存储费（token × 小时）
+//
+// Divisor 把「元 / 百万（token 或 token·小时）」折算成每 token；按张计价
+// （元 / 张）的除数是 1。人民币口径一律数字照搬，不做汇率换算。
+type cnyOfficialManualExtraField struct {
+	// Key 是 settings JSON 里的字段名，也即前端表单键。
+	Key string
+	// OverrideField 是覆盖层条目的 JSON 字段名，必须与 LiteLLMModelPricing 的 tag 一字不差。
+	OverrideField string
+	// Divisor 为 0 时按 1e6 处理（见 extraDivisor）。
+	Divisor float64
+}
+
+// cnyOfficialManualExtraFields 是可选计费项的唯一登记处。前端目录与后端写入
+// 都以它为准，新增一项只需在这里加一行并在 CNYOfficialManualPrice 上加字段。
+var cnyOfficialManualExtraFields = []cnyOfficialManualExtraField{
+	{Key: "cache_write_1h", OverrideField: "cache_creation_input_token_cost_above_1hr", Divisor: 1e6},
+	{Key: "input_priority", OverrideField: "input_cost_per_token_priority", Divisor: 1e6},
+	{Key: "output_priority", OverrideField: "output_cost_per_token_priority", Divisor: 1e6},
+	{Key: "cache_read_priority", OverrideField: "cache_read_input_token_cost_priority", Divisor: 1e6},
+	{Key: "cache_write_priority", OverrideField: "cache_creation_input_token_cost_priority", Divisor: 1e6},
+	{Key: "image_input", OverrideField: "input_cost_per_image_token", Divisor: 1e6},
+	{Key: "image_cache_read", OverrideField: "cache_read_input_image_token_cost", Divisor: 1e6},
+	{Key: "image_output_token", OverrideField: "output_cost_per_image_token", Divisor: 1e6},
+	// 按张计价：覆盖层里的 output_cost_per_image 本来就是「每张」的价，不除 1e6。
+	{Key: "image_output_per_image", OverrideField: "output_cost_per_image", Divisor: 1},
+	{Key: "cache_storage_per_hour", OverrideField: "cache_storage_cost_per_token_per_hour", Divisor: 1e6},
+}
+
+// extraDivisor 返回该计费项的折算除数，未填写时按 1e6 处理。
+func (f cnyOfficialManualExtraField) extraDivisor() float64 {
+	if f.Divisor > 0 {
+		return f.Divisor
+	}
+	return 1e6
+}
+
+// extraValue 按登记表的 Key 取该可选计费项的「元」值。
+func (p CNYOfficialManualPrice) extraValue(key string) float64 {
+	switch key {
+	case "cache_write_1h":
+		return p.CacheWrite1h
+	case "input_priority":
+		return p.InputPriority
+	case "output_priority":
+		return p.OutputPriority
+	case "cache_read_priority":
+		return p.CacheReadPriority
+	case "cache_write_priority":
+		return p.CacheWritePriority
+	case "image_input":
+		return p.ImageInput
+	case "image_cache_read":
+		return p.ImageCacheRead
+	case "image_output_token":
+		return p.ImageOutputToken
+	case "image_output_per_image":
+		return p.ImageOutputPerImage
+	case "cache_storage_per_hour":
+		return p.CacheStoragePerHour
+	}
+	return 0
+}
+
 // cnyOfficialManualLongContext 把手工配置的长上下文三项折成覆盖层阶梯。
 //
 // 返回 nil 表示不开长上下文：阈值未填、或两侧倍率都不大于 1 时都没意义
@@ -894,16 +986,27 @@ func cnyOfficialManualLongContext(price CNYOfficialManualPrice) *cnyOfficialLong
 // manual 是最高优先级一档：只要配置了，就按这份价格写覆盖层，不看官方人民币价
 // 是否有值。这样即使某个模型在官方数据源里没有人民币牌价（只有境外厂商的美元价），
 // 运营也能把它改成本位币计价。
-func cnyOfficialManualChanges(model string, perToken map[string]float64, longContext *cnyOfficialLongContext, current map[string]float64) []modelPricingSyncChange {
-	changes := make([]modelPricingSyncChange, 0, len(modelPricingSyncFields)+3)
-	for _, field := range modelPricingSyncFields {
-		newValue, ok := perToken[field]
-		if !ok || newValue <= 0 {
-			continue
+//
+// 两个来源的字段都要覆盖：
+//   - 默认四项（输入/输出/缓存读/缓存写）+ 长上下文阶梯；
+//   - `extras` 里已添加的可选计费项（1h 缓存写入、priority 档、图片、缓存存储）。
+//
+// 值为 0 的可选计费项按「不配置」处理，不写覆盖层。
+func cnyOfficialManualChanges(
+	model string,
+	perToken map[string]float64,
+	extras map[string]float64,
+	longContext *cnyOfficialLongContext,
+	current map[string]float64,
+) []modelPricingSyncChange {
+	changes := make([]modelPricingSyncChange, 0, len(modelPricingSyncFields)+len(extras)+3)
+	appendChange := func(field string, newValue float64) {
+		if newValue <= 0 {
+			return
 		}
 		oldValue := current[field]
-		if oldValue == newValue {
-			continue
+		if modelPricingValueEqual(oldValue, newValue) {
+			return
 		}
 		changes = append(changes, modelPricingSyncChange{
 			Model:    model,
@@ -914,11 +1017,95 @@ func cnyOfficialManualChanges(model string, perToken map[string]float64, longCon
 			Source:   ModelPricingSyncSourceCNYOfficial,
 		})
 	}
+	for _, field := range modelPricingSyncFields {
+		if newValue, ok := perToken[field]; ok {
+			appendChange(field, newValue)
+		}
+	}
+	for _, field := range cnyOfficialManualExtraOverrideFields() {
+		if newValue, ok := extras[field]; ok {
+			appendChange(field, newValue)
+		}
+	}
 	// 长上下文阶梯：三字段成组写，与官方档共用同一套逻辑（只写阈值不写倍率，
 	// 等于「超过阈值后价格不变」）。
 	changes = append(changes, cnyOfficialLadderChanges(model, longContext, current)...)
 	return changes
 }
+
+// cnyOfficialManualExtraOverrideFields 返回可选计费项在覆盖层里的字段名，顺序固定。
+func cnyOfficialManualExtraOverrideFields() []string {
+	fields := make([]string, 0, len(cnyOfficialManualExtraFields))
+	for _, extra := range cnyOfficialManualExtraFields {
+		fields = append(fields, extra.OverrideField)
+	}
+	return fields
+}
+
+// cnyOfficialManualPruneFields 返回「本次应从覆盖层删除」的字段。
+//
+// 语义：这些字段此前由 manual 写过（覆盖层有值），但运营这次把它从条目上删掉了
+// （settings 里没有该项，或值为 0）。不删的话，页面上看不见、计费却还在按旧值收，
+// 属于最难察觉的一类错账。只处理可选计费项与长上下文，默认四项永远保留。
+//
+// cnyFieldOwnedByManual 负责「是不是 manual 写的」：只有同步史里确实是
+// cny-official 写入、且当前值与史值一致时才算。运营在覆盖层里手工改过的值不动。
+func cnyOfficialManualPruneFields(
+	extras map[string]float64,
+	longContext *cnyOfficialLongContext,
+	current map[string]float64,
+	history map[string]float64,
+) []string {
+	prune := make([]string, 0, len(cnyOfficialManualExtraFields)+3)
+	for _, extra := range cnyOfficialManualExtraFields {
+		if extras[extra.OverrideField] > 0 {
+			continue
+		}
+		if current[extra.OverrideField] <= 0 {
+			continue
+		}
+		if !cnyFieldOwnedByManual(extra.OverrideField, current, history) {
+			continue
+		}
+		prune = append(prune, extra.OverrideField)
+	}
+	for _, field := range cnyOfficialLadderOverrideFields() {
+		if longContext != nil && longContext.Threshold > 0 {
+			// 阶梯还在配：不删。
+			continue
+		}
+		if current[field] <= 0 {
+			continue
+		}
+		if !cnyFieldOwnedByManual(field, current, history) {
+			continue
+		}
+		prune = append(prune, field)
+	}
+	return prune
+}
+
+// cnyOfficialLadderOverrideFields 是长上下文阶梯在覆盖层里的三个字段。
+func cnyOfficialLadderOverrideFields() []string {
+	return []string{cnyOfficialFieldThreshold, cnyOfficialFieldInputMult, cnyOfficialFieldOutputMult}
+}
+
+// cnyFieldOwnedByManual 判断覆盖层里某字段的值是否「由 synced 写入且此后没人改过」。
+//
+// history 为空（该模型从没被同步写过这个字段）时一律不算 manual 所有：那种值
+// 来自目录或运营直接在文件里手配，删了会破坏别人的配置。
+func cnyFieldOwnedByManual(field string, current map[string]float64, history map[string]float64) bool {
+	value := current[field]
+	if value <= 0 {
+		return false
+	}
+	synced, ok := history[field]
+	if !ok || synced <= 0 {
+		return false
+	}
+	return modelPricingValueEqual(synced, value)
+}
+
 
 // cnyOfficialReason 生成人民币档的变更原因，带上厂商便于核对牌价出处。
 func cnyOfficialReason(provider string, oldValue float64) string {
@@ -1111,6 +1298,14 @@ func applyModelPricingSyncChanges(
 				}
 			}
 			grouped[change.Model] = fields
+		}
+		if change.Remove {
+			// 删除字段：写 null，mergePricingOverrideEntry 的 patch 语义会把它
+			// 从结果里剔除。直接 delete 只在「本条目就是本函数拼出来的」时成立，
+			// 而条目可能来自 existing，delete 对后续 marshal 同样有效 —— 这里用
+			// delete 更直接，null 只作为越过浅合并的备用表达。
+			delete(fields, change.Field)
+			continue
 		}
 		fields[change.Field] = change.NewValue
 	}
