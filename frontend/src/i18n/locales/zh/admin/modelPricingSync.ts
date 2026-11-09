@@ -79,9 +79,37 @@ export default {
         input: '输入价',
         output: '输出价',
         cache_read: '缓存读取价',
+        cache_write: '缓存写入价',
         long_context_threshold: '阈值（tokens）',
         long_context_input_multiplier: '输入倍率',
         long_context_output_multiplier: '输出倍率'
+      },
+      extraTitle: '其他计费项',
+      extraHint: '默认只显示上面四项，需要更多计费项时从目录里添加。',
+      addExtra: '添加计费项',
+      removeExtra: '移除该项',
+      extraGroup: {
+        cache: '缓存写入分档',
+        priority: 'Priority 服务档',
+        image: '图片计费',
+        storage: '上下文缓存存储'
+      },
+      extra: {
+        cache_write_1h: '1 小时缓存写入',
+        input_priority: 'Priority 输入价',
+        output_priority: 'Priority 输出价',
+        cache_read_priority: 'Priority 缓存读取价',
+        cache_write_priority: 'Priority 缓存写入价',
+        image_input: '图片输入',
+        image_cache_read: '图片缓存读取',
+        image_output_token: '图片输出（token）',
+        image_output_per_image: '图片输出（按张）',
+        cache_storage_per_hour: '缓存存储'
+      },
+      extraUnit: {
+        per_million_tokens: '元 / 百万 tokens',
+        per_million_tokens_hour: '元 / 百万 tokens · 小时',
+        per_image: '元 / 张'
       },
       colPlaceholder: {
         long_context_threshold: '如 32000',

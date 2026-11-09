@@ -72,12 +72,23 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 			return nil, fmt.Errorf("manual_overrides 模型键 %q 重复（大小写或空格不同）", rawKey)
 		}
 		price := settings.ManualOverrides[rawKey]
-		for name, value := range map[string]float64{
-			"input":      price.Input,
-			"output":     price.Output,
-			"cache_read": price.CacheRead,
-		} {
-			if value < 0 {
+		negative := map[string]float64{
+			"input":       price.Input,
+			"output":      price.Output,
+			"cache_read":  price.CacheRead,
+			"cache_write": price.CacheWrite,
+		}
+		// 可选计费项同样不能为负：负价会让计费侧算出负费用（等于给用户退款）。
+		for _, extra := range cnyOfficialManualExtraFields {
+			negative[extra.Key] = price.extraValue(extra.Key)
+		}
+		names := make([]string, 0, len(negative))
+		for name := range negative {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if negative[name] < 0 {
 				return nil, fmt.Errorf("manual_overrides[%s].%s 不能为负", key, name)
 			}
 		}

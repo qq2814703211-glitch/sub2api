@@ -137,12 +137,70 @@ export interface PricingManualLongContext {
   long_context_output_multiplier?: number
 }
 
-/** 单模型手动覆盖价，单位「元 / 百万 tokens」。 */
-export interface PricingManualOverride extends PricingManualLongContext {
+/** 单模型手动覆盖价，单位「元 / 百万 tokens」（按张计价项除外，见下方目录）。 */
+export interface PricingManualOverride extends PricingManualLongContext, PricingManualExtraFields {
   input: number
   output: number
   cache_read: number
+  /**
+   * 缓存写入（Anthropic 5m ephemeral）。归在默认展示四项里，但后端历史配置可能
+   * 完全没有这个键，所以类型上可选 —— 强成必填会让回填路径把 undefined 渲染成
+   * 空串，用户看到的是「配了 0」。
+   */
+  cache_write?: number
 }
+
+/**
+ * 可选计费项。默认不出现在页面上，运营在条目旁用「添加计费项」目录按需添加，
+ * 已添加的可以删掉。
+ *
+ * 这些字段在计费链路上都有真实扣费点，不是仅供展示：
+ *   - `cache_write_1h`         Anthropic 1 小时缓存写入（与 5m 分档计费）
+ *   - `*_priority`             priority 服务档单价，命中时替换基准价
+ *   - `image_*`                图片输入 / 图片缓存读 / 图片输出 token
+ *   - `image_output_per_image` 图片按张计价
+ *   - `cache_storage_per_hour` 显式上下文缓存存储费（元 / 百万 token·小时）
+ *
+ * 字段名与后端 `CNYOfficialManualPrice` 的 json tag 一一对应，不要改名。
+ */
+export interface PricingManualExtraFields {
+  cache_write_1h?: number
+  input_priority?: number
+  output_priority?: number
+  cache_read_priority?: number
+  cache_write_priority?: number
+  image_input?: number
+  image_cache_read?: number
+  image_output_token?: number
+  image_output_per_image?: number
+  cache_storage_per_hour?: number
+}
+
+/** 可选计费项的一个目录条目。 */
+export interface ManualExtraFieldSpec {
+  key: keyof PricingManualExtraFields & string
+  /** 所在分组，用于目录分组显示。 */
+  group: 'cache' | 'priority' | 'image' | 'storage'
+  /** 计价单位，写进输入框后缀。 */
+  unit: 'per_million_tokens' | 'per_million_tokens_hour' | 'per_image'
+}
+
+/**
+ * 「添加计费项」目录。与后端 `cnyOfficialManualExtraFields` 一一对应 ——
+ * 后端新增一项却没同步这里，页面上就永远加不出那个计费项。
+ */
+export const MANUAL_EXTRA_FIELDS: readonly ManualExtraFieldSpec[] = [
+  { key: 'cache_write_1h', group: 'cache', unit: 'per_million_tokens' },
+  { key: 'input_priority', group: 'priority', unit: 'per_million_tokens' },
+  { key: 'output_priority', group: 'priority', unit: 'per_million_tokens' },
+  { key: 'cache_read_priority', group: 'priority', unit: 'per_million_tokens' },
+  { key: 'cache_write_priority', group: 'priority', unit: 'per_million_tokens' },
+  { key: 'image_input', group: 'image', unit: 'per_million_tokens' },
+  { key: 'image_cache_read', group: 'image', unit: 'per_million_tokens' },
+  { key: 'image_output_token', group: 'image', unit: 'per_million_tokens' },
+  { key: 'image_output_per_image', group: 'image', unit: 'per_image' },
+  { key: 'cache_storage_per_hour', group: 'storage', unit: 'per_million_tokens_hour' }
+] as const
 
 /** settings 键 `pricing.cny_official` 的 JSON 结构。 */
 export interface PricingCnyOfficialConfig {
@@ -190,6 +248,16 @@ function normalizeOverrides(value: unknown): Record<string, PricingManualOverrid
       input: toPrice(entry.input),
       output: toPrice(entry.output),
       cache_read: toPrice(entry.cache_read)
+    }
+    // cache_write 归默认四项，但历史配置可能没有这个键：只有 > 0 才带上，
+    // 免得把「从没配过」渲染成「配了 0」。
+    const cacheWrite = toOptionalNumber(entry.cache_write)
+    if (cacheWrite !== undefined && cacheWrite > 0) override.cache_write = cacheWrite
+    // 可选计费项：只有真的配了（> 0）才带上键。写 0 在后端等价于「不配置」，
+    // 但省略能让「未添加」与「添加了填 0」在载荷里可区分，dirty 判断也更准。
+    for (const spec of MANUAL_EXTRA_FIELDS) {
+      const parsed = toOptionalNumber(entry[spec.key])
+      if (parsed !== undefined && parsed > 0) override[spec.key] = parsed
     }
     const threshold = toOptionalNumber(entry.long_context_threshold)
     const inputMultiplier = toOptionalNumber(entry.long_context_input_multiplier)
