@@ -620,16 +620,6 @@ func lockAndMergeAccountProbeExtra(
 			AND type = $3
 			AND credentials = $4::jsonb
 			AND proxy_id IS NOT DISTINCT FROM $5,
-			COALESCE(
-				platform IN (`+ollamaCloudUsagePlatformsSQL+`)
-				AND $2 IN (`+ollamaCloudUsagePlatformsSQL+`)
-				AND type = 'apikey'
-				AND $3 = 'apikey'
-				AND credentials -> 'api_key' IS NOT DISTINCT FROM $4::jsonb -> 'api_key'
-				AND `+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+`
-				AND `+ollamaCloudBaseURLMatchesSQL("$4::jsonb ->> 'base_url'")+`,
-				false
-			),
 			proxy_id IS NOT DISTINCT FROM $5,
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
