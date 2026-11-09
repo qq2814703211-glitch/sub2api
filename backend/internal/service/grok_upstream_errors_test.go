@@ -99,6 +99,60 @@ func TestIsGrokContentPolicyRejection(t *testing.T) {
 			want:   false,
 		},
 		{
+			name:   "exact production video input entitlement refusal",
+			status: http.StatusForbidden,
+			body:   `{"code":"permission-denied","error":"Your team does not have access to video inputs."}`,
+			want:   true,
+		},
+		{
+			name:   "exact production audio input entitlement refusal",
+			status: http.StatusForbidden,
+			body:   `{"code":"permission-denied","error":"Your team does not have access to audio inputs."}`,
+			want:   true,
+		},
+		{
+			name:   "nested media input entitlement refusal",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"permission-denied","message":"Your team does not have access to video inputs."}}`,
+			want:   true,
+		},
+		{
+			name:   "uppercase media input entitlement refusal",
+			status: http.StatusForbidden,
+			body:   `{"error":"YOUR TEAM DOES NOT HAVE ACCESS TO VIDEO INPUTS."}`,
+			want:   true,
+		},
+		{
+			name:   "plaintext media input entitlement refusal",
+			status: http.StatusForbidden,
+			body:   "Your team does not have access to video inputs.",
+			want:   true,
+		},
+		{
+			name:   "account suspension wins over media input sentence",
+			status: http.StatusForbidden,
+			body:   `{"error":{"code":"account_suspended","message":"Your team does not have access to video inputs."}}`,
+			want:   false,
+		},
+		{
+			name:   "subscription code wins over media input sentence",
+			status: http.StatusForbidden,
+			body:   `{"code":"subscription_required","error":"Your team does not have access to audio inputs."}`,
+			want:   false,
+		},
+		{
+			name:   "media access sentence without a media input stays on the account path",
+			status: http.StatusForbidden,
+			body:   `{"code":"permission-denied","error":"Your team does not have access to the chat endpoint."}`,
+			want:   false,
+		},
+		{
+			name:   "non-403 media input entitlement refusal",
+			status: http.StatusBadRequest,
+			body:   `{"code":"permission-denied","error":"Your team does not have access to video inputs."}`,
+			want:   false,
+		},
+		{
 			name:   "structured account code overrides usage guidelines phrase",
 			status: http.StatusForbidden,
 			body:   `{"error":{"code":"account_suspended","message":"Content violates usage guidelines."}}`,
@@ -439,6 +493,49 @@ func TestGrokPermissionDeniedContentRefusalDoesNotMutateOrFailover(t *testing.T)
 	require.Zero(t, repo.updateCalls)
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 	require.False(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, body))
+}
+
+func TestGrokMediaInputEntitlement403DoesNotMutateOrFailover(t *testing.T) {
+	// Production body shape: a request carrying a video_url or input_audio part
+	// is rejected because the plan does not include that input type. The same
+	// credential serves text traffic, so this must never quarantine an account
+	// and must never rotate the pool — one request previously cooled up to 11
+	// accounts, all with reason "grok access or entitlement denied".
+	for _, body := range []string{
+		`{"code":"permission-denied","error":"Your team does not have access to video inputs."}`,
+		`{"code":"permission-denied","error":"Your team does not have access to audio inputs."}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			repo := &grokQuotaAccountRepo{}
+			svc := &OpenAIGatewayService{accountRepo: repo}
+			account := &Account{ID: 4786, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+			svc.handleGrokAccountUpstreamError(
+				context.Background(), account, http.StatusForbidden, nil, []byte(body),
+			)
+
+			require.Zero(t, repo.tempUnschedCalls)
+			require.Zero(t, repo.rateLimitedCalls)
+			require.Zero(t, repo.updateCalls)
+			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+			require.False(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, []byte(body)))
+		})
+	}
+}
+
+func TestGrokMediaInputEntitlement403KeepsAccountLevel403OnCooldownPath(t *testing.T) {
+	// The classifier must keep genuine account-level 403s on the cooldown path.
+	repo := &grokQuotaAccountRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 4787, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+	svc.handleGrokAccountUpstreamError(
+		context.Background(), account, http.StatusForbidden, nil,
+		[]byte(`{"error":{"code":"account_suspended","message":"Your team does not have access to video inputs."}}`),
+	)
+
+	require.Equal(t, 1, repo.tempUnschedCalls)
+	require.Equal(t, "grok access or entitlement denied", repo.lastTempUnschedReason)
 }
 
 func TestHandleGrokAccountUpstreamErrorEntitlement403KeepsDefaultCooldown(t *testing.T) {
