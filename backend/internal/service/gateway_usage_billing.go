@@ -1390,7 +1390,6 @@ func (s *GatewayService) buildRecordUsageLog(
 		usageLog.OutputCost = cost.OutputCost
 		usageLog.ImageOutputCost = cost.ImageOutputCost
 		usageLog.CacheCreationCost = cost.CacheCreationCost
-		usageLog.CacheWriteTTLCost = cost.CacheWriteTTLCost
 		usageLog.CacheReadCost = cost.CacheReadCost
 		usageLog.TotalCost = cost.TotalCost
 		usageLog.ActualCost = cost.ActualCost

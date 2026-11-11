@@ -157,7 +157,7 @@ func enabledV3Config() *ChannelMonitorV3Config {
 	cfg.Enabled = true
 	cfg.Groups = []ChannelMonitorV3Group{{GroupID: 7, Enabled: true, ProbeEnabled: true}}
 	cfg.Probe = ChannelMonitorV3Probe{
-		Endpoint:        "https://upstream.example",
+		Endpoint:        "https://api.openai.com",
 		APIKeyEncrypted: "ciphertext",
 		Provider:        MonitorProviderAnthropic,
 		PrimaryModel:    "claude-sonnet-4",
@@ -387,7 +387,7 @@ func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
 			Enabled:      true,
 			ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint:        "https://gpt-upstream.example",
+				Endpoint:        "https://api.anthropic.com",
 				APIKeyEncrypted: "gpt-ciphertext",
 				Provider:        MonitorProviderOpenAI,
 				PrimaryModel:    "gpt-5",
@@ -411,11 +411,11 @@ func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
 	}
 
 	global := prober.probeByGroup[7]
-	if global.Endpoint != "https://upstream.example" || global.APIKeyEncrypted != "global-plain-key" {
+	if global.Endpoint != "https://api.openai.com" || global.APIKeyEncrypted != "global-plain-key" {
 		t.Fatalf("group 7 must keep the global identity, got %+v", global)
 	}
 	own := prober.probeByGroup[9]
-	if own.Endpoint != "https://gpt-upstream.example" {
+	if own.Endpoint != "https://api.anthropic.com" {
 		t.Fatalf("group 9 must use its own endpoint, got %q", own.Endpoint)
 	}
 	if own.APIKeyEncrypted != "gpt-plain-key" {

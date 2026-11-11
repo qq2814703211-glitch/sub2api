@@ -171,7 +171,7 @@ func TestChannelMonitorV3GroupProbeNormalization(t *testing.T) {
 	broken := enabledV3Config()
 	broken.Groups = []ChannelMonitorV3Group{{
 		GroupID: 7, Enabled: true, ProbeEnabled: true,
-		Probe: ChannelMonitorV3Probe{Endpoint: "https://gpt.example"},
+		Probe: ChannelMonitorV3Probe{Endpoint: "https://api.openai.com"},
 	}}
 	if err := normalizeChannelMonitorV3Config(broken); err == nil {
 		t.Fatal("a half-configured group probe must be rejected, not silently half-inherited")
@@ -182,7 +182,7 @@ func TestChannelMonitorV3GroupProbeNormalization(t *testing.T) {
 	full.Groups = []ChannelMonitorV3Group{{
 		GroupID: 7, Enabled: true, ProbeEnabled: true,
 		Probe: ChannelMonitorV3Probe{
-			Endpoint:     "https://gpt.example/",
+			Endpoint:     "https://api.openai.com/",
 			PrimaryModel: "  gpt-5  ",
 		},
 	}}
@@ -190,7 +190,7 @@ func TestChannelMonitorV3GroupProbeNormalization(t *testing.T) {
 		t.Fatalf("a complete group probe must normalize: %v", err)
 	}
 	probe := full.Groups[0].Probe
-	if probe.Endpoint != "https://gpt.example" {
+	if probe.Endpoint != "https://api.openai.com" {
 		t.Fatalf("the endpoint must drop the trailing slash, got %q", probe.Endpoint)
 	}
 	if probe.PrimaryModel != "gpt-5" {
@@ -214,7 +214,7 @@ func TestChannelMonitorV3RedactHidesEveryGroupKey(t *testing.T) {
 		{
 			GroupID: 7, Enabled: true, ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://own.example", APIKeyEncrypted: "own-ciphertext",
+				Endpoint: "https://api.openai.com", APIKeyEncrypted: "own-ciphertext",
 				PrimaryModel: "gpt-5", Provider: MonitorProviderOpenAI, IntervalSeconds: 300,
 			},
 		},
@@ -253,7 +253,7 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 		{
 			GroupID: 7, Enabled: true, ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://own.example", APIKeyEncrypted: "enc:old-group-key",
+				Endpoint: "https://api.openai.com", APIKeyEncrypted: "enc:old-group-key",
 				PrimaryModel: "gpt-5", Provider: MonitorProviderOpenAI, IntervalSeconds: 300,
 			},
 		},
@@ -267,7 +267,7 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 		{
 			GroupID: 7, Enabled: true, ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://own.example", PrimaryModel: "gpt-5",
+				Endpoint: "https://api.openai.com", PrimaryModel: "gpt-5",
 				Provider: MonitorProviderOpenAI, IntervalSeconds: 600,
 			},
 		},
@@ -288,7 +288,7 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 		{
 			GroupID: 7, Enabled: true, ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://own.example", PrimaryModel: "gpt-5",
+				Endpoint: "https://api.openai.com", PrimaryModel: "gpt-5",
 				Provider: MonitorProviderOpenAI, IntervalSeconds: 600,
 			},
 		},
@@ -310,7 +310,7 @@ func TestChannelMonitorV3UpdateConfigClearsGroupKeyWhenInherited(t *testing.T) {
 		{
 			GroupID: 7, Enabled: true, ProbeEnabled: true,
 			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://own.example", APIKeyEncrypted: "enc:old-group-key",
+				Endpoint: "https://api.openai.com", APIKeyEncrypted: "enc:old-group-key",
 				PrimaryModel: "gpt-5", Provider: MonitorProviderOpenAI, IntervalSeconds: 300,
 			},
 		},
