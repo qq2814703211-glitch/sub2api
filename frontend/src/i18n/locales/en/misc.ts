@@ -288,9 +288,9 @@ export default {
   // Payment System
   payment: {
     title: 'Recharge / Subscription',
-    tabExternalCard: 'Buy Card',
+    tabExternalCard: 'CNY Top Up',
     externalCardPurchase: {
-      title: 'External Card Shop',
+      title: 'CNY Top Up',
       redeemHint: 'After buying a card, return here to redeem it. This site does not send credentials or user context to the shop.',
       openNewWindow: 'Open in New Window',
       openRedeem: 'Redeem on this site',
@@ -413,7 +413,7 @@ export default {
     rechargeAccount: 'Recharge Account',
     activeSubscription: 'Active Subscription',
     noActiveSubscription: 'No active subscription',
-    tabTopUp: 'Top Up',
+    tabTopUp: 'USDT Top Up',
     tabSubscribe: 'Subscribe',
     noPlans: 'No subscription plans available',
     notAvailable: 'Top-up is currently unavailable',

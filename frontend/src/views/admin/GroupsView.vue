@@ -4651,7 +4651,7 @@ const allColumns = computed<Column[]>(() => {
     { key: "rate_multiplier", label: t("admin.groups.columns.rateMultiplier"), sortable: true },
     { key: "is_exclusive", label: t("admin.groups.columns.type"), sortable: true },
     basic[3],
-    { key: "capacity", label: t("admin.groups.columns.capacity"), sortable: false },
+    { key: "capacity", label: t("admin.groups.columns.capacity"), sortable: true },
     { key: "usage", label: t("admin.groups.columns.usage"), sortable: false },
     ...basic.slice(4),
   ];
@@ -5974,7 +5974,9 @@ const handlePageSizeChange = (pageSize: number) => {
 };
 
 const handleSort = (key: string, order: 'asc' | 'desc') => {
-  sortState.sort_by = key;
+  // 容量列排序口径是「实时使用中」(active_users)：它是在途登记表的 Redis 快照，
+  // 后端按 active_users 走全量排序再分页，前端只需把容量列的排序键映射过去。
+  sortState.sort_by = key === 'capacity' ? 'active_users' : key;
   sortState.sort_order = order;
   pagination.page = 1;
   loadGroups();
