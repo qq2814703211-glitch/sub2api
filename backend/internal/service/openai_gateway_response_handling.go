@@ -1291,15 +1291,17 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	}
 	if src.CacheCreationInputTokens > 0 {
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
+		dst.CacheCreation30mInputTokens = src.CacheCreation30mInputTokens
+		dst.CacheCreation12hInputTokens = src.CacheCreation12hInputTokens
 	}
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
 	}
-	if src.CacheWrite30mTokens > 0 {
-		dst.CacheWrite30mTokens = src.CacheWrite30mTokens
+	if src.CacheCreation30mInputTokens > 0 {
+		dst.CacheCreation30mInputTokens = src.CacheCreation30mInputTokens
 	}
-	if src.CacheWrite12hTokens > 0 {
-		dst.CacheWrite12hTokens = src.CacheWrite12hTokens
+	if src.CacheCreation12hInputTokens > 0 {
+		dst.CacheCreation12hInputTokens = src.CacheCreation12hInputTokens
 	}
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
@@ -1309,8 +1311,8 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 func openAIUsageHasTokens(usage *OpenAIUsage) bool {
 	return usage != nil && (usage.InputTokens > 0 || usage.ImageInputTokens > 0 ||
 		usage.OutputTokens > 0 || usage.CacheCreationInputTokens > 0 ||
-		usage.CacheReadInputTokens > 0 || usage.CacheWrite30mTokens > 0 ||
-		usage.CacheWrite12hTokens > 0 || usage.ImageOutputTokens > 0)
+		usage.CacheReadInputTokens > 0 || usage.CacheCreation30mInputTokens > 0 ||
+		usage.CacheCreation12hInputTokens > 0 || usage.ImageOutputTokens > 0)
 }
 
 const openAIMissingUsageLogInterval = time.Minute
@@ -1425,7 +1427,7 @@ func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool 
 	if usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 ||
 		usage.ImageInputTokens > 0 || usage.ImageOutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 || usage.CacheReadInputTokens > 0 ||
-		usage.CacheWrite30mTokens > 0 || usage.CacheWrite12hTokens > 0) {
+		usage.CacheCreation30mInputTokens > 0 || usage.CacheCreation12hInputTokens > 0) {
 		return false
 	}
 	if gjson.GetBytes(data, "usage").Exists() || gjson.GetBytes(data, "response.usage").Exists() {
@@ -1615,9 +1617,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	}
 	cacheReadTokens := openAICacheReadTokensFromUsage(value)
 	cacheCreationTokens := openAICacheCreationTokensFromUsage(value)
-	// OpenAI 缓存写入 TTL 分档（30m / 12h）。上游不返回分档时两者为 0：
-	// 此时只按 cached_tokens 计缓存读，不臆造写入分档（ADR 0011）。
-	cacheWrite30mTokens, cacheWrite12hTokens := openAICacheWriteTTLTokensFromUsage(value)
+	cache30m, cache12h := openAICacheCreationTTLTokensFromUsage(value, cacheCreationTokens)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if !value.Get("output_tokens_details.image_tokens").Exists() {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -1636,15 +1636,15 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	imageCached, _ := boundedJSONNonNegativeInt(cachedDetails.Get("image_tokens"))
 	imageCached = min(imageCached, max(imageInputTokens, 0), max(cacheReadTokens, 0))
 	return OpenAIUsage{
-		InputTokens:              int(inputTokens),
-		ImageInputTokens:         imageInputTokens,
-		ImageCacheReadTokens:     imageCached,
-		OutputTokens:             int(outputTokens),
-		CacheCreationInputTokens: cacheCreationTokens,
-		CacheReadInputTokens:     cacheReadTokens,
-		CacheWrite30mTokens:      cacheWrite30mTokens,
-		CacheWrite12hTokens:      cacheWrite12hTokens,
-		ImageOutputTokens:        int(imageOutputTokens),
+		InputTokens:                 int(inputTokens),
+		ImageInputTokens:            imageInputTokens,
+		ImageCacheReadTokens:        imageCached,
+		OutputTokens:                int(outputTokens),
+		CacheCreationInputTokens:    cacheCreationTokens,
+		CacheCreation30mInputTokens: cache30m,
+		CacheCreation12hInputTokens: cache12h,
+		CacheReadInputTokens:        cacheReadTokens,
+		ImageOutputTokens:           int(imageOutputTokens),
 	}, true
 }
 
@@ -1684,6 +1684,28 @@ func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 		value.Get("cache_write_input_tokens"),
 		value.Get("cache_creation_tokens"),
 	)
+}
+
+// Only reported usage determines the lifetime. Missing, partial or inconsistent
+// details keep the aggregate's legacy price; request TTLs cannot prove writes.
+func openAICacheCreationTTLTokensFromUsage(value gjson.Result, aggregate int) (int, int) {
+	for _, path := range []string{"input_tokens_details", "prompt_tokens_details"} {
+		details := value.Get(path + ".cache_write_tokens_details")
+		if !details.Exists() {
+			continue
+		}
+		short, long := details.Get("ttl_30m_tokens"), details.Get("ttl_12h_tokens")
+		if short.Type != gjson.Number || long.Type != gjson.Number {
+			return 0, 0
+		}
+		a, b := short.Int(), long.Int()
+		if a < 0 || b < 0 || float64(a) != short.Float() || float64(b) != long.Float() ||
+			a > int64(aggregate) || b != int64(aggregate)-a {
+			return 0, 0
+		}
+		return int(a), int(b)
+	}
+	return 0, 0
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {

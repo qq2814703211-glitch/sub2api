@@ -86,31 +86,50 @@ func TestOpenAIMessagesGLMReasoningPricingUsesForwardedEffort(t *testing.T) {
 			{"medium", "", "medium", 1.5},
 			{"xhigh", "", "xhigh", 2},
 			{"xhigh", "medium", "medium", 1.5},
+			// 不设 {"low","medium","medium"} 一档：上游那条用例编码的是 GLM 两档
+			// 重映射（low->high 再被 medium 上限压回）。本分支要求思考档位原样透传，
+			// low 就发 low，group 上限只压不升，故该越限路径不存在。
 		} {
 			t.Run(fmt.Sprintf("stream=%t/effort=%s/policy=%s", stream, tc.effort, tc.maxPolicy), func(t *testing.T) {
-				body := []byte(fmt.Sprintf(`{"model":"glm-5.2","stream":%t,"max_tokens":32,"output_config":{"effort":%q},"messages":[{"role":"user","content":"hello"}]}`, stream, tc.effort))
-				responseBody := `{"id":"chatcmpl_glm","object":"chat.completion","model":"glm-5.2","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000000,"completion_tokens":2,"total_tokens":1000002}}`
-				contentType := "application/json"
-				if stream {
-					contentType = "text/event-stream"
-					responseBody = "data: " + `{"id":"chatcmpl_glm","object":"chat.completion.chunk","model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000000,"completion_tokens":2,"total_tokens":1000002}}` + "\n\ndata: [DONE]\n\n"
+				for _, overLimit := range []string{"", ReasoningEffortOverLimitDowngrade, ReasoningEffortOverLimitDeny} {
+					t.Run("overLimit="+overLimit, func(t *testing.T) {
+						body := []byte(fmt.Sprintf(`{"model":"glm-5.2","stream":%t,"max_tokens":32,"output_config":{"effort":%q},"messages":[{"role":"user","content":"hello"}]}`, stream, tc.effort))
+						responseBody := `{"id":"chatcmpl_glm","object":"chat.completion","model":"glm-5.2","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000000,"completion_tokens":2,"total_tokens":1000002}}`
+						contentType := "application/json"
+						if stream {
+							contentType = "text/event-stream"
+							responseBody = "data: " + `{"id":"chatcmpl_glm","object":"chat.completion.chunk","model":"glm-5.2","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000000,"completion_tokens":2,"total_tokens":1000002}}` + "\n\ndata: [DONE]\n\n"
+						}
+						upstream := &httpUpstreamRecorder{resp: &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Content-Type": []string{contentType}},
+							Body:       io.NopCloser(strings.NewReader(responseBody)),
+						}}
+						svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+						ctx := context.Background()
+						if tc.maxPolicy != "" {
+							ctx = WithOpenAIReasoningEffortPolicyForMessages(ctx, body, tc.maxPolicy, nil, overLimit)
+						}
+						requestContext := adaptiveProtocolTestContext("/v1/messages", body)
+						account := forceChatMessagesFallbackAccount()
+						require.Equal(t, PlatformOpenAI, account.Platform)
+						result, err := svc.ForwardAsAnthropic(ctx, requestContext, account, body, "", "")
+						if tc.maxPolicy != "" && overLimit == ReasoningEffortOverLimitDeny {
+							require.True(t, IsReasoningEffortPolicyDenied(err), "expected policy denial, got %v", err)
+							require.Equal(t, http.StatusForbidden, requestContext.Writer.Status())
+							require.Empty(t, upstream.requests)
+							require.Nil(t, result)
+							return
+						}
+						require.NoError(t, err)
+						require.Equal(t, http.StatusOK, requestContext.Writer.Status())
+						require.Len(t, upstream.requests, 1)
+						require.Equal(t, "/v1/chat/completions", upstream.lastReq.URL.Path)
+						require.Equal(t, tc.wantEffort, gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+						require.Equal(t, tc.wantEffort, optionalStringValue(result.ReasoningEffort))
+						assertConvertedReasoningPrice(t, result, tc.wantCost)
+					})
 				}
-				upstream := &httpUpstreamRecorder{resp: &http.Response{
-					StatusCode: http.StatusOK,
-					Header:     http.Header{"Content-Type": []string{contentType}},
-					Body:       io.NopCloser(strings.NewReader(responseBody)),
-				}}
-				svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
-				ctx := context.Background()
-				if tc.maxPolicy != "" {
-					ctx = WithOpenAIReasoningEffortPolicy(ctx, tc.maxPolicy, nil, "")
-				}
-				result, err := svc.ForwardAsAnthropic(ctx, adaptiveProtocolTestContext("/v1/messages", body), forceChatMessagesFallbackAccount(), body, "", "")
-				require.NoError(t, err)
-				require.Equal(t, "/v1/chat/completions", upstream.lastReq.URL.Path)
-				require.Equal(t, tc.wantEffort, gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
-				require.Equal(t, tc.wantEffort, optionalStringValue(result.ReasoningEffort))
-				assertConvertedReasoningPrice(t, result, tc.wantCost)
 			})
 		}
 	}

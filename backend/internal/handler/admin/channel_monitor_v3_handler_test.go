@@ -109,7 +109,7 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 		"version": 1,
 		"enabled": true,
 		"probe": map[string]any{
-			"endpoint":         "https://global.example",
+			"endpoint":         "https://api.openai.com",
 			"provider":         "anthropic",
 			"primary_model":    "claude-sonnet-4",
 			"extra_models":     []string{},
@@ -123,7 +123,7 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 				"models":        []string{"gpt-5"},
 				"probe_enabled": true,
 				"probe": map[string]any{
-					"endpoint":         "https://gpt.example",
+					"endpoint":         "https://api.anthropic.com",
 					"provider":         "openai",
 					"primary_model":    "gpt-5",
 					"extra_models":     []string{},
@@ -151,7 +151,7 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 	require.Len(t, saved.Groups, 1)
 	require.Equal(t, int64(42), saved.Groups[0].GroupID)
 	// 分组级探针原样落库，并各自加密。
-	require.Equal(t, "https://gpt.example", saved.Groups[0].Probe.Endpoint)
+	require.Equal(t, "https://api.anthropic.com", saved.Groups[0].Probe.Endpoint)
 	require.Equal(t, "enc:group-key", saved.Groups[0].Probe.APIKeyEncrypted)
 	require.Equal(t, "enc:global-key", saved.Probe.APIKeyEncrypted)
 	// 分钟窗口穿过 DTO 被保存。
@@ -172,7 +172,7 @@ func TestChannelMonitorV3UpdateEndpointRejectsOverlongWindow(t *testing.T) {
 		"version": 1,
 		"enabled": true,
 		"probe": map[string]any{
-			"endpoint":         "https://global.example",
+			"endpoint":         "https://api.openai.com",
 			"provider":         "anthropic",
 			"primary_model":    "claude-sonnet-4",
 			"extra_models":     []string{},

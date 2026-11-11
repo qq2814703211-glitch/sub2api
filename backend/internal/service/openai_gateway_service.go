@@ -222,17 +222,15 @@ func (s *OpenAICodexUsageSnapshot) Normalize() *NormalizedCodexLimits {
 
 // OpenAIUsage represents OpenAI API response usage
 type OpenAIUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
-	ImageCacheReadTokens     int `json:"image_cache_read_tokens,omitempty"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-	// CacheWrite30mTokens / CacheWrite12hTokens 是 OpenAI 缓存写入的 TTL 分档
-	// （30 分钟 / 12 小时）。与 Anthropic 的 5m/1h 分档是两套口径，见 ADR 0011。
-	CacheWrite30mTokens   int `json:"cache_write_30m_tokens,omitempty"`
-	CacheWrite12hTokens   int `json:"cache_write_12h_tokens,omitempty"`
-	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	InputTokens                 int `json:"input_tokens"`
+	ImageInputTokens            int `json:"image_input_tokens,omitempty"`
+	ImageCacheReadTokens        int `json:"image_cache_read_tokens,omitempty"`
+	OutputTokens                int `json:"output_tokens"`
+	CacheCreationInputTokens    int `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation30mInputTokens int `json:"cache_creation_30m_input_tokens,omitempty"`
+	CacheCreation12hInputTokens int `json:"cache_creation_12h_input_tokens,omitempty"`
+	CacheReadInputTokens        int `json:"cache_read_input_tokens,omitempty"`
+	ImageOutputTokens           int `json:"image_output_tokens,omitempty"`
 	// Immutable request-local component snapshots; never serialized/persisted.
 	hostedSnapshot *openAIHostedUsageSnapshot `json:"-"`
 }
