@@ -255,22 +255,7 @@
                   {{ t('keys.retryUsage') }}
                 </button>
               </div>
-              <div v-else class="space-y-1" role="status">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                  <span
-                    data-test="usage-pending"
-                    class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
-                  />
-                </div>
-                <div class="mt-0.5 flex items-center gap-1.5">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                  <span
-                    data-test="usage-pending"
-                    class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
-                  />
-                </div>
-              </div>
+              <span v-else role="status" class="text-gray-500 dark:text-gray-400">{{ t('keys.usageLoading') }}</span>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center gap-1.5">
@@ -1861,7 +1846,7 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // 用量统计要聚合 30 天的 usage_logs，可能比列表慢很多：不阻塞表格渲染，单独加载
+    // Usage must not hold the list's loading state open.
     void loadUsageStats()
   } catch (error) {
     if (signal.aborted || isAbortError(error)) {
@@ -1875,7 +1860,6 @@ const loadApiKeys = async () => {
     }
   }
 }
-
 
 const loadGroups = async () => {
   try {

@@ -9,11 +9,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestPrivateDiagnostic(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		// t.TempDir() 落在 /var/folders，而 /var 是指向 /private/var 的软链，
+		// 实现按设计拒绝含软链的诊断目录，因此该用例只在 Linux 上有意义。
+		t.Skip("macOS 的临时目录位于 /var 软链下，诊断目录按设计拒绝软链")
+	}
 	closeDisabled, err := Start("")
 	if err != nil {
 		t.Fatal(err)

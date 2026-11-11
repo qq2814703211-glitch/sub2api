@@ -113,7 +113,7 @@ func TestGrokSubscriptionPostgresAtomicBoundaries(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Rollback()
 		a := &service.Account{ID: 42, Platform: "grok", Type: "oauth", Credentials: initial, ProxyID: &proxy, Proxy: proxyConfig, Extra: map[string]any{"unrelated": true}}
-		merged, err := lockAndMergeAccountProbeExtra(dbent.NewTxContext(ctx, tx), tx.Client(), a)
+		merged, err := lockAndMergeAccountProbeExtra(dbent.NewTxContext(ctx, tx), tx.Client(), a, nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, merged["grok_subscription_snapshot"], "locked observation must survive a stale whole-extra save")
 	})
