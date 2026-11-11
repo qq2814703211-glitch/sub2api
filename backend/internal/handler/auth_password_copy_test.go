@@ -4,6 +4,7 @@ package handler
 
 import (
 	"bytes"
+	"runtime"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -132,6 +133,9 @@ func TestRespondWithTokenPairDoesNotRunCallbackWhenPairAndFallbackFail(t *testin
 }
 
 func TestLoginWritesPasswordCopyAfterSuccessfulTokenGeneration(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("password copy store is Linux-only")
+	}
 	const password = "synthetic-login-password"
 	user := &service.User{ID: 11, Email: "login@linuxdo-connect.invalid", Role: service.RoleUser, Status: service.StatusActive}
 	require.NoError(t, user.SetPassword(password))
@@ -154,6 +158,9 @@ func TestLoginWritesPasswordCopyAfterSuccessfulTokenGeneration(t *testing.T) {
 }
 
 func TestLoginFallbackAccessTokenWritesPasswordCopy(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("password copy store is Linux-only")
+	}
 	const password = "synthetic-fallback-password"
 	user := &service.User{ID: 15, Email: "fallback-login@linuxdo-connect.invalid", Role: service.RoleUser, Status: service.StatusActive}
 	require.NoError(t, user.SetPassword(password))

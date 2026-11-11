@@ -16,8 +16,14 @@ func TestProductionOpenAIPricingOverrideShortLongAndFast(t *testing.T) {
 	const catalogPath = "../../../model-pricing-current.json"
 	const overridePath = "../../../production-model-pricing-overrides.json"
 	catalog, err := os.ReadFile(catalogPath)
+	if os.IsNotExist(err) {
+		t.Skipf("生产价格快照不在仓库内（%s）：这两个文件是发布机上取的运行时产物，仅在带快照的环境里跑", catalogPath)
+	}
 	require.NoError(t, err)
 	override, err := os.ReadFile(overridePath)
+	if os.IsNotExist(err) {
+		t.Skipf("生产覆盖文件不在仓库内（%s）", overridePath)
+	}
 	require.NoError(t, err)
 
 	var source map[string]json.RawMessage

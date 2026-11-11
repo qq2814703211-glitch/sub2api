@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"runtime"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -25,6 +26,9 @@ import (
 )
 
 func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("password copy store is Linux-only")
+	}
 	const (
 		email    = "mfa-copy@example.com"
 		password = "synthetic-mfa-password"
