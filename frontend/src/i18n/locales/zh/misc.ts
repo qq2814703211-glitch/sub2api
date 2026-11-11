@@ -312,9 +312,9 @@ export default {
   // Payment System
   payment: {
     title: '充值/订阅',
-    tabExternalCard: '购买卡密',
+    tabExternalCard: '人民币充值',
     externalCardPurchase: {
-      title: '外部购卡',
+      title: '人民币充值',
       redeemHint: '请在购卡完成后回到本站兑换卡密。本站不会向购卡站传递登录凭据或用户信息。',
       openNewWindow: '新窗口打开',
       openRedeem: '回本站兑换',
@@ -437,7 +437,7 @@ export default {
     rechargeAccount: '充值账户',
     activeSubscription: '当前订阅',
     noActiveSubscription: '暂无有效订阅',
-    tabTopUp: '充值',
+    tabTopUp: 'USDT充值',
     tabSubscribe: '订阅',
     noPlans: '暂无可用订阅套餐',
     notAvailable: '充值功能暂未开放',

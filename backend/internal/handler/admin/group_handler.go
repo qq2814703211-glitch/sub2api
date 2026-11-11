@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -397,6 +398,16 @@ func (h *GroupHandler) List(c *gin.Context) {
 		isExclusive = &val
 	}
 
+	// 「实时使用中」(active_users) 不是 SQL 列，而是在途登记表的 Redis 快照，无法在数据库里 ORDER BY。
+	// 与 account_count 同理，走「取全量 → 合并运行态计数 → Go 侧排序 → 分页」的路径；
+	// 分组总数量级为数十，取全量安全。仅非 simple 模式、容量服务与在途服务齐备时启用。
+	if !h.isSimpleMode() &&
+		strings.EqualFold(strings.TrimSpace(sortBy), "active_users") &&
+		h.groupCapacityService != nil && h.usageInflightService != nil {
+		h.listSortedByActiveUsers(c, page, pageSize, platform, status, search, isExclusive, sortOrder)
+		return
+	}
+
 	groups, total, err := h.adminService.ListGroups(c.Request.Context(), page, pageSize, platform, status, search, isExclusive, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -418,6 +429,84 @@ func (h *GroupHandler) List(c *gin.Context) {
 		outGroups = append(outGroups, *dto.GroupFromServiceAdmin(&groups[i]))
 	}
 	response.Paginated(c, outGroups, total, page, pageSize)
+}
+
+// listSortedByActiveUsers 按「实时使用中」(active_users) 对分组排序后分页返回。
+//
+// active_users 来自在途登记表的 Redis 快照，不是数据库列，无法在 SQL 里 ORDER BY。
+// 因此这里取全量分组（量级数十）、批量查一次在途计数、在 Go 侧稳定排序，再手动切出当前页。
+// 平级（计数相同）按原始 sort_order 升序 + id 升序兜底，保持与默认列表一致的可预期顺序。
+func (h *GroupHandler) listSortedByActiveUsers(
+	c *gin.Context,
+	page, pageSize int,
+	platform, status, search string,
+	isExclusive *bool,
+	sortOrder string,
+) {
+	ctx := c.Request.Context()
+	// 取全量：pageSize 给一个足够大的值一次拿完；分组总数在生产是 O(数十)。
+	allGroups, total, err := h.adminService.ListGroups(ctx, 1, 100000, platform, status, search, isExclusive, "sort_order", "asc")
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	groupIDs := make([]int64, 0, len(allGroups))
+	for i := range allGroups {
+		if allGroups[i].ID > 0 {
+			groupIDs = append(groupIDs, allGroups[i].ID)
+		}
+	}
+	// 在途计数不可用时退化为全 0：所有分组都按兜底顺序排列，不让整个列表失败。
+	counts, countErr := h.usageInflightService.CountActiveUsersByGroups(ctx, groupIDs)
+	if countErr != nil || counts == nil {
+		counts = map[int64]int{}
+	}
+
+	desc := strings.EqualFold(strings.TrimSpace(sortOrder), "desc")
+	pageGroups := sortGroupsByActiveUsers(allGroups, counts, desc, page, pageSize)
+
+	outGroups := make([]dto.AdminGroup, 0, len(pageGroups))
+	for i := range pageGroups {
+		outGroups = append(outGroups, *dto.GroupFromServiceAdmin(&pageGroups[i]))
+	}
+	response.Paginated(c, outGroups, total, page, pageSize)
+}
+
+// sortGroupsByActiveUsers 按 active_users 计数稳定排序 groups 并切出目标页。
+//
+// 平级（计数相同）按 sort_order 升序、再 id 升序兜底，与默认分组列表口径一致，保证翻页顺序可预期。
+// counts 缺失的分组按 0 计。该函数是纯函数，便于单测锁定排序与分页边界语义。
+func sortGroupsByActiveUsers(groups []service.Group, counts map[int64]int, desc bool, page, pageSize int) []service.Group {
+	sort.SliceStable(groups, func(i, j int) bool {
+		ci, cj := counts[groups[i].ID], counts[groups[j].ID]
+		if ci != cj {
+			if desc {
+				return ci > cj
+			}
+			return ci < cj
+		}
+		if groups[i].SortOrder != groups[j].SortOrder {
+			return groups[i].SortOrder < groups[j].SortOrder
+		}
+		return groups[i].ID < groups[j].ID
+	})
+
+	if pageSize <= 0 {
+		return groups
+	}
+	start := (page - 1) * pageSize
+	if start < 0 {
+		start = 0
+	}
+	if start > len(groups) {
+		start = len(groups)
+	}
+	end := start + pageSize
+	if end > len(groups) {
+		end = len(groups)
+	}
+	return groups[start:end]
 }
 
 // ListCompositeRoutes handles listing composite model routes for one group.

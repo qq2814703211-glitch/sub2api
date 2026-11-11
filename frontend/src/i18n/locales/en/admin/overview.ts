@@ -896,6 +896,7 @@ export default {
         apiKeys: 'API Keys',
         accounts: 'Accounts',
         capacity: 'Capacity',
+        capacitySortHint: 'Click to sort by live active users',
         usage: 'Usage',
         status: 'Status',
         actions: 'Actions',
