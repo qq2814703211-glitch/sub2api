@@ -419,6 +419,7 @@ type CreateAccountInput struct {
 	GroupIDs           []int64
 	ExpiresAt          *int64
 	AutoPauseOnExpired *bool
+	ProbeEnabled       *bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
@@ -451,6 +452,8 @@ type UpdateAccountInput struct {
 	GroupIDs              *[]int64
 	ExpiresAt             *int64
 	AutoPauseOnExpired    *bool
+	ProbeEnabled          *bool
+	RateSyncEnabled       *bool
 	SkipMixedChannelCheck bool // 跳过混合渠道检查（用户已确认风险）
 }
 
@@ -469,6 +472,7 @@ type BulkUpdateAccountsInput struct {
 	GroupIDs       *[]int64
 	Credentials    map[string]any
 	Extra          map[string]any
+	ProbeEnabled   *bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
 	// This should only be set when the caller has explicitly confirmed the risk.
 	SkipMixedChannelCheck bool
@@ -698,6 +702,7 @@ type adminServiceImpl struct {
 	emptyGroupDeleteRepo EmptyGroupDeleteRepository
 	accountRepo          AccountRepository
 	accountDuplicateRepo AccountDuplicateRepository
+	accountBillingRepo   AccountBillingSettingsRepository
 	proxyRepo            ProxyRepository
 	apiKeyRepo           APIKeyRepository
 	redeemCodeRepo       RedeemCodeRepository

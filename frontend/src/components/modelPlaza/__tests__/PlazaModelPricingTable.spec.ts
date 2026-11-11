@@ -120,6 +120,7 @@ describe('PlazaModelPricingTable', () => {
     expect(wrapper.text()).toContain('$3.00')
     expect(wrapper.text()).toContain('0.12 / mediaPricing.units.image')
     wrapper.unmount()
+  })
 
   it.each([false, true])('shows independent 12h prices without a 1h label (intervals=%s)', (intervals) => {
     const model = tokenModel({ name: 'gpt-6-luna', platform: 'openai' })
@@ -138,7 +139,8 @@ describe('PlazaModelPricingTable', () => {
       expect(wrapper.text()).not.toContain('(1h')
     } finally {
       wrapper.unmount()
-    }  })
+    }
+  })
 
   it.each([
     { enabled: true, multiplier: 1, userRate: 0.05, expected: 1 },
