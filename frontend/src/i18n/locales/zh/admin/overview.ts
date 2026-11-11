@@ -889,6 +889,7 @@ export default {
         apiKeys: 'API 密钥数',
         accounts: '账号数',
         capacity: '容量',
+        capacitySortHint: '点击按「实时使用中」人数排序',
         usage: '用量',
         status: '状态',
         actions: '操作',

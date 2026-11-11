@@ -6,10 +6,10 @@
       </div>
       <template v-else>
         <!-- Tab Switcher (hide during payment and subscription confirm) -->
-        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 dark:bg-dark-800">
+        <div v-if="tabs.length > 1 && paymentPhase === 'select' && !selectedPlan" class="flex space-x-1 rounded-xl bg-gray-100 p-1 ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:bg-dark-800 dark:ring-offset-dark-900">
           <button v-for="tab in tabs" :key="tab.key"
             class="flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors duration-150"
-            :class="activeTab === tab.key ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-900/5 dark:bg-dark-700 dark:text-white dark:ring-dark-600' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
+            :class="activeTab === tab.key ? 'bg-primary-600 text-white shadow-sm dark:bg-primary-600 dark:text-white' : 'text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white'"
             @click="activeTab = tab.key">{{ tab.label }}</button>
         </div>
         <!-- Payment in progress (shared by recharge and subscription) -->
@@ -627,7 +627,7 @@ const tabs = computed(() => {
   const result: { key: 'recharge' | 'subscription' | 'external'; label: string }[] = []
   if (internalPaymentEnabled.value && !checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   if (internalPaymentEnabled.value && subscriptionEnabled.value) result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
-  if (externalCardPurchaseEnabled.value && externalCardPurchaseUrl.value) result.push({ key: 'external', label: externalCardPurchaseName.value })
+  if (externalCardPurchaseEnabled.value && externalCardPurchaseUrl.value) result.push({ key: 'external', label: t('payment.tabExternalCard') })
   return result
 })
 
