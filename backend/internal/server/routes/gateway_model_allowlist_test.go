@@ -70,7 +70,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	source := string(routeSource)
 
 	// rootRoute helper：apiKeyAuth 之后、compositeTarget 之前。
-	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`))
+	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`))
 	require.Regexp(t, rootHelper, source,
 		"root alias helper must place the allowlist between apiKeyAuth and compositeTarget")
 
@@ -95,7 +95,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	}
 
 	// codexDirect 链是一条 Use 调用，直接断言顺序。
-	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`))
+	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`))
 	require.Regexp(t, codexDirect, source, "codexDirect chain must mount the allowlist after auth and before compositeTarget")
 
 	// 所有带 apiKeyAuth 的根路径路由必须收敛到 rootRoute，避免漏挂。
@@ -114,10 +114,10 @@ func TestGatewayRoutesUsageInflightMountedOnEveryGatewayRoute(t *testing.T) {
 
 	// rootRoute 助手与 codexDirect 链是一条 Use 调用，直接断言顺序。
 	require.Regexp(t, regexp.MustCompile(regexp.QuoteMeta(
-		`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`)),
+		`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW, handler)`)),
 		source, "root alias helper must mount the inflight tracker after group resolution")
 	require.Regexp(t, regexp.MustCompile(regexp.QuoteMeta(
-		`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), capture, routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`)),
+		`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), routeCandidates, groupModelAllowlist, compositeTarget, requireGroupAnthropic, usageInflightMW)`)),
 		source, "codexDirect chain must mount the inflight tracker")
 
 	chains := []struct {

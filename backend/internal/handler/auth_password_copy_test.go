@@ -29,6 +29,9 @@ func (passwordCopyHandlerRefreshCache) GetRefreshToken(context.Context, string) 
 	return nil, service.ErrRefreshTokenNotFound
 }
 func (passwordCopyHandlerRefreshCache) DeleteRefreshToken(context.Context, string) error { return nil }
+func (passwordCopyHandlerRefreshCache) ConsumeRefreshToken(context.Context, string) (*service.RefreshTokenData, error) {
+	return nil, service.ErrRefreshTokenNotFound
+}
 func (passwordCopyHandlerRefreshCache) DeleteUserRefreshTokens(context.Context, int64) error {
 	return nil
 }

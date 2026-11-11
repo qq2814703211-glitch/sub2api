@@ -56,6 +56,10 @@ func (s *middlewareInflightStoreStub) ListByUser(context.Context, int64) ([]serv
 	return nil, s.err
 }
 
+func (s *middlewareInflightStoreStub) CountByUsers(context.Context, []int64) (map[int64]int, error) {
+	return map[int64]int{}, s.err
+}
+
 func (s *middlewareInflightStoreStub) ListByGroup(context.Context, int64) ([]service.UsageInflightSnapshot, error) {
 	return nil, s.err
 }

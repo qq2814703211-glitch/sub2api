@@ -153,11 +153,13 @@ func TestGetUserInflightRejectsInvalidID(t *testing.T) {
 
 // GET /admin/groups/:id/active-users 返回去重后的用户名单与在途数。
 func TestGetGroupActiveUsersReturnsDedupedList(t *testing.T) {
+	// 快照必须带新鲜的 StartedAt：没有时间戳的条目按陈旧处理会被读侧过滤掉。
+	now := time.Now().UTC()
 	store := &adminInflightStoreStub{snapshots: []service.UsageInflightSnapshot{
-		{RequestID: "a", UserID: 1, GroupID: 5, Username: "alice", Email: "alice@example.com", Model: "claude-sonnet-4-5"},
-		{RequestID: "b", UserID: 1, GroupID: 5, Username: "alice", Email: "alice@example.com", Model: "claude-opus-4-1"},
-		{RequestID: "c", UserID: 2, GroupID: 5, Username: "bob", Email: "bob@example.com", Model: "gpt-5"},
-		{RequestID: "d", UserID: 3, GroupID: 6, Username: "carol", Email: "carol@example.com", Model: "gpt-5"},
+		{RequestID: "a", UserID: 1, GroupID: 5, Username: "alice", Email: "alice@example.com", Model: "claude-sonnet-4-5", StartedAt: now},
+		{RequestID: "b", UserID: 1, GroupID: 5, Username: "alice", Email: "alice@example.com", Model: "claude-opus-4-1", StartedAt: now},
+		{RequestID: "c", UserID: 2, GroupID: 5, Username: "bob", Email: "bob@example.com", Model: "gpt-5", StartedAt: now},
+		{RequestID: "d", UserID: 3, GroupID: 6, Username: "carol", Email: "carol@example.com", Model: "gpt-5", StartedAt: now},
 	}}
 	router, _, _ := newInflightAdminRouter(t, store)
 
