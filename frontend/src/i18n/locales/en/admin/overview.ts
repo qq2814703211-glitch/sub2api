@@ -103,6 +103,15 @@ export default {
         testFailed: 'S3 connection test failed',
         saved: 'S3 configuration saved'
       },
+      localTarget: {
+        title: 'Local directory backup',
+        description: 'Write backups straight to a directory on this server instead of object storage. When set it takes priority; leave empty to keep using S3. The directory must already exist and be writable by the container.',
+        dir: 'Backup directory',
+        dirPlaceholder: '/var/lib/sub2api-backups',
+        hint: 'Leave empty to disable the local target and fall back to S3',
+        saved: 'Local backup directory saved',
+        clearFailed: 'Failed to clear the local backup directory'
+      },
       imageStorage: {
         title: 'Async image object storage',
         description: 'Enables the asynchronous image endpoints and offloads generated images to object storage, keeping only short links in Redis. Shares the S3 client with backups and takes effect on save — no restart needed.',

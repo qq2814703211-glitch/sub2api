@@ -205,7 +205,8 @@ func TestBackupRecovery_LateRestoreResultCannotReleaseNewProtection(t *testing.T
 	svc := newTestBackupService(newMockSettingRepo(), &mockDumper{}, newMockObjectStore())
 	record := archiveRecord("restoring", time.Now().AddDate(-1, 0, 0).Format(time.RFC3339))
 	record.RestoreStatus = "running"
-	record.RestoreStartedAt = time.Now().Add(-time.Hour).Format(time.RFC3339)
+	// 必须超过 backupStaleRecordWindow 才算孤儿：窗口要大于真实恢复的最长运行时间。
+	record.RestoreStartedAt = time.Now().Add(-(backupStaleRecordWindow + time.Minute)).Format(time.RFC3339)
 	require.NoError(t, svc.saveRecord(ctx, record))
 	svc.recoverStaleRecords()
 	current, err := svc.beginBackupRestore(ctx, record.ID)
