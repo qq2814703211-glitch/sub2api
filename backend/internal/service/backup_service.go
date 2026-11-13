@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,8 +31,19 @@ const (
 	settingKeyBackupS3Config = "backup_s3_config"
 	settingKeyBackupSchedule = "backup_schedule"
 	settingKeyBackupRecords  = "backup_records"
+	// settingKeyBackupLocalDir 是非 S3 备份目标：把备份对象写进本机目录。
+	// 它独立成键，不复用 backup_s3_config——S3 表单保存时会整份回写该键，
+	// 混进去会让面板里保存一次 S3 配置就把本机目录抹掉。
+	settingKeyBackupLocalDir = "backup_local_dir"
 
 	backupObjectCleanupTimeout = 2 * time.Minute
+
+	// backupOperationTimeout 限定单次全量备份的总时长。51GB 级生产库实测
+	// pg_dump 吞吐约 110MB/s、gzip 约 42MB/s，30 分钟不够用，超时会中途杀掉
+	// pg_dump 留下不完整归档。默认 180 分钟，可用 BACKUP_TIMEOUT_MINUTES 覆盖。
+	defaultBackupOperationMinutes = 180
+	// backupRestoreTimeout 限定单次恢复时长。
+	defaultBackupRestoreMinutes = 120
 
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
 	// that only one instance in a clustered deployment performs the
@@ -45,8 +58,32 @@ const (
 	// released as soon as the backup finishes. It must exceed the job's
 	// worst-case runtime (the scheduled backup context is bounded at 30m) so the
 	// lock cannot expire mid-dump and let a peer start a second backup.
-	backupScheduledLeaderLockTTL = 35 * time.Minute
+	backupScheduledLeaderLockTTL = 200 * time.Minute
+	// backupStaleRecordWindow 是判定"运行中"记录已成孤儿的时间阈值。它必须大于
+	// 任何一次真实备份/恢复可能的最长运行时间，否则恢复清理会误杀正在跑的任务、
+	// 把它负责的归档对象删掉。默认 200 分钟，独立于 leader 锁 TTL，便于分别调整。
+	backupStaleRecordWindow = 200 * time.Minute
 )
+
+// backupOperationTimeout 返回单次备份/恢复的总时长上限。
+// 超时会杀掉 in-flight 的 pg_dump，留下不完整归档，所以按库大小给足余量。
+func backupOperationTimeout() time.Duration {
+	return backupTimeoutFromEnv("BACKUP_TIMEOUT_MINUTES", defaultBackupOperationMinutes)
+}
+
+func backupRestoreTimeout() time.Duration {
+	return backupTimeoutFromEnv("BACKUP_RESTORE_TIMEOUT_MINUTES", defaultBackupRestoreMinutes)
+}
+
+func backupTimeoutFromEnv(key string, fallback int) time.Duration {
+	minutes := fallback
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			minutes = parsed
+		}
+	}
+	return time.Duration(minutes) * time.Minute
+}
 
 var (
 	ErrBackupS3NotConfigured  = infraerrors.BadRequest("BACKUP_S3_NOT_CONFIGURED", "backup S3 storage is not configured")
@@ -318,7 +355,7 @@ func (s *BackupService) recoverStaleRecords() {
 
 func backupOperationExpired(started string, now time.Time) bool {
 	at, err := time.Parse(time.RFC3339, started)
-	return err == nil && now.Sub(at) > backupScheduledLeaderLockTTL
+	return err == nil && now.Sub(at) > backupStaleRecordWindow
 }
 
 func (s *BackupService) cleanupStaleBackupObjects(ctx context.Context, record *BackupRecord) error {
@@ -547,7 +584,7 @@ func (s *BackupService) runScheduledBackup() {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupOperationTimeout())
 	defer cancel()
 
 	// 多实例保护: 集群部署时只让 leader 执行定时备份, 避免每个实例各自对同一个
@@ -618,17 +655,14 @@ func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, ex
 		s.opMu.Unlock()
 	}()
 
-	s3Cfg, err := s.loadS3Config(ctx)
+	target, err := s.resolveBackupTarget(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if s3Cfg == nil || !s3Cfg.IsConfigured() {
-		return nil, ErrBackupS3NotConfigured
-	}
-
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
-	if err != nil {
-		return nil, fmt.Errorf("init object store: %w", err)
+	objectStore, s3Cfg := target.store, target.cfg
+	backupType := "postgres"
+	if target.isLocal {
+		backupType = backupTargetLocalType
 	}
 
 	now := time.Now()
@@ -644,7 +678,7 @@ func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, ex
 	record := &BackupRecord{
 		ID:          backupID,
 		Status:      "running",
-		BackupType:  "postgres",
+		BackupType:  backupType,
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -706,18 +740,15 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		}
 	}()
 
-	// 在返回前加载 S3 配置和创建 store，避免 goroutine 中配置被修改
-	s3Cfg, err := s.loadS3Config(ctx)
+	// 在返回前解析备份目标，避免 goroutine 中配置被修改
+	target, err := s.resolveBackupTarget(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if s3Cfg == nil || !s3Cfg.IsConfigured() {
-		return nil, ErrBackupS3NotConfigured
-	}
-
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
-	if err != nil {
-		return nil, fmt.Errorf("init object store: %w", err)
+	objectStore, s3Cfg := target.store, target.cfg
+	backupType := "postgres"
+	if target.isLocal {
+		backupType = backupTargetLocalType
 	}
 
 	now := time.Now()
@@ -733,7 +764,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	record := &BackupRecord{
 		ID:          backupID,
 		Status:      "running",
-		BackupType:  "postgres",
+		BackupType:  backupType,
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -776,7 +807,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 
 // executeBackup 后台执行备份（独立于 HTTP context）
 func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config) {
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupOperationTimeout())
 	defer cancel()
 
 	// 阶段1: pg_dump -> gzip 临时文件
@@ -917,7 +948,7 @@ func (s *BackupService) buildBackupPartKey(root string, index int) string {
 	return fmt.Sprintf("%s/payload.part-%06d", strings.TrimRight(root, "/"), index)
 }
 
-// RestoreBackup 从 S3 下载备份并流式恢复到数据库
+// RestoreBackup 从备份目标下载归档并流式恢复到数据库
 func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) error {
 	s.opMu.Lock()
 	if s.restoring {
@@ -940,13 +971,12 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		return infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
 	}
 
-	s3Cfg, err := s.loadS3Config(ctx)
-	if err != nil {
-		return err
-	}
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
+	objectStore, _, err := s.storeForRecord(ctx, record)
 	if err != nil {
 		return fmt.Errorf("init object store: %w", err)
+	}
+	if objectStore == nil {
+		return errors.New("backup storage for this record is no longer configured")
 	}
 
 	if len(record.Parts) > 0 {
@@ -1012,13 +1042,12 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 		return nil, infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
 	}
 
-	s3Cfg, err := s.loadS3Config(ctx)
-	if err != nil {
-		return nil, err
-	}
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
+	objectStore, _, err := s.storeForRecord(ctx, record)
 	if err != nil {
 		return nil, fmt.Errorf("init object store: %w", err)
+	}
+	if objectStore == nil {
+		return nil, errors.New("backup storage for this record is no longer configured")
 	}
 
 	// Re-read and reserve under the same lock used by cleanup/deletion. A prior
@@ -1055,7 +1084,7 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 
 // executeRestore 后台执行恢复
 func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupObjectStore) {
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupRestoreTimeout())
 	defer cancel()
 
 	if len(record.Parts) > 0 {
@@ -1276,13 +1305,12 @@ func (s *BackupService) GetBackupDownloadURL(ctx context.Context, backupID strin
 		return download, infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "backup is not completed")
 	}
 
-	s3Cfg, err := s.loadS3Config(ctx)
+	objectStore, _, err := s.storeForRecord(ctx, record)
 	if err != nil {
-		return download, err
+		return download, fmt.Errorf("init object store: %w", err)
 	}
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
-	if err != nil {
-		return download, err
+	if objectStore == nil {
+		return download, errors.New("backup storage for this record is no longer configured")
 	}
 
 	if len(record.Parts) > 0 {
@@ -1366,6 +1394,127 @@ func (s *BackupService) buildS3Key(cfg *BackupS3Config, fileName string) string 
 		prefix = "backups"
 	}
 	return fmt.Sprintf("%s/%s/%s", prefix, time.Now().Format("2006/01/02"), fileName)
+}
+
+// ─── 备份目标解析（S3 / 本机目录）───
+
+// backupTarget 表示本次备份要写入的目标后端。
+//
+// 两种后端共用 BackupService 的其余流程（分卷、记录、保留、删除），差别只在
+// 对象怎么落盘、以及记录的 backup_type 如何标记——后者必须写进记录里，因为
+// 保留策略和删除是在未来某次运行里做的，那时配置可能已经改过。
+type backupTarget struct {
+	store   BackupObjectStore
+	cfg     *BackupS3Config // S3 目标用于构造 key；本机目标只用它的 prefix
+	isLocal bool
+}
+
+// backupTargetLocalType 标记落在本机目录的备份记录。
+const backupTargetLocalType = "postgres-local"
+
+// loadLocalBackupDir 读取本机备份目录配置；空值表示未启用。
+func (s *BackupService) loadLocalBackupDir(ctx context.Context) (string, error) {
+	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupLocalDir)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(raw), nil
+}
+
+// resolveBackupTarget 决定本次备份写入哪个目标。
+//
+// 优先级：配置了本机目录就用本机目录，否则走 S3。本机目录已配置却不可用时不
+// 回退到 S3——静默换目标是备份丢失最难查的一类事故，宁可让这次备份明确失败。
+func (s *BackupService) resolveBackupTarget(ctx context.Context) (*backupTarget, error) {
+	localDir, err := s.loadLocalBackupDir(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if localDir != "" {
+		store, err := NewLocalBackupStore(localDir)
+		if err != nil {
+			return nil, err
+		}
+		return &backupTarget{
+			store:   store,
+			cfg:     &BackupS3Config{Prefix: "backups"},
+			isLocal: true,
+		}, nil
+	}
+
+	s3Cfg, err := s.loadS3Config(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s3Cfg == nil || !s3Cfg.IsConfigured() {
+		return nil, ErrBackupS3NotConfigured
+	}
+	store, err := s.getOrCreateStore(ctx, s3Cfg)
+	if err != nil {
+		return nil, fmt.Errorf("init object store: %w", err)
+	}
+	return &backupTarget{store: store, cfg: s3Cfg}, nil
+}
+
+// storeForRecord 取一条既有记录应该在哪个后端删除/恢复。
+// 记录的 backup_type 决定归属，不按当前配置猜——配置改过之后仍要能找到旧对象。
+func (s *BackupService) storeForRecord(ctx context.Context, record *BackupRecord) (BackupObjectStore, bool, error) {
+	if record != nil && record.BackupType == backupTargetLocalType {
+		localDir, err := s.loadLocalBackupDir(ctx)
+		if err != nil {
+			return nil, true, err
+		}
+		if localDir == "" {
+			// 目录配置已被删掉：对象已经无法寻址，记录仍应允许删除。
+			return nil, true, nil
+		}
+		store, err := NewLocalBackupStore(localDir)
+		if err != nil {
+			return nil, true, err
+		}
+		return store, true, nil
+	}
+	s3Cfg, err := s.loadS3Config(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if s3Cfg == nil || !s3Cfg.IsConfigured() {
+		// 兼容没有配置对象存储的旧记录：记录仍可被删除。
+		return nil, false, nil
+	}
+	store, err := s.getOrCreateStore(ctx, s3Cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	return store, false, nil
+}
+
+// GetLocalBackupDir 返回本机备份目录（面板展示用）。
+func (s *BackupService) GetLocalBackupDir(ctx context.Context) (string, error) {
+	return s.loadLocalBackupDir(ctx)
+}
+
+// UpdateLocalBackupDir 保存或清除本机备份目录。
+// 非空时必须已存在且可写：让错误在保存时暴露，而不是等到凌晨两点备份失败。
+func (s *BackupService) UpdateLocalBackupDir(ctx context.Context, dir string) (string, error) {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed != "" {
+		store, err := NewLocalBackupStore(trimmed)
+		if err != nil {
+			return "", infraerrors.BadRequest("INVALID_BACKUP_LOCAL_DIR", err.Error())
+		}
+		if err := store.HeadBucket(ctx); err != nil {
+			return "", infraerrors.BadRequest("INVALID_BACKUP_LOCAL_DIR", err.Error())
+		}
+		trimmed = filepath.Clean(trimmed)
+	}
+	if err := s.settingRepo.Set(ctx, settingKeyBackupLocalDir, trimmed); err != nil {
+		return "", fmt.Errorf("save local backup dir: %w", err)
+	}
+	return trimmed, nil
 }
 
 // loadRecords 加载备份记录，区分"无数据"和"数据损坏"
@@ -1590,17 +1739,13 @@ func (s *BackupService) deleteBackupObjects(ctx context.Context, record *BackupR
 	if len(backupObjectKeys(record)) == 0 {
 		return nil
 	}
-	s3Cfg, err := s.loadS3Config(ctx)
+	objectStore, _, err := s.storeForRecord(ctx, record)
 	if err != nil {
 		return err
 	}
-	if s3Cfg == nil || !s3Cfg.IsConfigured() {
-		// 兼容没有配置对象存储的旧记录：记录仍可被删除。
+	if objectStore == nil {
+		// 目标配置已移除（或旧记录从未配置对象存储）：对象不可寻址，记录仍可删除。
 		return nil
-	}
-	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
-	if err != nil {
-		return err
 	}
 	return deleteBackupObjectKeys(ctx, objectStore, record)
 }

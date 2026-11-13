@@ -103,6 +103,15 @@ export default {
         testFailed: 'S3 连接测试失败',
         saved: 'S3 配置已保存'
       },
+      localTarget: {
+        title: '本机目录备份',
+        description: '把备份直接写到服务器本机目录，不经过对象存储。配置后优先生效；留空则沿用 S3。目录需已存在且容器可写。',
+        dir: '备份目录',
+        dirPlaceholder: '/var/lib/sub2api-backups',
+        hint: '留空表示关闭本机目标、回退到 S3',
+        saved: '本机备份目录已保存',
+        clearFailed: '清除本机备份目录失败'
+      },
       imageStorage: {
         title: '异步生图对象存储',
         description: '开启后，异步生图接口可用，生成结果转存到对象存储，只把短链接写入 Redis。与备份共用同一套 S3 客户端，保存后立即生效，无需重启。',

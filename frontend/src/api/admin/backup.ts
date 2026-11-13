@@ -78,6 +78,21 @@ export interface TestS3Response {
   message: string
 }
 
+// Local directory backup target (alternative to S3)
+export interface BackupLocalTarget {
+  dir: string
+}
+
+export async function getLocalTarget(): Promise<BackupLocalTarget> {
+  const { data } = await apiClient.get<BackupLocalTarget>('/admin/backups/local-target')
+  return data
+}
+
+export async function updateLocalTarget(dir: string): Promise<BackupLocalTarget> {
+  const { data } = await apiClient.put<BackupLocalTarget>('/admin/backups/local-target', { dir })
+  return data
+}
+
 // S3 Config
 export async function getS3Config(): Promise<BackupS3Config> {
   const { data } = await apiClient.get<BackupS3Config>('/admin/backups/s3-config')
@@ -186,6 +201,8 @@ export const backupAPI = {
   getS3Config,
   updateS3Config,
   testS3Connection,
+  getLocalTarget,
+  updateLocalTarget,
   getImageStorageConfig,
   updateImageStorageConfig,
   testImageStorageConnection,
