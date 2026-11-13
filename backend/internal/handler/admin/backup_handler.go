@@ -60,6 +60,35 @@ func (h *BackupHandler) TestS3Connection(c *gin.Context) {
 	response.Success(c, gin.H{"ok": true, "message": "connection successful"})
 }
 
+// ─── 本机目录备份目标 ───
+
+// GetLocalBackupDir 返回本机备份目录配置。
+func (h *BackupHandler) GetLocalBackupDir(c *gin.Context) {
+	dir, err := h.backupService.GetLocalBackupDir(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"dir": dir})
+}
+
+// UpdateLocalBackupDir 保存本机备份目录（传空字符串即关闭本机目标）。
+func (h *BackupHandler) UpdateLocalBackupDir(c *gin.Context) {
+	var req struct {
+		Dir string `json:"dir"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	dir, err := h.backupService.UpdateLocalBackupDir(c.Request.Context(), req.Dir)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"dir": dir})
+}
+
 // ─── 定时备份 ───
 
 func (h *BackupHandler) GetSchedule(c *gin.Context) {

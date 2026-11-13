@@ -54,6 +54,30 @@
         </div>
       </div>
 
+      <!-- Local directory backup target -->
+      <div class="card p-6">
+        <div class="mb-4">
+          <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+            {{ t('admin.backup.localTarget.title') }}
+          </h3>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.backup.localTarget.description') }}
+          </p>
+        </div>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.localTarget.dir') }}</label>
+            <input v-model="localTargetForm.dir" class="input w-full" :placeholder="t('admin.backup.localTarget.dirPlaceholder')" />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.backup.localTarget.hint') }}</p>
+          </div>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button type="button" class="btn btn-primary btn-sm" :disabled="savingLocalTarget" @click="saveLocalTarget">
+            {{ savingLocalTarget ? t('common.loading') : t('common.save') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Async image object storage -->
       <div class="card p-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -456,6 +480,8 @@ const s3Form = ref<BackupS3Config>({
   force_path_style: false,
 })
 const s3SecretConfigured = ref(false)
+const savingLocalTarget = ref(false)
+const localTargetForm = ref<{ dir: string }>({ dir: '' })
 const savingS3 = ref(false)
 const testingS3 = ref(false)
 
@@ -652,6 +678,28 @@ const r2ConfigRows = computed(() => [
   { field: 'Secret Access Key', value: t('admin.backup.r2Guide.step4.fromStep2') },
   { field: t('admin.backup.s3.forcePathStyle'), value: t('admin.backup.r2Guide.step4.unchecked') },
 ])
+
+async function loadLocalTarget() {
+  try {
+    const cfg = await adminAPI.backup.getLocalTarget()
+    localTargetForm.value = { dir: cfg.dir || '' }
+  } catch (error) {
+    appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
+  }
+}
+
+async function saveLocalTarget() {
+  savingLocalTarget.value = true
+  try {
+    await adminAPI.backup.updateLocalTarget(localTargetForm.value.dir.trim())
+    appStore.showSuccess(t('admin.backup.localTarget.saved'))
+    await loadLocalTarget()
+  } catch (error) {
+    appStore.showError((error as { message?: string })?.message || t('admin.backup.localTarget.clearFailed'))
+  } finally {
+    savingLocalTarget.value = false
+  }
+}
 
 async function loadS3Config() {
   try {
@@ -917,7 +965,7 @@ function formatDate(value?: string): string {
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  await Promise.all([loadS3Config(), loadImageStorageConfig(), loadSchedule(), loadBackups()])
+  await Promise.all([loadS3Config(), loadLocalTarget(), loadImageStorageConfig(), loadSchedule(), loadBackups()])
 
   // 如果有正在 running 的备份，恢复轮询
   const runningBackup = backups.value.find(r => r.status === 'running')

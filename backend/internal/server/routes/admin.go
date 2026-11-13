@@ -724,6 +724,10 @@ func registerBackupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		backup.PUT("/image-storage", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.UpdateImageStorageConfig)
 		backup.POST("/image-storage/test", h.Admin.Backup.TestImageStorageConnection)
 
+		// 本机目录备份目标（非 S3）。写入目标决定备份落盘位置，不涉及外泄，免 step-up。
+		backup.GET("/local-target", h.Admin.Backup.GetLocalBackupDir)
+		backup.PUT("/local-target", h.Admin.Backup.UpdateLocalBackupDir)
+
 		// 定时备份配置
 		backup.GET("/schedule", h.Admin.Backup.GetSchedule)
 		backup.PUT("/schedule", h.Admin.Backup.UpdateSchedule)
