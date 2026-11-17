@@ -93,7 +93,9 @@ func (r *probeAccountRepo) ListByGroup(context.Context, int64) ([]Account, error
 
 func (r *probeAccountRepo) ListActive(context.Context) ([]Account, error) { return nil, nil }
 
-func (r *probeAccountRepo) ListByPlatform(context.Context, string) ([]Account, error) { return nil, nil }
+func (r *probeAccountRepo) ListByPlatform(context.Context, string) ([]Account, error) {
+	return nil, nil
+}
 
 func (r *probeAccountRepo) ListSchedulable(context.Context) ([]Account, error) { return nil, nil }
 
@@ -222,6 +224,11 @@ func (r *probeAccountRepo) ClearAntigravityQuotaScopes(context.Context, int64) e
 
 func (r *probeAccountRepo) ClearModelRateLimits(context.Context, int64) error {
 	r.record("ClearModelRateLimits")
+	return nil
+}
+
+func (r *probeAccountRepo) ClearModelRateLimit(context.Context, int64, string) error {
+	r.record("ClearModelRateLimit")
 	return nil
 }
 
