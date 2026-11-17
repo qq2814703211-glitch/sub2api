@@ -284,7 +284,7 @@ func grokExplicitRequestRefusalMessage(value string) bool {
 }
 
 func grokContentPolicyClientMessage(responseBody []byte) string {
-	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(grokUpstreamErrorMessage(responseBody)))
 	if message == "" {
 		for _, candidate := range grokExplicitRequestRefusalStringCandidates(responseBody) {
 			message = sanitizeUpstreamErrorMessage(strings.TrimSpace(candidate))
@@ -297,6 +297,56 @@ func grokContentPolicyClientMessage(responseBody []byte) string {
 		return "Request blocked by upstream content policy"
 	}
 	return message
+}
+
+// extractUpstreamErrorMessageForAccount 按账号平台选择错误文案解析器。
+// xAI / Grok 的 {"error":"..."} 扁平字符串只在 Grok 路径解析；共享提取器
+// 必须保持平台无关（见 TestSharedUpstreamErrorExtractorsIgnoreXAIFlatShape），
+// 否则通用失败/重试判定会把非 Grok 上游的偶然扁平 error 字符串误当消息。
+func extractUpstreamErrorMessageForAccount(account *Account, body []byte) string {
+	if account != nil && account.Platform == PlatformGrok {
+		return grokUpstreamErrorMessage(body)
+	}
+	return extractUpstreamErrorMessage(body)
+}
+
+// grokUpstreamErrorMessage extends the shared extractor with xAI's flat error
+// body {"code":"...","error":"..."}. It is Grok-only on purpose: the shared
+// extractUpstreamErrorMessage feeds failover, model-not-found and account
+// disable decisions on every platform and must not drift with xAI's format.
+// Non-string error values are never surfaced so unknown objects cannot leak.
+func grokUpstreamErrorMessage(body []byte) string {
+	if message := extractUpstreamErrorMessage(body); strings.TrimSpace(message) != "" {
+		return message
+	}
+	if errValue := gjson.GetBytes(body, "error"); errValue.Type == gjson.String {
+		s := strings.TrimSpace(errValue.String())
+		// error 字符串里也可能内嵌完整 JSON（部分网关会二次包装）。
+		if strings.HasPrefix(s, "{") {
+			for _, path := range []string{"error.message", "message"} {
+				if innerMsg := strings.TrimSpace(gjson.Get(s, path).String()); innerMsg != "" {
+					return innerMsg
+				}
+			}
+		}
+		return s
+	}
+	return ""
+}
+
+// grokUpstreamErrorCode extends the shared extractor with xAI's top-level code.
+// Nested error.code keeps priority. Like grokUpstreamErrorMessage it stays
+// Grok-only: a top-level code would otherwise short-circuit the OpenAI-
+// compatible model-not-found failover for bodies such as
+// {"object":"error","message":"model not found","code":400}.
+func grokUpstreamErrorCode(body []byte) string {
+	if code := strings.TrimSpace(extractUpstreamErrorCode(body)); code != "" {
+		return code
+	}
+	if code := gjson.GetBytes(body, "code"); code.Type == gjson.String || code.Type == gjson.Number {
+		return strings.TrimSpace(code.String())
+	}
+	return ""
 }
 
 // shouldFailoverGrokUpstreamError is the body-aware counterpart of the

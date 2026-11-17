@@ -8,7 +8,7 @@ import (
 
 // Grok 401 auth classification.
 //
-// Why a dedicated classifier exists
+// # Why a dedicated classifier exists
 //
 // The legacy path in handleGrokAccountUpstreamError cooled every Grok 401 for a
 // flat 10 minutes without ever reading the response body. Production showed
@@ -89,7 +89,7 @@ func classifyGrok401Body(responseBody []byte) grokAuthClassification {
 	}
 	// Prefer the parsed sentence for the log; fall back to the raw body when the
 	// corpus helpers cannot extract one (truncated by an intermediary, etc).
-	if detail := strings.TrimSpace(extractUpstreamErrorMessage(responseBody)); detail != "" {
+	if detail := strings.TrimSpace(grokUpstreamErrorMessage(responseBody)); detail != "" {
 		result.Detail = sanitizeUpstreamErrorMessage(detail)
 	}
 

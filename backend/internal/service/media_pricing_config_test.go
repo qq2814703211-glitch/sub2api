@@ -42,12 +42,12 @@ func TestMediaPricingAccountStatsExplicitZeroAndError(t *testing.T) {
 	cs := &ChannelService{}
 	cs.cache.Store(populateChannelCache([]Channel{channel}, map[int64]string{groupID: PlatformOpenAI}))
 	log := &UsageLog{ImageCount: 1}
-	err := applyAccountStatsCost(context.Background(), log, cs, &BillingService{}, 20, groupID, "fixture-image", "fixture-image", UsageTokens{}, 3, time.Time{}, false, &MediaUsage{Count: 1, Layer: mediaTestPtr(false)})
+	err := applyAccountStatsCost(context.Background(), log, cs, &BillingService{}, 20, groupID, "fixture-image", "fixture-image", UsageTokens{}, 3, time.Time{}, false, 1, &MediaUsage{Count: 1, Layer: mediaTestPtr(false)})
 	require.NoError(t, err)
 	require.NotNil(t, log.AccountStatsCost)
 	require.Zero(t, *log.AccountStatsCost)
 	log.AccountStatsCost = nil
-	err = applyAccountStatsCost(context.Background(), log, cs, &BillingService{}, 20, groupID, "fixture-image", "fixture-image", UsageTokens{}, 3, time.Time{}, false, &MediaUsage{Count: 1})
+	err = applyAccountStatsCost(context.Background(), log, cs, &BillingService{}, 20, groupID, "fixture-image", "fixture-image", UsageTokens{}, 3, time.Time{}, false, 1, &MediaUsage{Count: 1})
 	require.ErrorIs(t, err, ErrMediaUsageIncomplete)
 	require.Nil(t, log.AccountStatsCost)
 }

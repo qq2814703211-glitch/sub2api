@@ -97,7 +97,7 @@ func TestGrok401DecisionOnlyFor401(t *testing.T) {
 }
 
 // TestExtractUpstreamErrorMessageStringError 验证提取器能读到 error 为字符串的形态。
-func TestExtractUpstreamErrorMessageStringError(t *testing.T) {
+func TestExtractGrokUpstreamErrorMessageStringError(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
@@ -143,9 +143,9 @@ func TestExtractUpstreamErrorMessageStringError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractUpstreamErrorMessage([]byte(tc.body))
+			got := grokUpstreamErrorMessage([]byte(tc.body))
 			if got != tc.want {
-				t.Fatalf("extractUpstreamErrorMessage = %q, want %q", got, tc.want)
+				t.Fatalf("grokUpstreamErrorMessage = %q, want %q", got, tc.want)
 			}
 		})
 	}
