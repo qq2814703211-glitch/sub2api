@@ -163,7 +163,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
+		upstreamMsg := sanitizeUpstreamErrorMessage(grokUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
 		}
@@ -1434,7 +1434,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
-		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
+		upstreamMsg := sanitizeUpstreamErrorMessage(grokUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI image bridge upstream returned status %d", resp.StatusCode)
 		}
