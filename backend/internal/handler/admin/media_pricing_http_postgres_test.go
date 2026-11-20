@@ -115,7 +115,7 @@ func TestMediaPricingGroupHTTPPostgresRoundTrip(t *testing.T) {
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
 	groups := repository.NewAdminGroupRepository(client, db)
-	svc := service.NewAdminService(&config.Config{}, nil, groups, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	svc := service.NewAdminService(&config.Config{}, nil, groups, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	handler := NewGroupHandler(svc, nil, nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
