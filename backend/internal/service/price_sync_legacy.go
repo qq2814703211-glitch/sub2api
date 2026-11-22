@@ -261,6 +261,11 @@ func (s *ModelPricingSyncService) reconcileLegacyPrices(ctx context.Context, h *
 		if _, manual := h.Settings.ManualOverrides[k]; manual {
 			continue
 		}
+		// A verified equivalent restore already established V2 ownership.
+		// Its unchanged V1 projection preserves the existing debit behavior.
+		if m := h.Models[k]; m != nil && m.Mode == "auto" && !m.External && m.PreserveRestoreProjection {
+			continue
+		}
 		var f map[string]json.RawMessage
 		if json.Unmarshal(raw, &f) != nil || f == nil {
 			return false, fmt.Errorf("invalid legacy row %q", k)

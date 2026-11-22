@@ -31,6 +31,9 @@ type priceSyncModel struct {
 	Issue          string          `json:"issue,omitempty"`
 	External       bool            `json:"external,omitempty"`
 	ManualEvidence string          `json:"manual_baseline_evidence,omitempty"`
+	// Re-verification of the same tariff must retain the projection that made
+	// an equivalent restore safe, including the previous cache-write meters.
+	PreserveRestoreProjection bool `json:"preserve_restore_projection,omitempty"`
 	// LegacyAuto marks a V1 automatic CNY row whose current values still equal
 	// the last cny-official sync write. LegacyQuarantine carries the proven
 	// currency mismatch and the billing block status.
@@ -292,15 +295,16 @@ func (s *ModelPricingSyncService) SavePublishedSettings(ctx context.Context, in 
 				}
 			}
 		}
-		for k := range h.Settings.ManualOverrides {
+		for k, manual := range h.Settings.ManualOverrides {
 			if _, keep := cfg.ManualOverrides[k]; !keep {
-				m := h.Models[k]
-				if err := restorePriceSync(k, m, now); err != nil {
+				if err := restorePriceSync(k, h.Models[k], now, h.Entries[k], manual); err != nil {
 					return false, fmt.Errorf("%w: %v", ErrPriceSyncConflict, err)
 				}
-				h.Entries[k], err = priceSyncRender(h.Entries[k], m.Effective, nil, m.NativeCNY)
-				if err != nil {
-					return false, err
+				if m := h.Models[k]; !m.preserveLegacyRestoreEntry(h.Entries[k]) {
+					h.Entries[k], err = priceSyncRender(h.Entries[k], m.Effective, nil, m.NativeCNY)
+					if err != nil {
+						return false, err
+					}
 				}
 			}
 		}
@@ -321,6 +325,7 @@ func (s *ModelPricingSyncService) SavePublishedSettings(ctx context.Context, in 
 				return false, fmt.Errorf("%w: %s 已由外部文件手配", ErrPriceSyncConflict, k)
 			}
 			m.Mode = "manual"
+			m.PreserveRestoreProjection = false
 			m.Effective = &q
 			m.ManualEvidence = ""
 			if m.Auto != nil {
@@ -431,7 +436,7 @@ func priceSyncValid(model string, q *PriceSyncQuote, prior *PriceSyncQuote, now 
 	return nil
 }
 
-func restorePriceSync(k string, m *priceSyncModel, now time.Time) error {
+func restorePriceSync(k string, m *priceSyncModel, now time.Time, entry json.RawMessage, manual CNYOfficialManualPrice) error {
 	if m == nil || m.External {
 		return fmt.Errorf("%s 没有可恢复的自动报价", k)
 	}
@@ -447,11 +452,25 @@ func restorePriceSync(k string, m *priceSyncModel, now time.Time) error {
 	if err := priceSyncValid(k, m.Auto, required, now); err != nil {
 		return err
 	}
-	if m.Effective == nil || !m.Auto.VerifiedAt.After(m.Effective.VerifiedAt) || m.Auto.Evidence == m.ManualEvidence {
+	prior := m.Effective
+	if prior == nil {
+		return fmt.Errorf("%s 尚无纠错后的新核验证据", k)
+	}
+	freshCorrection := m.Auto.VerifiedAt.After(prior.VerifiedAt) && m.Auto.Evidence != m.ManualEvidence
+	var equivalent *PriceSyncQuote
+	var preserve bool
+	if m.Auto.VerifiedAt.Equal(prior.VerifiedAt) || (freshCorrection && !declaresTokenTariff(entry)) {
+		equivalent, preserve = equivalentPriceSyncRestore(m, entry, manual)
+	}
+	if !freshCorrection && equivalent == nil {
 		return fmt.Errorf("%s 尚无纠错后的新核验证据", k)
 	}
 	m.Mode = "auto"
 	m.Effective = m.Auto
+	if equivalent != nil {
+		m.Effective = equivalent
+	}
+	m.PreserveRestoreProjection = preserve
 	m.ManualEvidence = ""
 	return nil
 }
