@@ -356,3 +356,62 @@ func priceSyncV2Clock(s string, allowEndOfDay bool) bool {
 	_, err := time.Parse("15:04", s)
 	return err == nil
 }
+
+// Anthropic publishes a 1-hour prompt-cache write at twice the model's base
+// input rate, while the models.dev registry only carries the 5-minute
+// component. Filling that published multiple keeps 1h cache usage quotable
+// instead of parking every such request for manual reconciliation.
+const anthropicCacheWrite1hInputMultiple = 2.0
+
+func priceSyncV2ApplyPublishedCacheWrite1h(provider string, cost map[string]json.RawMessage) {
+	if cost == nil || !strings.EqualFold(strings.TrimSpace(provider), "anthropic") {
+		return
+	}
+	derive := func(row map[string]json.RawMessage) {
+		if row == nil {
+			return
+		}
+		if _, exists := row["cache_write_1h"]; exists {
+			return
+		}
+		if _, exists := row["cache_write_5m"]; !exists {
+			if _, exists := row["cache_write"]; !exists {
+				return
+			}
+		}
+		raw, exists := row["input"]
+		if !exists {
+			return
+		}
+		amount, err := priceSyncV2ReadAmount(raw)
+		if err != nil || amount <= 0 {
+			return
+		}
+		encoded, err := json.Marshal(amount * anthropicCacheWrite1hInputMultiple)
+		if err != nil {
+			return
+		}
+		row["cache_write_1h"] = encoded
+	}
+	derive(cost)
+	if raw, exists := cost["tiers"]; exists {
+		var tiers []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tiers); err == nil && tiers != nil {
+			for _, row := range tiers {
+				derive(row)
+			}
+			if encoded, err := json.Marshal(tiers); err == nil {
+				cost["tiers"] = encoded
+			}
+		}
+	}
+	if raw, exists := cost["context_over_200k"]; exists {
+		var legacy map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &legacy); err == nil && legacy != nil {
+			derive(legacy)
+			if encoded, err := json.Marshal(legacy); err == nil {
+				cost["context_over_200k"] = encoded
+			}
+		}
+	}
+}
