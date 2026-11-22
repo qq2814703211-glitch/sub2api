@@ -303,12 +303,23 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if ctx.Value(videoPreparedUsageKey{}) != nil {
 			return err
 		}
-		return recordTariffUsageIssue(ctx, s.usageLogRepo, err, user, apiKey, account, tariffUsageEvidence{
+		evidence := tariffUsageEvidence{
 			RequestID: requestID, PricingAt: pricingAt, Tokens: tokens, RateMultiplier: multiplier, SearchCount: result.SearchCount,
 			RequestedModel: firstNonEmpty(input.OriginalModel, result.Model), UpstreamModel: result.UpstreamModel, SubscriptionID: optionalSubscriptionID(subscription), ChannelID: input.ChannelID,
 			ServiceTier: serviceTier, ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 			PayloadHash: resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash), QuotaPlatform: input.QuotaPlatform,
-		})
+		}
+		var mediaIssue *mediaCardTariffIssue
+		if errors.As(err, &mediaIssue) {
+			u := result.catalogUsage()
+			evidence.Media, evidence.ImageCount, evidence.VideoCount = result.MediaUsage, u.images, result.VideoCount
+			if len(result.MediaUsage.Images) > 0 {
+				evidence.ImageCount = len(result.MediaUsage.Images)
+			}
+			evidence.ProviderBillableSeconds, evidence.RateMultiplier = u.seconds, mediaIssue.rate
+			evidence.PriceTrace = RequestCatalogFromContext(ctx).trace(&CostBreakdown{priceBasis: mediaIssue.basis}, mediaIssue.Model, apiKey.Group)
+		}
+		return recordTariffUsageIssue(ctx, s.usageLogRepo, err, user, apiKey, account, evidence)
 	}
 	if err != nil {
 		if isTariffPriceIssue(err) {
@@ -659,6 +670,17 @@ func openAISubscriptionLongContextExempt(account *Account, result *OpenAIForward
 	return openai.GPT62ModelID(model) != "" || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model)
 }
 
+// A completed commercial-card request can lack an observed pricing dimension.
+// Keep both error identities and the actual selling basis, not a catalog fallback.
+type mediaCardTariffIssue struct {
+	*TariffPriceIssue
+	cause error
+	basis priceBasis
+	rate  float64
+}
+
+func (e *mediaCardTariffIssue) Unwrap() []error { return []error{e.TariffPriceIssue, e.cause} }
+
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	ctx context.Context,
 	result *OpenAIForwardResult,
@@ -757,7 +779,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 					mediaMultiplier = imageMultiplier
 				}
 			}
-			return s.billingService.CalculateCostUnified(CostInput{
+			cost, err := s.billingService.CalculateCostUnified(CostInput{
 				Ctx: ctx, Model: billingModel, GroupID: apiKey.GroupID, Group: apiKey.Group,
 				Tokens: tokens, MediaUsage: result.MediaUsage, RequestCount: 1,
 				RateMultiplier: mediaMultiplier, PricingAt: pricingAt, ServiceTier: serviceTier,
@@ -766,6 +788,13 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 				LongContextBillingEnabled:      longContextBillingGate,
 				DisableModelLongContextPricing: modelLongContextExempt,
 			})
+			if media := result.MediaUsage; errors.Is(err, ErrMediaUsageIncomplete) && media != nil && (media.Count > 0 || len(media.Images) > 0) &&
+				!result.UnitRequestFailed && result.SucceededForScheduling() && ctx.Value(videoPreparedUsageKey{}) == nil {
+				issue := &mediaCardTariffIssue{TariffPriceIssue: &TariffPriceIssue{billingModel, err.Error()}, cause: err, rate: mediaMultiplier}
+				issue.basis.set(billingModel, resolved.Source, resolved.channelPricing)
+				return nil, issue
+			}
+			return cost, err
 		}
 		if result.ImageEndpoint && result.MediaUsage != nil && result.MediaUsage.Count == 0 {
 			return &CostBreakdown{BillingMode: string(BillingModeImage)}, nil
