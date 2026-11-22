@@ -30,6 +30,11 @@ type tariffUsageEvidence struct {
 	PayloadHash            string             `json:"payload_fingerprint,omitempty"`
 	QuotaPlatform          string             `json:"quota_platform,omitempty"`
 	PriceTrace             *RequestPriceTrace `json:"price_trace,omitempty"`
+
+	Media                   *MediaUsage `json:"media,omitempty"`
+	ImageCount              int         `json:"image_count,omitempty"`
+	VideoCount              int         `json:"video_count,omitempty"`
+	ProviderBillableSeconds *float64    `json:"provider_billable_seconds,omitempty"`
 }
 
 // Use the existing Ops unresolved-error workflow, not a zero usage row (which
@@ -69,7 +74,7 @@ func recordTariffUsageIssue(ctx context.Context, repo UsageLogRepository, err er
 	}
 	e.BillingModel = issue.Model
 	e.AccountRateMultiplier = account.BillingRateMultiplier()
-	if p := RequestCatalogFromContext(ctx); p != nil {
+	if p := RequestCatalogFromContext(ctx); p != nil && e.PriceTrace == nil {
 		if row := p.billing.exactCatalogRow(issue.Model); row != nil {
 			e.PriceTrace = p.trace(&CostBreakdown{priceBasis: priceBasis{Scope: "catalog", Row: row.rowIdentity}}, issue.Model, key.Group)
 		}
