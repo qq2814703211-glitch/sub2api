@@ -214,7 +214,7 @@ func TestCNYOfficial_NonPriceFieldsDoNotImplyManualPricing(t *testing.T) {
 // 标记只能给「价格确实由人民币档写入过」的条目。
 func TestCNYOfficial_UnwrittenModelKeepsNoMarker(t *testing.T) {
 	existing := map[string]json.RawMessage{
-		"glm-4.5-air": json.RawMessage(`{"input_cost_per_token":1.1952e-07,"output_cost_per_token":8.9637e-07}`),
+		"glm-4.5-air":    json.RawMessage(`{"input_cost_per_token":1.1952e-07,"output_cost_per_token":8.9637e-07}`),
 		"deepseek-flash": json.RawMessage(`{"input_cost_per_token":1e-06,"output_cost_per_token":4e-06}`),
 	}
 	// glm-4.5-air 本轮被跳过（无 cny 变更、历史也无 cny 写入）；
@@ -332,7 +332,7 @@ func TestCNYOfficial_ManualLongContextTakesEffectInBilling(t *testing.T) {
 	}, 1)
 	require.NoError(t, err)
 	require.True(t, long.LongContextBillingApplied, "超过阈值必须进入长上下文档")
-	require.InDelta(t, 0.06, long.InputCost, 1e-12)     // 40000 * 1e-6 * 1.5
-	require.InDelta(t, 0.008, long.OutputCost, 1e-12)   // 1000 * 4e-6 * 2
+	require.InDelta(t, 0.06, long.InputCost, 1e-12)        // 40000 * 1e-6 * 1.5
+	require.InDelta(t, 0.008, long.OutputCost, 1e-12)      // 1000 * 4e-6 * 2
 	require.InDelta(t, 0.00003, long.CacheReadCost, 1e-12) // 1000 * 0.02e-6 * 1.5
 }

@@ -69,7 +69,10 @@ func TestAPIKeyRoutesRuntimeAuthorizationAndProtocol(t *testing.T) {
 	require.EqualValues(t, 3, *routes[0].key.GroupID)
 	require.EqualValues(t, 1, *key.GroupID)
 	ctx := ContextWithAPIKeyRoute(context.Background(), routes[0].key)
-	require.EqualValues(t, 3, ctx.Value(ctxkey.Group).(*Group).ID)
+	group, ok := ctx.Value(ctxkey.Group).(*Group)
+	require.True(t, ok)
+	require.NotNil(t, group)
+	require.EqualValues(t, 3, group.ID)
 }
 func TestAPIKeyRoutesRuntimeSchedulerAndBilling(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
@@ -121,7 +124,10 @@ func TestAPIKeyRoutesCompositeCandidateKeepsBillingParent(t *testing.T) {
 	platform, ok := ResolvedTargetPlatformFromContext(selectedCtx)
 	require.True(t, ok)
 	require.Equal(t, PlatformOpenAI, platform)
-	require.EqualValues(t, 2, selectedCtx.Value(ctxkey.Group).(*Group).ID)
+	group, ok := selectedCtx.Value(ctxkey.Group).(*Group)
+	require.True(t, ok)
+	require.NotNil(t, group)
+	require.EqualValues(t, 2, group.ID)
 }
 
 func TestAPIKeyRoutesRuntimeImageAndEligibility(t *testing.T) {

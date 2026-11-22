@@ -28,7 +28,11 @@ func TestAPIKeyRoutesPostgres(t *testing.T) {
 	ctx := context.Background()
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	require.NoError(t, db.PingContext(ctx))
 	// Start from the actual baseline migrations, then add 907 with existing rows.
 	baseline := fstest.MapFS{}

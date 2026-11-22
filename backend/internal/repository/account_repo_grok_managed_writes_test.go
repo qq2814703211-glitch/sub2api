@@ -20,7 +20,11 @@ func TestGrokSubscriptionPostgresManagedExtraWrites(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	ctx := context.Background()
 	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key, platform text, type text, credentials jsonb, extra jsonb, proxy_id bigint, deleted_at timestamptz, updated_at timestamptz);

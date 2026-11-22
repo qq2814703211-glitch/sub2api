@@ -70,7 +70,7 @@ func officialAliyunTables(tab string) [][]officialAliyunTableRow {
 	var tables [][]officialAliyunTableRow
 	var rows []officialAliyunTableRow
 	row := officialAliyunTableRow{}
-	var cell strings.Builder
+	var cell []byte
 	inTable, inRow, inCell := false, false, false
 	for {
 		switch z.Next() {
@@ -92,7 +92,7 @@ func officialAliyunTables(tab string) [][]officialAliyunTableRow {
 					continue
 				}
 				inCell = true
-				cell.Reset()
+				cell = cell[:0]
 				if tag.Data == "th" {
 					row.header = true
 				}
@@ -107,15 +107,15 @@ func officialAliyunTables(tab string) [][]officialAliyunTableRow {
 			}
 		case html.TextToken:
 			if inCell {
-				cell.Write(z.Text())
-				cell.WriteByte(' ')
+				cell = append(cell, z.Text()...)
+				cell = append(cell, ' ')
 			}
 		case html.EndTagToken:
 			name, _ := z.TagName()
 			switch string(name) {
 			case "th", "td":
 				if inCell {
-					row.cells = append(row.cells, strings.Join(strings.Fields(cell.String()), " "))
+					row.cells = append(row.cells, strings.Join(strings.Fields(string(cell)), " "))
 					inCell = false
 				}
 			case "tr":

@@ -128,8 +128,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	}
 
 	// Use exactly the same scheduling as other requests (SelectAccountWithLoadAwareness handles load, rate limit, sticky, etc.)
-	groupID := apiKey.GroupID
-	if groupID == nil {
+	if apiKey.GroupID == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
 			"type":    "invalid_request_error",
 			"message": "group required",
@@ -161,7 +160,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 				return
 			}
 			apiKey = routedKey
-			groupID = apiKey.GroupID
 		}
 		if selectErr != nil {
 			if attempt == 0 {

@@ -207,7 +207,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// ── 5. 按端点需要加载订阅 ───────────────────────────────────
 
 		var subscription *service.UserSubscription
-		isSubscriptionType := !(apiKey.HasMultipleRoutes() && service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+		isSubscriptionType := (!apiKey.HasMultipleRoutes() || !service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
 		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest {
@@ -276,7 +276,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				}
 			} else {
 				// 非订阅模式 或 订阅模式但 subscriptionService 未注入：回退到余额检查
-				if !(apiKey.HasMultipleRoutes() && service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+				if (!apiKey.HasMultipleRoutes() || !service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 					AbortWithError(c, 403, "INSUFFICIENT_BALANCE", "Insufficient account balance")
 					return
 				}

@@ -76,22 +76,22 @@ func TestStreamNeverLeaksKeyword(t *testing.T) {
 	d := NewDetector(testConfig())
 	for _, payload := range []string{poisonedLong, poisonedShort} {
 		g := d.NewStreamGuard()
-		var released strings.Builder
+		var released []byte
 		blocked := false
 
 		for _, r := range payload {
 			out, verdict := g.Feed(string(r))
-			released.WriteString(out)
+			released = append(released, out...)
 			if verdict == VerdictBlock {
 				blocked = true
 				break
 			}
 		}
 		if !blocked {
-			t.Fatalf("stream must be blocked for %q, released=%q", payload, released.String())
+			t.Fatalf("stream must be blocked for %q, released=%q", payload, string(released))
 		}
-		assertNoLeak(t, released.String(), d)
-		if g.ReleasedRunes() != len([]rune(released.String())) {
+		assertNoLeak(t, string(released), d)
+		if g.ReleasedRunes() != len([]rune(string(released))) {
 			t.Fatalf("released rune accounting mismatch")
 		}
 	}
@@ -102,18 +102,18 @@ func TestStreamNeverLeaksKeywordWithLargeChunks(t *testing.T) {
 	d := NewDetector(testConfig())
 	for _, payload := range []string{poisonedLong, poisonedShort} {
 		g := d.NewStreamGuard()
-		var released strings.Builder
+		var released []byte
 		if out, v := g.Feed(payload); v == VerdictBlock {
-			released.WriteString(out)
+			released = append(released, out...)
 		} else {
-			released.WriteString(out)
+			released = append(released, out...)
 			out2, v2 := g.Flush()
-			released.WriteString(out2)
+			released = append(released, out2...)
 			if v2 != VerdictBlock {
 				t.Fatalf("expected block on flush for %q", payload)
 			}
 		}
-		assertNoLeak(t, released.String(), d)
+		assertNoLeak(t, string(released), d)
 	}
 }
 
@@ -138,21 +138,21 @@ func TestStreamCleanTextIsForwardedIntact(t *testing.T) {
 	payload := "好的，这是您要的 Go 代码示例，包含一个简单的 HTTP 服务器实现。"
 
 	g := d.NewStreamGuard()
-	var released strings.Builder
+	var released []byte
 	for _, r := range payload {
 		out, v := g.Feed(string(r))
 		if v != VerdictPass {
 			t.Fatalf("clean text must not block")
 		}
-		released.WriteString(out)
+		released = append(released, out...)
 	}
 	out, v := g.Flush()
 	if v != VerdictPass {
 		t.Fatal("clean text must not block on flush")
 	}
-	released.WriteString(out)
+	released = append(released, out...)
 
-	if got := released.String(); got != payload {
+	if got := string(released); got != payload {
 		t.Fatalf("clean text altered:\n got=%q\nwant=%q", got, payload)
 	}
 }
@@ -162,16 +162,16 @@ func TestStreamVetoBlocksBeforeWritingVetoWord(t *testing.T) {
 	d := NewDetector(testConfig())
 	g := d.NewStreamGuard()
 
-	var released strings.Builder
+	var released []byte
 	for _, r := range "正常开头，然后 kedaya 出现" {
 		out, v := g.Feed(string(r))
-		released.WriteString(out)
+		released = append(released, out...)
 		if v == VerdictBlock {
 			break
 		}
 	}
-	if strings.Contains(strings.ToLower(released.String()), "kedaya") {
-		t.Fatalf("veto word leaked: %q", released.String())
+	if strings.Contains(strings.ToLower(string(released)), "kedaya") {
+		t.Fatalf("veto word leaked: %q", string(released))
 	}
 }
 
@@ -180,17 +180,17 @@ func TestStreamPartialVetoNotForwarded(t *testing.T) {
 	d := NewDetector(testConfig())
 	g := d.NewStreamGuard()
 
-	var released strings.Builder
+	var released []byte
 	for _, r := range "开头keday" {
 		out, v := g.Feed(string(r))
-		released.WriteString(out)
+		released = append(released, out...)
 		if v == VerdictBlock {
 			t.Fatal("partial veto word must not block yet")
 		}
 	}
 	// 此时不应已经把 k-e-d-a-y 全写出去。
-	if strings.Contains(strings.ToLower(released.String()), "keda") {
-		t.Fatalf("partial veto prefix leaked: %q", released.String())
+	if strings.Contains(strings.ToLower(string(released)), "keda") {
+		t.Fatalf("partial veto prefix leaked: %q", string(released))
 	}
 }
 

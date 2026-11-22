@@ -5,11 +5,12 @@ import (
 	"errors"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/poison"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-func (r *accountRepository) clearErrorWithRestoreEpoch(ctx context.Context, id int64) error {
+func (r *accountRepository) clearErrorWithRestoreEpoch(ctx context.Context, id int64) (retErr error) {
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
 	client := clientFromContext(ctx, r.client)
@@ -21,7 +22,7 @@ func (r *accountRepository) clearErrorWithRestoreEpoch(ctx context.Context, id i
 			return err
 		}
 		if tx != nil {
-			defer tx.Rollback()
+			defer cleanup.Rollback(&retErr, tx)
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}

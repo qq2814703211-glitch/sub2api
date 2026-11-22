@@ -469,4 +469,3 @@ func TestBulkUpdateRollsBackWhenOutboxFails(t *testing.T) {
 	require.Zero(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
-

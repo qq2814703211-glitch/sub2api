@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"net"
 	"strings"
 )
@@ -38,7 +39,7 @@ func NewEgressStore(db *sql.DB) *EgressStore {
 //
 // 命中即永久拉黑，不存在过期或自动移除；这是有意的：投毒由出口 IP 决定，
 // 同一个 IP 再次被启用只会再被投毒一次。
-func (s *EgressStore) Record(ctx context.Context, ip string, proxyID, accountID *int64, isDynamic bool, reason string) error {
+func (s *EgressStore) Record(ctx context.Context, ip string, proxyID, accountID *int64, isDynamic bool, reason string) (retErr error) {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -53,7 +54,7 @@ func (s *EgressStore) Record(ctx context.Context, ip string, proxyID, accountID 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", RotationLockKey); err != nil {
 		return err
 	}
@@ -90,7 +91,7 @@ func (s *EgressStore) IsBlocked(ctx context.Context, ip string) (bool, error) {
 //
 // 动态代理的出口 IP 与 host 无关，因此只有 is_dynamic=false 的记录才代表
 // 整个代理行不可再用。
-func (s *EgressStore) BlockedProxyIDs(ctx context.Context) (map[int64]struct{}, error) {
+func (s *EgressStore) BlockedProxyIDs(ctx context.Context) (ids map[int64]struct{}, retErr error) {
 	out := make(map[int64]struct{})
 	if s == nil || s.db == nil {
 		return out, nil
@@ -103,7 +104,7 @@ func (s *EgressStore) BlockedProxyIDs(ctx context.Context) (map[int64]struct{}, 
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
@@ -115,7 +116,7 @@ func (s *EgressStore) BlockedProxyIDs(ctx context.Context) (map[int64]struct{}, 
 }
 
 // List 返回黑名单明细，按最近命中时间倒序。
-func (s *EgressStore) List(ctx context.Context, limit int) ([]BlockedEgress, error) {
+func (s *EgressStore) List(ctx context.Context, limit int) (entries []BlockedEgress, retErr error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -131,7 +132,7 @@ func (s *EgressStore) List(ctx context.Context, limit int) ([]BlockedEgress, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 
 	var out []BlockedEgress
 	for rows.Next() {

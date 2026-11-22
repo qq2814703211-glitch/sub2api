@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
@@ -48,12 +49,12 @@ func ProvidePriceSyncPublishStore(db *sql.DB, cfg *config.Config) service.PriceS
 
 // Hold the lock across reading the head, preparing the local projection and appending.
 // Never hold it during collection. A dead publisher releases its transaction lock.
-func (s *priceSyncStore) WithPriceSyncHead(ctx context.Context, f func([]byte) (string, []byte, error)) error {
+func (s *priceSyncStore) WithPriceSyncHead(ctx context.Context, f func([]byte) (string, []byte, error)) (retErr error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(73461721938102)`); err != nil {
 		return err
 	}
@@ -89,7 +90,7 @@ func (s *priceSyncStore) WithPriceSyncHead(ctx context.Context, f func([]byte) (
 // delivered on the session that issued LISTEN. pq reconnects on its own and
 // then reports a nil notification, which the caller treats as "notifications
 // may have been missed, re-read the head".
-func (s *priceSyncStore) FollowPriceSyncHead(ctx context.Context, wake func(reconnected bool)) error {
+func (s *priceSyncStore) FollowPriceSyncHead(ctx context.Context, wake func(reconnected bool)) (err error) {
 	if s.dsn == "" {
 		return errors.New("price sync head listener requires a database DSN")
 	}
@@ -99,7 +100,7 @@ func (s *priceSyncStore) FollowPriceSyncHead(ctx context.Context, wake func(reco
 			return
 		}
 	})
-	defer listener.Close()
+	defer func() { err = errors.Join(err, listener.Close()) }()
 	done := make(chan error, 1)
 	go func() { done <- listener.Listen(priceSyncHeadChannel) }()
 	select {

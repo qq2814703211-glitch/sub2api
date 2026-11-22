@@ -14,7 +14,7 @@ import (
 )
 
 func apiKeyWSCloseError(code coderws.StatusCode, reason string, err error) *service.OpenAIWSClientCloseError {
-	return service.NewOpenAIWSClientCloseError(code, reason, err).(*service.OpenAIWSClientCloseError)
+	return service.NewOpenAIWSClientCloseError(code, reason, err)
 }
 
 const statusClientClosedRequest = 499

@@ -158,10 +158,10 @@ func TestTicketHandlerUserListScrubsRequesterIdentity(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	envelope := decodeTicketEnvelope(t, recorder)
 	require.EqualValues(t, 0, envelope["code"])
-	data := envelope["data"].(map[string]any)
-	items := data["items"].([]any)
+	data := requireTicketValue[map[string]any](t, envelope["data"])
+	items := requireTicketValue[[]any](t, data["items"])
 	require.Len(t, items, 1)
-	ticket := items[0].(map[string]any)
+	ticket := requireTicketValue[map[string]any](t, items[0])
 	require.NotContains(t, ticket, "user_email")
 	require.NotContains(t, ticket, "user_name")
 }
@@ -173,10 +173,10 @@ func TestTicketHandlerAdminDetailIncludesRequester(t *testing.T) {
 	recorder := ticketRequest(engine, http.MethodGet, "/api/v1/admin/tickets/10", "", true)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	envelope := decodeTicketEnvelope(t, recorder)
-	data := envelope["data"].(map[string]any)
-	requester := data["requester"].(map[string]any)
+	data := requireTicketValue[map[string]any](t, envelope["data"])
+	requester := requireTicketValue[map[string]any](t, data["requester"])
 	require.Equal(t, "owner@example.test", requester["email"])
-	require.Equal(t, "owner", data["ticket"].(map[string]any)["user_name"])
+	require.Equal(t, "owner", requireTicketValue[map[string]any](t, data["ticket"])["user_name"])
 }
 
 func TestTicketHandlerCreateValidationAndIdempotentBinding(t *testing.T) {
@@ -218,4 +218,11 @@ func TestTicketHandlerAdminCreateRequiresAdmin(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, denied.Code)
 	ok := ticketRequest(engine, http.MethodPost, "/api/v1/admin/tickets", body, true)
 	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+}
+
+func requireTicketValue[T any](t *testing.T, value any) T {
+	t.Helper()
+	v, ok := value.(T)
+	require.True(t, ok, "unexpected JSON type %T", value)
+	return v
 }

@@ -40,7 +40,9 @@ func TestPoisonProtocolRetryDiscardsPreviousAttempt(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
 			if err != nil || resp.StatusCode != 200 || string(body) != second {
 				t.Fatalf("retry mixed responses status=%d got=%q err=%v", resp.StatusCode, body, err)
 			}

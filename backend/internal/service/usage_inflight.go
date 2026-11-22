@@ -47,7 +47,6 @@ func (s UsageInflightSnapshot) IsStale(now time.Time, maxAge time.Duration) bool
 	return now.Sub(s.StartedAt) > maxAge
 }
 
-
 // UsageInflightStore 是在途请求登记表的存储能力。
 //
 // 所有写方法都必须是 best-effort 语义：调用方（网关中间件）失败时只记日志，

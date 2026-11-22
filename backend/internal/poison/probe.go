@@ -2,6 +2,7 @@ package poison
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -79,7 +80,9 @@ func (p *EgressProber) Probe(ctx context.Context, proxyURL string) (string, erro
 			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			readErr = errors.Join(readErr, err)
+		}
 		cancel()
 		if readErr != nil {
 			lastErr = readErr

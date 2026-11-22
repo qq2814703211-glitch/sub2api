@@ -19,7 +19,11 @@ func TestAPIKeyQueueRealRedis(t *testing.T) {
 		t.Skip("dedicated Redis endpoint not supplied")
 	}
 	client := redis.NewClient(&redis.Options{Addr: addr})
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	ctx := context.Background()
 	require.NoError(t, client.Ping(ctx).Err())
 	// The runner owns this isolated instance; use synthetic IDs only.

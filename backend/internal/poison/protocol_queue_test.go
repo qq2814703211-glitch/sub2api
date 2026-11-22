@@ -13,9 +13,9 @@ import (
 func TestProtocolQueuedMetadataDoesNotRetainLargeHeap(t *testing.T) {
 	g := newResponseGuard(activeSnapshot().Detector, "text/event-stream")
 	frame := []byte(": " + strings.Repeat("x", 8192) + "\n\n")
-	var want bytes.Buffer
+	var want []byte
 	for range 160 {
-		want.Write(frame)
+		want = append(want, frame...)
 		out, blocked, err := g.feed(frame, false)
 		if blocked || err != nil || len(out) != 0 {
 			t.Fatalf("metadata must remain pending: blocked=%v err=%v", blocked, err)
@@ -29,7 +29,7 @@ func TestProtocolQueuedMetadataDoesNotRetainLargeHeap(t *testing.T) {
 		}
 	}
 	out, blocked, err := g.feed(nil, true)
-	if blocked || err != nil || !bytes.Equal(out, want.Bytes()) {
+	if blocked || err != nil || !bytes.Equal(out, want) {
 		t.Fatalf("metadata replay mismatch err=%v", err)
 	}
 }

@@ -28,7 +28,11 @@ func loadCorpus(t *testing.T, path string) []corpusEntry {
 	if err != nil {
 		t.Skipf("corpus %s unavailable: %v", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	r := csv.NewReader(f)
 	r.FieldsPerRecord = -1
@@ -88,7 +92,7 @@ func TestRealCorpusNoLeakage(t *testing.T) {
 
 		// 流式路径：逐字节喂入，统计在判定前泄漏了多少。
 		guard := snap.Detector.NewStreamGuard()
-		var leaked strings.Builder
+		var leaked []byte
 		blockedAt := -1
 		for i := 0; i < len(text); i++ {
 			out, verdict := guard.Feed(text[i : i+1])
@@ -96,13 +100,13 @@ func TestRealCorpusNoLeakage(t *testing.T) {
 				blockedAt = i
 				break
 			}
-			leaked.WriteString(out)
+			leaked = append(leaked, out...)
 		}
 		if blockedAt < 0 {
 			t.Errorf("id=%s stream never blocked: %q", e.ID, truncate(text, 120))
 			continue
 		}
-		assertNoPoisonLeak(t, e.ID, leaked.String())
+		assertNoPoisonLeak(t, e.ID, string(leaked))
 	}
 }
 

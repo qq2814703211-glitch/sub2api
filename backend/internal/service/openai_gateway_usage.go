@@ -677,7 +677,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		if row := s.billingService.forRequest(ctx).exactCatalogRow(billingModel); row.explicitMode() && s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey) == nil {
 			video := result.VideoCount > 0 || strings.HasPrefix(result.ResponseID, "compat-video:") || strings.HasPrefix(result.ResponseID, "seedance:")
 			image := result.ImageEndpoint || result.ImageCount > 0
-			if !catalogMediaOverride(apiKey, billingModel, result.ImageSize, result.VideoResolution, image, video, result.AudioUsage) && !(imageCountBillingApplies(apiKey, result.ImageEndpoint) && row.GloryBillingMode != BillingModePerImage) {
+			if !catalogMediaOverride(apiKey, billingModel, result.ImageSize, result.VideoResolution, image, video, result.AudioUsage) && (!imageCountBillingApplies(apiKey, result.ImageEndpoint) || row.GloryBillingMode == BillingModePerImage) {
 				if row.GloryBillingMode.isCatalogUnit() {
 					rate := webSearchMultiplier
 					if video {

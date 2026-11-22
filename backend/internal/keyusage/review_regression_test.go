@@ -3,6 +3,7 @@ package keyusage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -29,7 +30,11 @@ func TestStartupUsesConfigurationInsideLifecycleLock(t *testing.T) {
 	r.Stop()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	_, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, lockID)
 	require.NoError(t, err)
 	other := New(db)
@@ -62,12 +67,20 @@ func TestBackfillLocksSourceBeforeSummary(t *testing.T) {
 	defer cancel()
 	blocker, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer blocker.Rollback()
+	defer func() {
+		if err := blocker.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	_, err = blocker.Exec(`LOCK TABLE key_usage_hourly IN SHARE MODE`)
 	require.NoError(t, err)
 	worker, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	require.NoError(t, err)
-	defer worker.Rollback()
+	defer func() {
+		if err := worker.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	var pid int
 	require.NoError(t, worker.QueryRow(`SELECT pg_backend_pid()`).Scan(&pid))
 	completed := make(chan error, 1)

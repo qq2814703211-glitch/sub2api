@@ -12,7 +12,12 @@ import (
 func TestAccountRepositoryGrokSubscriptionAtomicGuard(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	repo := newAccountRepositoryWithSQL(nil, db, nil)
 	var updater service.GrokSubscriptionRepository = repo
 	mock.ExpectQuery("SELECT COALESCE").WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"snapshot"}).AddRow([]byte("null")))

@@ -21,13 +21,13 @@ func TestProtocolPendingWireDoesNotRetainLargeHeap(t *testing.T) {
 			if mode == "text/event-stream" {
 				wire = "data: " + body + "\n\n"
 			}
-			var got bytes.Buffer
+			var got []byte
 			for i := 0; i < len(wire); i += 4096 {
 				out, blocked, err := g.feed([]byte(wire[i:min(i+4096, len(wire))]), false)
 				if err != nil || blocked {
 					t.Fatalf("normal input rejected: %v", err)
 				}
-				got.Write(out)
+				got = append(got, out...)
 				retained := cap(g.input)
 				for _, f := range g.frames {
 					retained += cap(f.wire)
@@ -37,9 +37,9 @@ func TestProtocolPendingWireDoesNotRetainLargeHeap(t *testing.T) {
 				}
 			}
 			out, blocked, err := g.feed(nil, true)
-			got.Write(out)
-			if blocked || err != nil || got.String() != wire {
-				t.Fatalf("spooled wire changed: got=%d want=%d err=%v", got.Len(), len(wire), err)
+			got = append(got, out...)
+			if blocked || err != nil || string(got) != wire {
+				t.Fatalf("spooled wire changed: got=%d want=%d err=%v", len(got), len(wire), err)
 			}
 			files, err := filepath.Glob(filepath.Join(dir, "sub2api-poison-wire-*"))
 			if err != nil || len(files) != 0 {

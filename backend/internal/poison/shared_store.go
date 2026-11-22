@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/lib/pq"
 )
 
@@ -122,7 +123,7 @@ func (s *SharedCoordinator) sharedEnabled() bool {
 // and matching the configured upstream prefixes. Inactive or unschedulable
 // accounts are deliberately included — they follow the shared proxy but keep
 // their own running state.
-func (s *SharedCoordinator) eligibleAccounts(ctx context.Context, q sharedQueryer, lock bool) ([]sharedAccount, error) {
+func (s *SharedCoordinator) eligibleAccounts(ctx context.Context, q sharedQueryer, lock bool) (eligible []sharedAccount, retErr error) {
 	snap := s.snapshot()
 	if snap == nil || snap.Scope == nil {
 		return nil, nil
@@ -140,7 +141,7 @@ func (s *SharedCoordinator) eligibleAccounts(ctx context.Context, q sharedQuerye
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	var out []sharedAccount
 	for rows.Next() {
 		var acc sharedAccount
@@ -181,41 +182,9 @@ func (s *SharedCoordinator) eligibleAccounts(ctx context.Context, q sharedQuerye
 	return out, nil
 }
 
-// lockAccounts re-reads and locks exactly the given accounts in ID order, which
-// keeps the lock order deterministic across instances.
-func lockAccounts(ctx context.Context, tx *sql.Tx, ids []int64) (map[int64]sharedAccount, error) {
-	out := map[int64]sharedAccount{}
-	if len(ids) == 0 {
-		return out, nil
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, proxy_id, status, schedulable, extra
-		FROM accounts WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL ORDER BY id FOR UPDATE`, pq.Array(ids))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var acc sharedAccount
-		var extraRaw []byte
-		if err := rows.Scan(&acc.ID, &acc.ProxyID, &acc.Status, &acc.Schedulable, &extraRaw); err != nil {
-			return nil, err
-		}
-		extra := map[string]any{}
-		if len(extraRaw) > 0 {
-			dec := json.NewDecoder(strings.NewReader(string(extraRaw)))
-			dec.UseNumber()
-			_ = dec.Decode(&extra)
-		}
-		acc.RestoreEpoch = RestoreEpoch(extra)
-		acc.Generation = sharedGeneration(extra)
-		out[acc.ID] = acc
-	}
-	return out, rows.Err()
-}
-
 func sharedGeneration(extra map[string]any) int64 { return SharedGeneration(extra) }
 
-func accountGroups(ctx context.Context, q sharedQueryer, ids []int64) (map[int64][]int64, error) {
+func accountGroups(ctx context.Context, q sharedQueryer, ids []int64) (memberships map[int64][]int64, retErr error) {
 	out := map[int64][]int64{}
 	if len(ids) == 0 {
 		return out, nil
@@ -224,7 +193,7 @@ func accountGroups(ctx context.Context, q sharedQueryer, ids []int64) (map[int64
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	for rows.Next() {
 		var accountID, groupID int64
 		if err := rows.Scan(&accountID, &groupID); err != nil {
@@ -258,13 +227,13 @@ func (s *SharedCoordinator) loadProxy(ctx context.Context, q sharedQueryer, id i
 
 // activeProxies lists selectable targets: status=active and not soft-deleted.
 // Occupancy is intentionally ignored — sharing is the point.
-func (s *SharedCoordinator) activeProxies(ctx context.Context, q sharedQueryer) ([]RotationCandidate, error) {
+func (s *SharedCoordinator) activeProxies(ctx context.Context, q sharedQueryer) (candidates []RotationCandidate, retErr error) {
 	rows, err := q.QueryContext(ctx, `SELECT id, name, protocol, host, port, COALESCE(username,''), COALESCE(password,'')
 		FROM proxies WHERE deleted_at IS NULL AND status='active' ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	var out []RotationCandidate
 	for rows.Next() {
 		var c RotationCandidate
@@ -278,14 +247,14 @@ func (s *SharedCoordinator) activeProxies(ctx context.Context, q sharedQueryer) 
 
 // blockedSets returns the blocked egress IPs and the proxy rows that are wholly
 // blacklisted (dynamic proxies are excluded from the row-level set on purpose).
-func (s *SharedCoordinator) blockedSets(ctx context.Context, q sharedQueryer) (map[string]struct{}, map[int64]struct{}, error) {
+func (s *SharedCoordinator) blockedSets(ctx context.Context, q sharedQueryer) (blockedIPs map[string]struct{}, blockedProxies map[int64]struct{}, retErr error) {
 	ips := map[string]struct{}{}
 	proxies := map[int64]struct{}{}
 	rows, err := q.QueryContext(ctx, `SELECT outbound_ip, proxy_id, is_dynamic FROM poison_blocked_egress`)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	for rows.Next() {
 		var ip string
 		var proxyID sql.NullInt64

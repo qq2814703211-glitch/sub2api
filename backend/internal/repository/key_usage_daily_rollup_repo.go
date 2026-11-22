@@ -30,7 +30,7 @@ func NewUsageKeyDailyRollupRepository(db *sql.DB) service.UsageKeyDailyRollupRep
 	if db == nil {
 		return nil
 	}
-	return &usageKeyDailyRollupRepository{sql: db}
+	return newUsageKeyDailyRollupRepositoryWithSQL(db)
 }
 
 func newUsageKeyDailyRollupRepositoryWithSQL(sqlq sqlExecutor) *usageKeyDailyRollupRepository {

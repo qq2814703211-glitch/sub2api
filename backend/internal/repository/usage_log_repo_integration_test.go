@@ -690,7 +690,17 @@ func (s *UsageLogRepoSuite) TestListWithFilters() {
 
 // --- GetDashboardStats ---
 
+// Dashboard totals span every user. Give these assertions an empty usage ledger
+// and matching aggregate state inside the suite's rollback-only transaction.
+func (s *UsageLogRepoSuite) resetDashboardUsage() {
+	s.T().Helper()
+	_, err := s.tx.ExecContext(s.ctx, `DELETE FROM usage_logs; TRUNCATE usage_dashboard_hourly, usage_dashboard_daily,
+		usage_dashboard_hourly_users, usage_dashboard_daily_users`)
+	s.Require().NoError(err)
+}
+
 func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
+	s.resetDashboardUsage()
 	now := time.Now().UTC()
 	todayStart := truncateToDayUTC(now)
 	baseStats, err := s.repo.GetDashboardStats(s.ctx)
@@ -805,6 +815,7 @@ func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
 }
 
 func (s *UsageLogRepoSuite) TestDashboardStatsWithRange_Fallback() {
+	s.resetDashboardUsage()
 	now := time.Now().UTC()
 	todayStart := truncateToDayUTC(now)
 	rangeStart := todayStart.Add(-24 * time.Hour)

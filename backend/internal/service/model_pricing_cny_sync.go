@@ -396,15 +396,6 @@ func (d *cnyOfficialDataset) manualPricing(model string) (*cnyOfficialManualPric
 	return &priced, true
 }
 
-// isNationalModel 报告该模型是否属于「国模」（出现在白名单厂商或 CNY 计价厂商下）。
-func (d *cnyOfficialDataset) isNationalModel(model string) bool {
-	if d == nil {
-		return false
-	}
-	_, ok := d.National[model]
-	return ok
-}
-
 // manualOverrideHit 报告 manual_overrides 是否命中该模型名（精确匹配，不区分厂商）。
 func (d *cnyOfficialDataset) manualOverrideHit(model string) bool {
 	if d == nil || len(d.ManualOverrides) == 0 {
@@ -799,7 +790,6 @@ func buildCNYOfficialTimePricing(model string, raw cnyOfficialRawPrices, report 
 		Fallback: strings.TrimSpace(schedule.Fallback),
 	}
 
-	weekdaySets := make([][]int, 0, len(schedule.Windows))
 	allWeekdaysOnly := true
 	for _, window := range schedule.Windows {
 		result.PeakPrices = append(result.PeakPrices, CNYOfficialPeakPrice{
@@ -822,7 +812,7 @@ func buildCNYOfficialTimePricing(model string, raw cnyOfficialRawPrices, report 
 				continue
 			}
 			shiftedWeekdays := cnyOfficialShiftWeekdays(window.Weekdays, hourRange, schedule.Timezone)
-			weekdaySets = append(weekdaySets, shiftedWeekdays)
+
 			if !cnyOfficialIsWorkdaySet(shiftedWeekdays) {
 				allWeekdaysOnly = false
 			}

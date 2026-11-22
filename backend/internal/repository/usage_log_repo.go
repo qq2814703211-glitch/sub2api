@@ -171,11 +171,11 @@ type usageLogRepository struct {
 	sql    sqlExecutor
 	db     *sql.DB
 
-	createBatchOnce             sync.Once
-	createBatchCh               chan usageLogCreateRequest
-	bestEffortBatchOnce         sync.Once
-	bestEffortBatchCh           chan usageLogBestEffortRequest
-	bestEffortRecent            *gocache.Cache
+	createBatchOnce     sync.Once
+	createBatchCh       chan usageLogCreateRequest
+	bestEffortBatchOnce sync.Once
+	bestEffortBatchCh   chan usageLogBestEffortRequest
+	bestEffortRecent    *gocache.Cache
 }
 
 func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB) service.UsageLogRepository {

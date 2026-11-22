@@ -118,11 +118,15 @@ func TestEvidenceCleanupNormalParseErrorRetryAndClose(t *testing.T) {
 			require.Len(t, entries, 1)
 			switch mode {
 			case "normal":
-				c.Writer.WriteString("safe")
+				if _, err := c.Writer.WriteString("safe"); err != nil {
+					t.Error(err)
+				}
 				Finalize(c)
 			case "parse-error":
 				c.Header("Content-Type", "text/event-stream")
-				c.Writer.WriteString("data: {broken\n\n")
+				if _, err := c.Writer.WriteString("data: {broken\n\n"); err != nil {
+					t.Error(err)
+				}
 				Finalize(c)
 			case "retry":
 				require.True(t, Attach(c, snap, AccountInfo{Name: "防投毒test", BaseURL: "https://poison.example", HasProxy: true, AccountID: 52}))
@@ -168,7 +172,9 @@ func TestEvidenceDiskFailurePreservesBlocking(t *testing.T) {
 	s.root = file
 	raw := strings.Repeat("x", wireMemoryThreshold+1) + "kedaya"
 	feedEvidence(t, c, raw)
-	c.Writer.WriteString("kedaya")
+	if _, err := c.Writer.WriteString("kedaya"); err != nil {
+		t.Error(err)
+	}
 	Finalize(c)
 	require.True(t, StatusGuard(c).Blocked())
 	require.Empty(t, c.GetString("poison_guard_evidence_path"))
@@ -193,8 +199,11 @@ func TestEvidenceReadErrorFreezeAndDisposition(t *testing.T) {
 	b := make([]byte, 64)
 	n, err := resp.Body.Read(b)
 	require.Error(t, err)
-	c.Writer.Write(b[:n])
-	resp.Body.Read(b)
+	if _, err := c.Writer.Write(b[:n]); err != nil {
+		t.Error(err)
+	}
+	_, err = resp.Body.Read(b)
+	require.Error(t, err)
 	require.Equal(t, 2, reader.reads)
 	m, path := evidenceReceipt(t, c, dir)
 	require.Equal(t, int64(6), m.Responses[0].Bytes)
@@ -210,7 +219,9 @@ func TestEvidenceSnapshotAtFlushAndInspectionOffset(t *testing.T) {
 	// A replacement rune is only produced at Flush for an incomplete UTF-8 suffix.
 	snap.Detector = NewDetector(Config{Veto: []string{"�"}})
 	feedEvidence(t, c, string([]byte{0xe4}))
-	c.Writer.Write([]byte{0xe4})
+	if _, err := c.Writer.Write([]byte{0xe4}); err != nil {
+		t.Error(err)
+	}
 	m, _ := evidenceReceipt(t, c, dir)
 	require.Equal(t, []string{"�"}, m.Hit.Matched)
 	data, _ := json.Marshal(m.Hit)
@@ -260,7 +271,9 @@ func TestEvidenceRetryThenHitDoesNotMixAccounts(t *testing.T) {
 	feedEvidence(t, c, "account-one-clean")
 	Attach(c, snap, AccountInfo{Name: "防投毒test", BaseURL: "https://poison.example", HasProxy: true, AccountID: 52})
 	feedEvidence(t, c, "account-two-kedaya")
-	c.Writer.WriteString("kedaya")
+	if _, err := c.Writer.WriteString("kedaya"); err != nil {
+		t.Error(err)
+	}
 	m, path := evidenceReceipt(t, c, dir)
 	require.Equal(t, int64(52), m.AccountID)
 	require.Len(t, m.Responses, 1)
@@ -275,7 +288,9 @@ func TestEvidenceWebSocketForwardIsolation(t *testing.T) {
 	a.Capture([]byte("first"))
 	b.Capture([]byte("second-kedaya"))
 	a.Capture([]byte("-end"))
-	c.Writer.WriteString("kedaya")
+	if _, err := c.Writer.WriteString("kedaya"); err != nil {
+		t.Error(err)
+	}
 	b.Capture([]byte("ignored-after-freeze"))
 	m, path := evidenceReceipt(t, c, dir)
 	require.Len(t, m.Responses, 4)
@@ -300,8 +315,12 @@ func TestEvidenceConcurrentReadCloseFreeze(t *testing.T) {
 			defer wg.Done()
 			r := &http.Response{Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 10000)))}
 			CaptureUpstreamResponse(ctx, r)
-			io.Copy(io.Discard, r.Body)
-			r.Body.Close()
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				t.Error(err)
+			}
+			if err := r.Body.Close(); err != nil {
+				t.Error(err)
+			}
 		}()
 	}
 	s.markHit(HitDetails{Reason: "test", Matched: []string{"test"}}, 0)

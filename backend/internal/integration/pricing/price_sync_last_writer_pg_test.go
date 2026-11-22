@@ -1,10 +1,11 @@
-package service_test
+package pricing_test
 
 import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,7 +29,7 @@ func TestPriceSyncLastWriterPostgresReplay(t *testing.T) {
 	u.RawQuery = v.Encode()
 	db, err := sql.Open("postgres", u.String())
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	db.SetMaxOpenConns(1)
 	var dir, tcp string
 	require.NoError(t, db.QueryRow(`SELECT current_setting('unix_socket_directories'),current_setting('listen_addresses')`).Scan(&dir, &tcp))
@@ -57,7 +58,11 @@ func TestPriceSyncLastWriterPostgresReplay(t *testing.T) {
 	ctx := context.Background()
 	tx, err := db.Begin()
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); !errors.Is(err, sql.ErrTxDone) {
+			require.NoError(t, err)
+		}
+	}()
 	for _, r := range export.History.Rows {
 		var reason string
 		switch r.Class {
@@ -81,9 +86,10 @@ func TestPriceSyncLastWriterPostgresReplay(t *testing.T) {
 	}
 	require.NoError(t, tx.Commit())
 	repo := repository.NewModelPricingSyncHistoryRepository(db)
-	reader := repo.(interface {
+	reader, ok := repo.(interface {
 		ListLatestPricingFields(context.Context, []string) ([]service.ModelPricingSyncHistory, error)
 	})
+	require.True(t, ok)
 	var ids []string
 	for k := range keys {
 		ids = append(ids, k)
@@ -103,5 +109,6 @@ func TestPriceSyncLastWriterPostgresReplay(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(-1), rows[0].ID)
 	require.Equal(t, "manual", rows[0].Reason)
-	service.ReplayLastWriter(t, repo, root, audit)
+	store := priceSchema(t, fmt.Sprintf("host=%s port=55439 user=lwtest dbname=postgres sslmode=disable", socket))
+	replayLastWriter(t, repo, store, root, audit)
 }

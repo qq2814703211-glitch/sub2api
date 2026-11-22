@@ -68,7 +68,7 @@ func (f *ssoDeviceFlow) convertViaAuthCode(ctx context.Context) (*TokenResponse,
 	}
 
 	if code == "" {
-		status, _, body, err = f.raw(ctx, http.MethodGet, consentURL, nil, nil)
+		status, _, _, err = f.raw(ctx, http.MethodGet, consentURL, nil, nil)
 		if err != nil {
 			return nil, err
 		}

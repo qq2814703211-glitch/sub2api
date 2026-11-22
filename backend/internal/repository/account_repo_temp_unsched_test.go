@@ -239,7 +239,12 @@ func TestAccountRepository_SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnch
 func TestAccountRepository_UpdateGrokOAuthCredentialsIfUnchanged_UsesExactAttemptStateAndAtomicOutbox(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	mock.ExpectQuery("SELECT COALESCE").WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"snapshot", "proxy"}).AddRow([]byte("null"), []byte("null")))
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(1), queryDB: db}
 	repo := newAccountRepositoryWithSQL(nil, exec, nil)
@@ -432,8 +437,8 @@ type captureQuerySQL struct {
 	args     *[]any
 }
 
-func (c captureQuerySQL) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return c.db.ExecContext(ctx, query, args...)
+func (c captureQuerySQL) ExecContext(context.Context, string, ...any) (sql.Result, error) {
+	return nil, errors.New("unexpected write in read-only query fixture")
 }
 
 func (c captureQuerySQL) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {

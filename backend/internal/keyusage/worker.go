@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"time"
 )
 
 // Step backfills one bounded hour and applies a bounded committed queue batch.
 // Transaction advisory locking serializes workers without holding a session
 // connection between ticks. No sequence watermark assumes commit order.
-func (r *Runtime) Step(ctx context.Context) error {
+func (r *Runtime) Step(ctx context.Context) (retErr error) {
 	if r == nil || !r.enabled.Load() {
 		return nil
 	}
@@ -24,7 +25,7 @@ func (r *Runtime) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err = tx.ExecContext(ctx, `LOCK TABLE usage_logs IN ACCESS SHARE MODE`); err != nil {
 		return err
 	}

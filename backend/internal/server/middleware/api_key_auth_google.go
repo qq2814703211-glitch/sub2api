@@ -176,7 +176,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			return
 		}
 
-		isSubscriptionType := !(apiKey.HasMultipleRoutes() && service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+		isSubscriptionType := (!apiKey.HasMultipleRoutes() || !service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 		if isSubscriptionType && subscriptionService != nil {
 			subscription, err := subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
@@ -211,7 +211,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 
 			c.Set(string(ContextKeySubscription), subscription)
 		} else {
-			if !(apiKey.HasMultipleRoutes() && service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+			if (!apiKey.HasMultipleRoutes() || !service.APIKeyRouteSelectionRequest(c.Request.Method, c.Request.URL.Path)) && apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
 				abortWithGoogleError(c, 403, "Insufficient account balance")
 				return
 			}

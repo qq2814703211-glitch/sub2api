@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"net"
 	"os"
 	"strings"
@@ -806,13 +807,13 @@ type blockedRow struct {
 	Image      *SharedBlockedBeforeImage
 }
 
-func loadBlockedRows(ctx context.Context, q sharedQueryer) ([]blockedRow, error) {
+func loadBlockedRows(ctx context.Context, q sharedQueryer) (blocked []blockedRow, retErr error) {
 	rows, err := q.QueryContext(ctx, `SELECT id, outbound_ip, proxy_id, account_id, is_dynamic, reason, hit_count, first_hit_at, last_hit_at
 		FROM poison_blocked_egress ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	var out []blockedRow
 	for rows.Next() {
 		img := &SharedBlockedBeforeImage{}
@@ -852,18 +853,18 @@ func resolveProxyByHost(ctx context.Context, q sharedQueryer, ip string) (*int64
 
 func sanitizeID(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
-	var b strings.Builder
+	var b []byte
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' {
-			b.WriteRune(r)
+			b = append(b, byte(r))
 			continue
 		}
-		b.WriteByte('_')
+		b = append(b, '_')
 	}
-	if b.Len() == 0 {
+	if len(b) == 0 {
 		return "unknown"
 	}
-	return b.String()
+	return string(b)
 }
 
 // Start launches the verification worker. It is idempotent and does nothing when

@@ -151,6 +151,7 @@ func TestMain(m *testing.M) {
 
 func runIntegrationWithExternalServices(ctx context.Context, m *testing.M, dsn, redisAddr string) int {
 	var err error
+	integrationDSN = dsn
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
 		log.Printf("failed to open external test DB: %v", err)

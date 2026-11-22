@@ -67,7 +67,6 @@ func (h *Handler) Handle(ctx context.Context, inc Incident) {
 	if d.Outcome == "" {
 		d.Outcome, d.Reason = "deferred", "deferred_shared_operation"
 	}
-	return
 }
 
 // AttachHandler 注入处置处理器，由路由初始化时调用一次。

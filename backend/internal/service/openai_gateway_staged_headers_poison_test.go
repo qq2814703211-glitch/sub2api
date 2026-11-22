@@ -107,7 +107,7 @@ func TestOpenAIStagedHeadersPoisonGuardAppliedOnce(t *testing.T) {
 			require.Equal(t, 640, result.usage.OutputTokens)
 
 			// Validate every SSE data document and reconstruct the whole Unicode body.
-			var text strings.Builder
+			var text []byte
 			terminalCount, deltaCount := 0, 0
 			for _, frame := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n\n") {
 				require.True(t, strings.HasPrefix(frame, "data: "), "incomplete SSE frame")
@@ -119,7 +119,7 @@ func TestOpenAIStagedHeadersPoisonGuardAppliedOnce(t *testing.T) {
 				switch event.Type {
 				case "response.output_text.delta":
 					deltaCount++
-					text.WriteString(event.Delta)
+					text = append(text, event.Delta...)
 				case "response.completed":
 					terminalCount++
 				default:
@@ -128,7 +128,7 @@ func TestOpenAIStagedHeadersPoisonGuardAppliedOnce(t *testing.T) {
 			}
 			require.Equal(t, 640, deltaCount)
 			require.Equal(t, 1, terminalCount)
-			require.Equal(t, strings.Repeat("花", 640), text.String())
+			require.Equal(t, strings.Repeat("花", 640), string(text))
 			wire := rec.Result().Header
 			t.Logf("wire header counts: request-id=%d turn-state=%d rate-limit=%d; complete deltas=%d; early flush=%v", len(wire.Values("X-Request-Id")), len(wire.Values("X-Codex-Turn-State")), len(wire.Values("X-Ratelimit-Remaining-Requests")), deltaCount, checkedFlushed)
 			require.Equal(t, 2, len(wire.Values("X-Request-Id")), "gateway ID plus exactly one upstream ID")

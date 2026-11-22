@@ -89,26 +89,26 @@ type ChannelMonitorV2Filter struct {
 }
 
 type ChannelMonitorV2Metric struct {
-	SuccessRequests          int64                   `json:"success_requests"`
-	ErrorRequests            int64                   `json:"error_requests"`
-	RequestCount             int64                   `json:"request_count"`
-	InputTokens              int64                   `json:"input_tokens"`
-	OutputTokens             int64                   `json:"output_tokens"`
-	CacheCreationTokens      int64                   `json:"cache_creation_tokens"`
-	CacheReadTokens          int64                   `json:"cache_read_tokens"`
-	TokenCount               int64                   `json:"token_count"`
-	RPM                      float64                 `json:"rpm"`
-	TPM                      float64                 `json:"tpm"`
-	ErrorRate                float64                 `json:"error_rate"`
-	SuccessRate              float64                 `json:"success_rate"`
-	CacheRate                float64                 `json:"cache_rate"`
-	CacheRateNumerator       int64                   `json:"cache_rate_numerator"`
-	CacheRateDenominator     int64                   `json:"cache_rate_denominator"`
+	SuccessRequests      int64   `json:"success_requests"`
+	ErrorRequests        int64   `json:"error_requests"`
+	RequestCount         int64   `json:"request_count"`
+	InputTokens          int64   `json:"input_tokens"`
+	OutputTokens         int64   `json:"output_tokens"`
+	CacheCreationTokens  int64   `json:"cache_creation_tokens"`
+	CacheReadTokens      int64   `json:"cache_read_tokens"`
+	TokenCount           int64   `json:"token_count"`
+	RPM                  float64 `json:"rpm"`
+	TPM                  float64 `json:"tpm"`
+	ErrorRate            float64 `json:"error_rate"`
+	SuccessRate          float64 `json:"success_rate"`
+	CacheRate            float64 `json:"cache_rate"`
+	CacheRateNumerator   int64   `json:"cache_rate_numerator"`
+	CacheRateDenominator int64   `json:"cache_rate_denominator"`
 	// CacheRateKnown is omitted (nil) for real-traffic buckets, where CacheRate is
 	// measured. A probe-filled bucket sets it to false when no real sample backs a
 	// cache rate, so the UI renders "—" (unknown) instead of a fabricated 0%/100%
 	// (ADR 0009).
-	CacheRateKnown *bool `json:"cache_rate_known,omitempty"`
+	CacheRateKnown           *bool                   `json:"cache_rate_known,omitempty"`
 	TTFT                     ChannelMonitorV2Latency `json:"ttft"`
 	Duration                 ChannelMonitorV2Latency `json:"duration"`
 	UpstreamAffectedRequests *int64                  `json:"upstream_affected_requests,omitempty"`

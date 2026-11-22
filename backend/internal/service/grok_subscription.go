@@ -168,7 +168,11 @@ func (s *GrokQuotaService) refreshGrokSubscription(ctx context.Context, account 
 	if err != nil {
 		return errors.New("transport")
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, errors.New("response_close"))
+		}
+	}()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("http_%d", resp.StatusCode)
 	}

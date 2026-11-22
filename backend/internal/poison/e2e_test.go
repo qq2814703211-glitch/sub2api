@@ -28,7 +28,11 @@ func TestE2ERealHTTPStreamingNoLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -63,7 +67,11 @@ func TestE2ERealHTTPCleanStreamIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 
 	if got := string(raw); got != clean {
@@ -95,7 +103,11 @@ func TestE2ESSEFramedPoisonNoLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	body := string(raw)
 
@@ -122,7 +134,11 @@ func TestE2EBufferedReadNoLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	sc := bufio.NewScanner(resp.Body)
 	var lines []string
@@ -189,7 +205,9 @@ func TestRealCorpusE2E(t *testing.T) {
 			t.Fatalf("id=%s post: %v", e.ID, err)
 		}
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
 		srv.Close()
 
 		body := string(raw)

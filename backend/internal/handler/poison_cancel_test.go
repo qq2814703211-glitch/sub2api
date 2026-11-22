@@ -28,7 +28,9 @@ func TestPoisonProtocolHitCancelsUpstreamContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
 	if err != nil || resp.StatusCode != 502 || !json.Valid(body) {
 		t.Fatalf("error response not delivered: status=%d err=%v", resp.StatusCode, err)
 	}

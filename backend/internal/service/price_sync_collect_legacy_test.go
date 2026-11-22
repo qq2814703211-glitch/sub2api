@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func (d *cnyOfficialDataset) isNationalModel(model string) bool {
+	if d == nil {
+		return false
+	}
+	_, ok := d.National[model]
+	return ok
+}
+
 func TestPriceSyncLegacyCollectorDoesNotPromoteEndpointCurrency(t *testing.T) {
 	registry := mustParseCNYRegistry(t, `{
 		"moonshotai-cn":{"currency":"CNY","models":{

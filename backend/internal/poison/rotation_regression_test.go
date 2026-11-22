@@ -19,7 +19,12 @@ func TestRotationRejectsHostnameRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := NewEgressStore(db).Record(context.Background(), "dynamic.invalid", nil, nil, true, "incident"); err == nil {
 		t.Fatal("hostname must not be recorded")
 	}
@@ -47,7 +52,9 @@ func TestRotationDynamicCandidateValidation(t *testing.T) {
 					w.WriteHeader(http.StatusBadGateway)
 					return
 				}
-				w.Write([]byte("192.0.2.20"))
+				if _, err := w.Write([]byte("192.0.2.20")); err != nil {
+					t.Error(err)
+				}
 			}))
 			defer srv.Close()
 			u, _ := url.Parse(srv.URL)
@@ -79,7 +86,9 @@ func TestRotationDynamicCandidateValidation(t *testing.T) {
 func TestRotationProbeRejectsErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("192.0.2.10"))
+		if _, err := w.Write([]byte("192.0.2.10")); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer srv.Close()
 	p := &EgressProber{Endpoints: []string{srv.URL}, Timeout: time.Second}

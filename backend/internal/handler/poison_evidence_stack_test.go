@@ -40,16 +40,18 @@ func TestPoisonEvidenceProductionStackLateHit(t *testing.T) {
 				}
 				report <- d
 			}})
-			var raw strings.Builder
+			var raw []byte
 			for range 4 {
-				raw.WriteString("data: {\"delta\":{\"text\":\"" + strings.Repeat("a", 512) + "\"}}\n\n")
+				raw = append(raw, "data: {\"delta\":{\"text\":\""+strings.Repeat("a", 512)+"\"}}\n\n"...)
 			}
-			raw.WriteString("data: {\"delta\":{\"text\":\"kedaya\"}}\n\n")
-			source := raw.String()
+			raw = append(raw, "data: {\"delta\":{\"text\":\"kedaya\"}}\n\n"...)
+			source := string(raw)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = io.WriteString(w, source)
-				w.(http.Flusher).Flush()
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Error(err)
+				}
 				<-r.Context().Done()
 			}))
 			defer upstream.Close()
@@ -70,7 +72,11 @@ func TestPoisonEvidenceProductionStackLateHit(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				defer resp.Body.Close()
+				defer func() {
+					if err := resp.Body.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				poison.CaptureUpstreamResponse(c.Request.Context(), resp)
 				c.Header("Content-Type", "text/event-stream")
 				reader := bufio.NewReader(resp.Body)
@@ -101,7 +107,9 @@ func TestPoisonEvidenceProductionStackLateHit(t *testing.T) {
 			response, err := client.Post(server.URL+"/v1/responses", "application/json", strings.NewReader(`{}`))
 			require.NoError(t, err)
 			body, readErr := io.ReadAll(response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Error(err)
+			}
 			require.Equal(t, http.StatusOK, response.StatusCode)
 			require.Error(t, readErr)
 			require.NotContains(t, string(body), "kedaya")
