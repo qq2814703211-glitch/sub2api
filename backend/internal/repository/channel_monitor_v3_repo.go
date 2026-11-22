@@ -50,15 +50,15 @@ func (r *channelMonitorV3Repository) WithGroupDailyReader(reader service.UsageGr
 	return r
 }
 
-const channelMonitorV3ConfigColumns = `version, enabled, groups, probe, cache_average_window_days, cache_average_window_value, cache_average_window_unit, updated_at, updated_by`
+const channelMonitorV3ConfigColumns = `version, enabled, groups, cache_average_window_days, cache_average_window_value, cache_average_window_unit, updated_at, updated_by`
 
 func (r *channelMonitorV3Repository) GetConfig(ctx context.Context) (*service.ChannelMonitorV3Config, error) {
 	var cfg service.ChannelMonitorV3Config
-	var groups, probe []byte
+	var groups []byte
 	var windowUnit string
 	err := r.db.QueryRowContext(ctx,
 		`SELECT `+channelMonitorV3ConfigColumns+` FROM channel_monitor_v3_config WHERE id = 1`,
-	).Scan(&cfg.Version, &cfg.Enabled, &groups, &probe, &cfg.CacheAverageWindowDays,
+	).Scan(&cfg.Version, &cfg.Enabled, &groups, &cfg.CacheAverageWindowDays,
 		&cfg.CacheAverageWindowValue, &windowUnit, &cfg.UpdatedAt, &cfg.UpdatedBy)
 	if err == sql.ErrNoRows {
 		// 表存在但行缺失（极少见：单行表由迁移写入）。返回默认值而不是报错，
@@ -69,7 +69,7 @@ func (r *channelMonitorV3Repository) GetConfig(ctx context.Context) (*service.Ch
 		return nil, fmt.Errorf("get channel monitor v3 config: %w", err)
 	}
 	cfg.CacheAverageWindowUnit = windowUnit
-	if err := decodeChannelMonitorV3ConfigPayload(&cfg, groups, probe); err != nil {
+	if err := decodeChannelMonitorV3ConfigPayload(&cfg, groups); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
@@ -87,24 +87,20 @@ func (r *channelMonitorV3Repository) UpdateConfig(
 	if cfg.Groups == nil {
 		groups = []byte("[]")
 	}
-	probe, err := json.Marshal(cfg.Probe)
-	if err != nil {
-		return nil, fmt.Errorf("encode channel monitor v3 probe: %w", err)
-	}
 	var updated service.ChannelMonitorV3Config
-	var rawGroups, rawProbe []byte
+	var rawGroups []byte
 	var windowUnit string
 	err = r.db.QueryRowContext(ctx, `
 		UPDATE channel_monitor_v3_config
-		SET version = version + 1, enabled = $1, groups = $2, probe = $3,
-		    cache_average_window_days = $4, cache_average_window_value = $5,
-		    cache_average_window_unit = $6, updated_by = $7, updated_at = NOW()
-		WHERE id = 1 AND version = $8
+		SET version = version + 1, enabled = $1, groups = $2,
+		    cache_average_window_days = $3, cache_average_window_value = $4,
+		    cache_average_window_unit = $5, updated_by = $6, updated_at = NOW()
+		WHERE id = 1 AND version = $7
 		RETURNING `+channelMonitorV3ConfigColumns,
-		cfg.Enabled, groups, probe, cfg.CacheAverageWindowDays,
+		cfg.Enabled, groups, cfg.CacheAverageWindowDays,
 		cfg.CacheAverageWindowValue, cfg.CacheAverageWindowUnit,
 		cfg.UpdatedBy, expectedVersion,
-	).Scan(&updated.Version, &updated.Enabled, &rawGroups, &rawProbe,
+	).Scan(&updated.Version, &updated.Enabled, &rawGroups,
 		&updated.CacheAverageWindowDays, &updated.CacheAverageWindowValue, &windowUnit,
 		&updated.UpdatedAt, &updated.UpdatedBy)
 	if err == sql.ErrNoRows {
@@ -114,29 +110,19 @@ func (r *channelMonitorV3Repository) UpdateConfig(
 		return nil, fmt.Errorf("update channel monitor v3 config: %w", err)
 	}
 	updated.CacheAverageWindowUnit = windowUnit
-	if err := decodeChannelMonitorV3ConfigPayload(&updated, rawGroups, rawProbe); err != nil {
+	if err := decodeChannelMonitorV3ConfigPayload(&updated, rawGroups); err != nil {
 		return nil, err
 	}
 	return &updated, nil
 }
 
-func decodeChannelMonitorV3ConfigPayload(cfg *service.ChannelMonitorV3Config, groups, probe []byte) error {
+func decodeChannelMonitorV3ConfigPayload(cfg *service.ChannelMonitorV3Config, groups []byte) error {
 	cfg.Groups = []service.ChannelMonitorV3Group{}
 	if len(groups) > 0 {
 		if err := json.Unmarshal(groups, &cfg.Groups); err != nil {
 			return fmt.Errorf("decode channel monitor v3 groups: %w", err)
 		}
 	}
-	cfg.Probe = service.ChannelMonitorV3Probe{}
-	if len(probe) > 0 {
-		if err := json.Unmarshal(probe, &cfg.Probe); err != nil {
-			return fmt.Errorf("decode channel monitor v3 probe: %w", err)
-		}
-	}
-	if cfg.Probe.ExtraModels == nil {
-		cfg.Probe.ExtraModels = []string{}
-	}
-	cfg.APIKeySet = strings.TrimSpace(cfg.Probe.APIKeyEncrypted) != ""
 	for i := range cfg.Groups {
 		group := &cfg.Groups[i]
 		if group.Models == nil {
@@ -146,7 +132,6 @@ func decodeChannelMonitorV3ConfigPayload(cfg *service.ChannelMonitorV3Config, gr
 			group.Probe.ExtraModels = []string{}
 		}
 		group.APIKeySet = strings.TrimSpace(group.Probe.APIKeyEncrypted) != ""
-		group.ProbeInherited = !group.HasOwnProbe()
 	}
 	return nil
 }
@@ -156,7 +141,6 @@ func defaultChannelMonitorV3Config() *service.ChannelMonitorV3Config {
 		Version:                 1,
 		Enabled:                 false,
 		Groups:                  []service.ChannelMonitorV3Group{},
-		Probe:                   service.ChannelMonitorV3Probe{ExtraModels: []string{}},
 		CacheAverageWindowDays:  service.ChannelMonitorV3DefaultCacheAverageWindowDays,
 		CacheAverageWindowValue: service.ChannelMonitorV3DefaultCacheAverageWindowDays,
 		CacheAverageWindowUnit:  service.ChannelMonitorV3WindowUnitDay,

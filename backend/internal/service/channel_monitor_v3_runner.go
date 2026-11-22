@@ -14,7 +14,7 @@ import (
 // 它只受 channel_monitor_v3_config.enabled 控制：
 //   - 不读 channel_monitor_enabled / channel_monitor_mode（V1/V2 的全局开关与模式），
 //     所以关掉 V1 的探针不会顺带改 V3 的行为，反之亦然；
-//   - 不查 channel_monitors 表取身份（探针身份在 V3 设置页里单独配一条 key）；
+//   - 不查 channel_monitors 表取身份（各分组在 V3 设置页单独配置探针）；
 //   - 分组来源只有 channel_monitor_v3_config.groups，不看分组的
 //     model_allowlist / model_pricing / platforms。
 //
@@ -105,10 +105,7 @@ func (r *ChannelMonitorV3ProbeRunner) markProbed(groupID int64, at time.Time) {
 func (r *ChannelMonitorV3ProbeRunner) roundInterval(cfg *ChannelMonitorV3Config) time.Duration {
 	best := time.Duration(0)
 	for _, group := range cfg.ProbeGroups() {
-		seconds := group.EffectiveIntervalSeconds(cfg.Probe)
-		if seconds <= 0 {
-			seconds = ChannelMonitorV3DefaultIntervalSeconds
-		}
+		seconds := group.EffectiveIntervalSeconds()
 		interval := time.Duration(seconds) * time.Second
 		if best == 0 || interval < best {
 			best = interval
@@ -209,7 +206,7 @@ func (r *ChannelMonitorV3ProbeRunner) probeGroups(
 		if ctx.Err() != nil {
 			break
 		}
-		probe, ok := r.resolveGroupProbe(cfg, group)
+		probe, ok := r.resolveGroupProbe(group)
 		if !ok {
 			continue
 		}
@@ -222,11 +219,7 @@ func (r *ChannelMonitorV3ProbeRunner) probeGroups(
 				"group_id", group.GroupID)
 			continue
 		}
-		seconds := group.EffectiveIntervalSeconds(cfg.Probe)
-		if seconds <= 0 {
-			seconds = ChannelMonitorV3DefaultIntervalSeconds
-		}
-		groupInterval := time.Duration(seconds) * time.Second
+		groupInterval := time.Duration(probe.IntervalSeconds) * time.Second
 		if !force && !r.due(group.GroupID, groupInterval) {
 			continue
 		}
@@ -262,11 +255,10 @@ func (r *ChannelMonitorV3ProbeRunner) probeGroups(
 // 返回 false 表示这一组本轮跳过（没配身份、没配 key、或 key 解不开）。这里必须
 // 只跳过当前组：把「key 不可用」当成轮次级错误就是原实现的整轮停摆。
 func (r *ChannelMonitorV3ProbeRunner) resolveGroupProbe(
-	cfg *ChannelMonitorV3Config,
 	group ChannelMonitorV3Group,
 ) (ChannelMonitorV3Probe, bool) {
-	probe := group.ResolveProbe(cfg.Probe)
-	if strings.TrimSpace(probe.Endpoint) == "" || strings.TrimSpace(probe.PrimaryModel) == "" {
+	probe := group.Probe
+	if !group.HasOwnProbe() {
 		slog.Warn("channel_monitor_v3: group has no probe identity, skipping",
 			"group_id", group.GroupID)
 		return ChannelMonitorV3Probe{}, false
@@ -320,7 +312,7 @@ func (r *ChannelMonitorV3ProbeRunner) ProbeOnce(ctx context.Context) error {
 // 是否真的打了上游（有真实流量时会跳过），那是执行结果，不是配置可用性。
 func (r *ChannelMonitorV3ProbeRunner) hasUsableProbeGroup(cfg *ChannelMonitorV3Config) bool {
 	for _, group := range cfg.ProbeGroups() {
-		if _, ok := r.resolveGroupProbe(cfg, group); ok {
+		if _, ok := r.resolveGroupProbe(group); ok {
 			return true
 		}
 	}

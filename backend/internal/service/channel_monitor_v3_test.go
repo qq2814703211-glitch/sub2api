@@ -93,7 +93,6 @@ func defaultTestV3Config() *ChannelMonitorV3Config {
 		Version:                1,
 		Enabled:                false,
 		Groups:                 []ChannelMonitorV3Group{},
-		Probe:                  ChannelMonitorV3Probe{ExtraModels: []string{}},
 		CacheAverageWindowDays: ChannelMonitorV3DefaultCacheAverageWindowDays,
 	}
 }
@@ -156,7 +155,7 @@ func enabledV3Config() *ChannelMonitorV3Config {
 	cfg := defaultTestV3Config()
 	cfg.Enabled = true
 	cfg.Groups = []ChannelMonitorV3Group{{GroupID: 7, Enabled: true, ProbeEnabled: true}}
-	cfg.Probe = ChannelMonitorV3Probe{
+	cfg.Groups[0].Probe = ChannelMonitorV3Probe{
 		Endpoint:        "https://api.openai.com",
 		APIKeyEncrypted: "ciphertext",
 		Provider:        MonitorProviderAnthropic,
@@ -282,9 +281,10 @@ func TestChannelMonitorV3BoardRequiresItsOwnSwitch(t *testing.T) {
 // and it must take the probe target list from V3's own probe identity.
 func TestChannelMonitorV3ProbeRunnerSkipsGroupsWithOrganicTraffic(t *testing.T) {
 	cfg := enabledV3Config()
+	probe := cfg.Groups[0].Probe
 	cfg.Groups = []ChannelMonitorV3Group{
-		{GroupID: 7, Enabled: true, ProbeEnabled: true},
-		{GroupID: 9, Enabled: true, ProbeEnabled: true},
+		{GroupID: 7, Enabled: true, ProbeEnabled: true, Probe: probe},
+		{GroupID: 9, Enabled: true, ProbeEnabled: true, Probe: probe},
 		{GroupID: 11, Enabled: true, ProbeEnabled: false},
 	}
 	repo := &channelMonitorV3RepoStub{cfg: cfg, busy: map[int64]bool{7: true}}
@@ -310,12 +310,7 @@ func TestChannelMonitorV3ProbeRunnerSkipsGroupsWithOrganicTraffic(t *testing.T) 
 
 func TestChannelMonitorV3GroupModelsOverrideProbeIdentity(t *testing.T) {
 	cfg := enabledV3Config()
-	cfg.Groups = []ChannelMonitorV3Group{{
-		GroupID:      7,
-		Enabled:      true,
-		ProbeEnabled: true,
-		Models:       []string{"claude-opus-4"},
-	}}
+	cfg.Groups[0].Models = []string{"claude-opus-4"}
 	repo := &channelMonitorV3RepoStub{cfg: cfg}
 	prober := &channelMonitorV3ProberStub{key: "plain-key",
 		result: []ChannelMonitorV3ProbeSample{{GroupID: 7, Success: true, CheckedAt: time.Now().UTC()}}}
@@ -342,46 +337,21 @@ func TestChannelMonitorV3ProbeRunnerNeedsAKey(t *testing.T) {
 	}
 }
 
-// 只有一个全局 probe、分组里没有 probe 的老配置：所有分组回落到全局那份，
-// 行为与改造前逐字一致。这是向后兼容的硬要求。
-func TestChannelMonitorV3GroupProbeFallsBackToGlobal(t *testing.T) {
+func TestChannelMonitorV3MissingGroupProbeNeverBorrowsIdentity(t *testing.T) {
 	cfg := enabledV3Config()
-	cfg.Groups = []ChannelMonitorV3Group{
-		{GroupID: 7, Enabled: true, ProbeEnabled: true},
-		{GroupID: 9, Enabled: true, ProbeEnabled: true},
-	}
-	repo := &channelMonitorV3RepoStub{cfg: cfg}
-	prober := &channelMonitorV3ProberStub{
-		key:    "global-plain-key",
-		result: []ChannelMonitorV3ProbeSample{{Success: true, CheckedAt: time.Now().UTC()}},
-	}
-	runner := NewChannelMonitorV3ProbeRunner(NewChannelMonitorV3Service(repo, nil), prober)
-
-	if err := runner.ProbeOnce(context.Background()); err != nil {
-		t.Fatalf("probe once: %v", err)
-	}
-	for _, groupID := range []int64{7, 9} {
-		probe, ok := prober.probeByGroup[groupID]
-		if !ok {
-			t.Fatalf("group %d must be probed with the global probe identity", groupID)
-		}
-		if probe.Endpoint != cfg.Probe.Endpoint {
-			t.Fatalf("group %d must inherit the global endpoint, got %q", groupID, probe.Endpoint)
-		}
-		if probe.APIKeyEncrypted != "global-plain-key" {
-			t.Fatalf("group %d must use the decrypted global key, got %q", groupID, probe.APIKeyEncrypted)
-		}
-	}
-	if len(prober.decryptInputs) == 0 || prober.decryptInputs[0] != "ciphertext" {
-		t.Fatalf("the global ciphertext must be the one decrypted, got %v", prober.decryptInputs)
+	cfg.Groups = append(cfg.Groups, ChannelMonitorV3Group{GroupID: 9, Enabled: true, ProbeEnabled: true})
+	prober := &channelMonitorV3ProberStub{key: "group-key"}
+	runner := NewChannelMonitorV3ProbeRunner(NewChannelMonitorV3Service(&channelMonitorV3RepoStub{cfg: cfg}, nil), prober)
+	if err := runner.ProbeOnce(context.Background()); err != nil || prober.calls != 1 || prober.groupID != 7 {
+		t.Fatalf("expected only the configured group to run: calls=%v err=%v", prober.callsByGroup, err)
 	}
 }
 
 // 分组级 probe 存在就整份用分组级：endpoint / key / 模型都是这组自己的。
-func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
+func TestChannelMonitorV3GroupsUseSeparateIdentities(t *testing.T) {
 	cfg := enabledV3Config()
 	cfg.Groups = []ChannelMonitorV3Group{
-		{GroupID: 7, Enabled: true, ProbeEnabled: true},
+		cfg.Groups[0],
 		{
 			GroupID:      9,
 			Enabled:      true,
@@ -399,7 +369,7 @@ func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
 	repo := &channelMonitorV3RepoStub{cfg: cfg}
 	prober := &channelMonitorV3ProberStub{
 		keysByCiphertext: map[string]string{
-			"ciphertext":     "global-plain-key",
+			"ciphertext":     "first-group-key",
 			"gpt-ciphertext": "gpt-plain-key",
 		},
 		result: []ChannelMonitorV3ProbeSample{{Success: true, CheckedAt: time.Now().UTC()}},
@@ -410,9 +380,9 @@ func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
 		t.Fatalf("probe once: %v", err)
 	}
 
-	global := prober.probeByGroup[7]
-	if global.Endpoint != "https://api.openai.com" || global.APIKeyEncrypted != "global-plain-key" {
-		t.Fatalf("group 7 must keep the global identity, got %+v", global)
+	first := prober.probeByGroup[7]
+	if first.Endpoint != "https://api.openai.com" || first.APIKeyEncrypted != "first-group-key" {
+		t.Fatalf("group 7 must keep its own identity, got %+v", first)
 	}
 	own := prober.probeByGroup[9]
 	if own.Endpoint != "https://api.anthropic.com" {
@@ -429,7 +399,7 @@ func TestChannelMonitorV3GroupProbeOverridesGlobal(t *testing.T) {
 	}
 	// 组级 models 为空时用组级 probe 的 primary+extra，而不是全局的模型。
 	if got := prober.modelsByGroup[7]; len(got) != 1 || got[0] != "claude-sonnet-4" {
-		t.Fatalf("group 7 must probe the global identity models, got %v", got)
+		t.Fatalf("group 7 must probe its own identity models, got %v", got)
 	}
 }
 

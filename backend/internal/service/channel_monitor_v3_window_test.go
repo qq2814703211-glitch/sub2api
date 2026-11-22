@@ -148,23 +148,15 @@ func TestChannelMonitorV3DeriveScopeCarriesMinuteWindow(t *testing.T) {
 	}
 }
 
-// 分组 probe 归一化：完全空的 probe 清成零值（继承全局）；填了一半必须报错，
-// 不能悄悄变成「用全局 endpoint 打分组自己的 key」。
 func TestChannelMonitorV3GroupProbeNormalization(t *testing.T) {
-	// 空 probe = 继承全局。
 	cfg := enabledV3Config()
-	cfg.Groups = []ChannelMonitorV3Group{{
-		GroupID: 7, Enabled: true, ProbeEnabled: true,
-		Probe: ChannelMonitorV3Probe{ExtraModels: []string{"  ", ""}},
-	}}
+	cfg.Groups[0].Probe = ChannelMonitorV3Probe{}
+	if err := normalizeChannelMonitorV3Config(cfg); !errors.Is(err, ErrChannelMonitorV3InvalidConfig) || !strings.Contains(err.Error(), "group 7") {
+		t.Fatalf("active group without identity: %v", err)
+	}
+	cfg.Groups[0].ProbeEnabled = false
 	if err := normalizeChannelMonitorV3Config(cfg); err != nil {
-		t.Fatalf("an inherited probe must normalize cleanly: %v", err)
-	}
-	if cfg.Groups[0].HasOwnProbe() {
-		t.Fatal("an empty group probe must mean 'inherit the global one'")
-	}
-	if cfg.Groups[0].Probe.Endpoint != "" || cfg.Groups[0].Probe.PrimaryModel != "" {
-		t.Fatalf("an inherited probe must not keep stray fields, got %+v", cfg.Groups[0].Probe)
+		t.Fatalf("passive-only group should not need an identity: %v", err)
 	}
 
 	// 只填 endpoint、没有 model：无法独立成一次探测，必须拒绝。
@@ -207,7 +199,7 @@ func TestChannelMonitorV3GroupProbeNormalization(t *testing.T) {
 	}
 }
 
-// 响应里不能回传任何密文；每组的 api_key_set / probe_inherited 必须逐组给出。
+// 响应里不能回传任何密文；每组的 api_key_set 必须逐组给出。
 func TestChannelMonitorV3RedactHidesEveryGroupKey(t *testing.T) {
 	cfg := enabledV3Config()
 	cfg.Groups = []ChannelMonitorV3Group{
@@ -222,9 +214,6 @@ func TestChannelMonitorV3RedactHidesEveryGroupKey(t *testing.T) {
 	}
 	redacted := redactChannelMonitorV3Config(cfg)
 
-	if redacted.Probe.APIKeyEncrypted != "" {
-		t.Fatalf("the global ciphertext must never be returned, got %q", redacted.Probe.APIKeyEncrypted)
-	}
 	for _, group := range redacted.Groups {
 		if group.Probe.APIKeyEncrypted != "" {
 			t.Fatalf("group %d ciphertext must never be returned, got %q",
@@ -234,14 +223,8 @@ func TestChannelMonitorV3RedactHidesEveryGroupKey(t *testing.T) {
 	if !redacted.Groups[0].APIKeySet {
 		t.Fatal("a group with a stored key must report api_key_set=true")
 	}
-	if redacted.Groups[0].ProbeInherited {
-		t.Fatal("a group with its own probe identity must not report as inherited")
-	}
 	if redacted.Groups[1].APIKeySet {
 		t.Fatal("a group without its own key must report api_key_set=false")
-	}
-	if !redacted.Groups[1].ProbeInherited {
-		t.Fatal("a group without its own identity must report as inherited")
 	}
 }
 
@@ -272,7 +255,7 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 			},
 		},
 	}
-	if _, err := svc.UpdateConfig(context.Background(), next, "", nil, existing.Version, 1); err != nil {
+	if _, err := svc.UpdateConfig(context.Background(), next, nil, existing.Version, 1); err != nil {
 		t.Fatalf("update without a new key: %v", err)
 	}
 	if got := repo.lastUpdate.Groups[0].Probe.APIKeyEncrypted; got != "enc:old-group-key" {
@@ -293,7 +276,7 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 			},
 		},
 	}
-	if _, err := svc.UpdateConfig(context.Background(), next2, "",
+	if _, err := svc.UpdateConfig(context.Background(), next2,
 		map[int64]string{7: "brand-new-key"}, repo.lastUpdate.Version, 1); err != nil {
 		t.Fatalf("update with a new group key: %v", err)
 	}
@@ -302,36 +285,14 @@ func TestChannelMonitorV3UpdateConfigKeepsPerGroupKeys(t *testing.T) {
 	}
 }
 
-// 分组重新变回「继承全局」时，不能留着上一份密文 —— 否则页面会显示这组配过 key。
-func TestChannelMonitorV3UpdateConfigClearsGroupKeyWhenInherited(t *testing.T) {
-	enc := stubV3Encryptor{prefix: "enc:"}
+func TestChannelMonitorV3CannotClearActiveGroupIdentity(t *testing.T) {
 	existing := enabledV3Config()
-	existing.Groups = []ChannelMonitorV3Group{
-		{
-			GroupID: 7, Enabled: true, ProbeEnabled: true,
-			Probe: ChannelMonitorV3Probe{
-				Endpoint: "https://api.openai.com", APIKeyEncrypted: "enc:old-group-key",
-				PrimaryModel: "gpt-5", Provider: MonitorProviderOpenAI, IntervalSeconds: 300,
-			},
-		},
-	}
 	repo := &channelMonitorV3RepoStub{cfg: existing}
-	svc := NewChannelMonitorV3Service(repo, enc)
-
 	next := *existing
 	next.Groups = []ChannelMonitorV3Group{{GroupID: 7, Enabled: true, ProbeEnabled: true}}
-	if _, err := svc.UpdateConfig(context.Background(), next, "", nil, existing.Version, 1); err != nil {
-		t.Fatalf("update back to inherited: %v", err)
-	}
-	if got := repo.lastUpdate.Groups[0].Probe.APIKeyEncrypted; got != "" {
-		t.Fatalf("an inherited group must not keep a stale key, got %q", got)
-	}
-	if !repo.lastUpdate.Groups[0].ProbeInherited && repo.lastUpdate.Groups[0].HasOwnProbe() {
-		t.Fatal("the group must be reported as inherited")
-	}
-	// 全局 key 不受影响。
-	if got := repo.lastUpdate.Probe.APIKeyEncrypted; got != "ciphertext" {
-		t.Fatalf("the global key must be untouched, got %q", got)
+	_, err := NewChannelMonitorV3Service(repo, nil).UpdateConfig(context.Background(), next, nil, existing.Version, 1)
+	if !errors.Is(err, ErrChannelMonitorV3InvalidConfig) || repo.updates != 0 {
+		t.Fatalf("missing active probe must not overwrite stored config: %v", err)
 	}
 }
 

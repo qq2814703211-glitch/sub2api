@@ -32,7 +32,6 @@ func (r *v3HandlerRepoStub) GetConfig(context.Context) (*service.ChannelMonitorV
 	if r.cfg == nil {
 		return &service.ChannelMonitorV3Config{
 			Version: 1,
-			Probe:   service.ChannelMonitorV3Probe{ExtraModels: []string{}},
 			Groups:  []service.ChannelMonitorV3Group{},
 		}, nil
 	}
@@ -108,14 +107,6 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 	body := map[string]any{
 		"version": 1,
 		"enabled": true,
-		"probe": map[string]any{
-			"endpoint":         "https://api.openai.com",
-			"provider":         "anthropic",
-			"primary_model":    "claude-sonnet-4",
-			"extra_models":     []string{},
-			"interval_seconds": 300,
-		},
-		"api_key": "global-key",
 		"groups": []map[string]any{
 			{
 				"group_id":      42,
@@ -153,7 +144,6 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 	// 分组级探针原样落库，并各自加密。
 	require.Equal(t, "https://api.anthropic.com", saved.Groups[0].Probe.Endpoint)
 	require.Equal(t, "enc:group-key", saved.Groups[0].Probe.APIKeyEncrypted)
-	require.Equal(t, "enc:global-key", saved.Probe.APIKeyEncrypted)
 	// 分钟窗口穿过 DTO 被保存。
 	require.Equal(t, 30, saved.CacheAverageWindowValue)
 	require.Equal(t, service.ChannelMonitorV3WindowUnitMinute, saved.CacheAverageWindowUnit)
@@ -164,20 +154,24 @@ func TestChannelMonitorV3UpdateEndpointParsesPerGroupKeys(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"api_key_set":true`)
 }
 
+func TestChannelMonitorV3UpdateEndpointRejectsSharedProbe(t *testing.T) {
+	repo := &v3HandlerRepoStub{}
+	router := newV3UpdateRouter(repo)
+	body := []byte(`{"version":1,"groups":[{"group_id":42,"enabled":true,"probe_enabled":true}],"probe":{"endpoint":"https://example.com","primary_model":"shared"}}`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/admin/channel-monitor-v3/config", bytes.NewReader(body)))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "configure the probe and key for each group")
+	require.Zero(t, repo.updates)
+}
+
 func TestChannelMonitorV3UpdateEndpointRejectsOverlongWindow(t *testing.T) {
 	repo := &v3HandlerRepoStub{}
 	router := newV3UpdateRouter(repo)
 
 	body := map[string]any{
-		"version": 1,
-		"enabled": true,
-		"probe": map[string]any{
-			"endpoint":         "https://api.openai.com",
-			"provider":         "anthropic",
-			"primary_model":    "claude-sonnet-4",
-			"extra_models":     []string{},
-			"interval_seconds": 300,
-		},
+		"version":                    1,
+		"enabled":                    true,
 		"groups":                     []map[string]any{{"group_id": 42, "enabled": true, "models": []string{}, "probe_enabled": true}},
 		"cache_average_window_value": 129601,
 		"cache_average_window_unit":  "minute",
