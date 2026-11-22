@@ -6,18 +6,52 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
+
+// The ledger commits on its own connections, so a rollback around the test
+// cannot isolate its groups, outbox events and charge records from other suites.
+func newCustomerMediaTariffDB(t *testing.T) (*sql.DB, *dbent.Client) {
+	t.Helper()
+	name := "media_tariff_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quoted := pq.QuoteIdentifier(name)
+	dsn := integrationDSN
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		var err error
+		dsn, err = pq.ParseURL(dsn)
+		require.NoError(t, err)
+	}
+	_, err := integrationDB.Exec("CREATE DATABASE " + quoted + " TEMPLATE template0")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := integrationDB.Exec("DROP DATABASE " + quoted)
+		require.NoError(t, err)
+	})
+	db, err := sql.Open("postgres", dsn+" dbname="+name)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var actual string
+	require.NoError(t, db.QueryRow("SELECT current_database()").Scan(&actual))
+	require.Equal(t, name, actual)
+	require.NoError(t, ApplyMigrations(context.Background(), db))
+	return db, dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+}
 
 // Use separate selling and reporting cards on the same successful outputs. A
 // missing selling dimension holds the event; a missing reporting dimension does not.
 func TestCustomerMediaTariffPostgres(t *testing.T) {
+	db, client := newCustomerMediaTariffDB(t)
 	no := false
 	audio := service.MediaPricingConditions{Audio: &no}
 	layer := service.MediaPricingConditions{Layer: &no}
@@ -37,7 +71,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			client := testEntClient(t)
+
 			id := uuid.NewString()
 			const sku = "qa-media-card"
 			platform := service.PlatformOpenAI
@@ -49,7 +83,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 					MediaPricing: &service.MediaPricing{Rules: []service.MediaPricingRule{{Name: name, Unit: "image", Price: &p, Conditions: dims}}}}
 			}
 			u := mustCreateUser(t, client, &service.User{Email: id + "@example.invalid", PasswordHash: "disabled", Balance: 100})
-			groups := NewGroupRepository(client, integrationDB)
+			groups := NewGroupRepository(client, db)
 			sale := card("sale", tc.price, tc.sale)
 			if tc.generic {
 				inPrice, outPrice := .02, .03
@@ -63,7 +97,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 			k.Group, err = groups.GetByIDLite(ctx, g.ID)
 			require.NoError(t, err)
 			a := mustCreateAccount(t, client, &service.Account{Name: id, Type: service.AccountTypeAPIKey, Platform: g.Platform})
-			channels := NewChannelRepository(integrationDB)
+			channels := NewChannelRepository(db)
 			ch := &service.Channel{Name: id, Status: service.StatusActive, BillingModelSource: service.BillingModelSourceRequested, GroupIDs: []int64{g.ID},
 				AccountStatsPricingRules: []service.AccountStatsPricingRule{{Name: "report", AccountIDs: []int64{a.ID}, GroupIDs: []int64{}, Pricing: []service.ChannelModelPricing{card("report", .11, tc.stats)}}}}
 			require.NoError(t, channels.Create(ctx, ch))
@@ -75,8 +109,8 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 			require.NoError(t, ps.ForceUpdate())
 			bill := service.NewBillingService(cfg, ps)
 			cs := service.NewChannelService(channels, groups, nil, ps, nil)
-			logs := NewUsageLogRepository(client, integrationDB)
-			ledger := NewUsageBillingRepository(client, integrationDB)
+			logs := NewUsageLogRepository(client, db)
+			ledger := NewUsageBillingRepository(client, db)
 			resolver := service.NewModelPricingResolver(cs, bill)
 			oa := service.NewOpenAIGatewayService(nil, logs, ledger, nil, nil, nil, nil, cfg, nil, nil, bill, nil, nil, nil, &service.DeferredService{}, nil, nil, resolver, cs, nil, nil, nil)
 			zero := 0
@@ -98,7 +132,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 				t.Helper()
 				var bal, used float64
 				var n, d, h, s int
-				err := integrationDB.QueryRow(`SELECT u.balance,k.quota_used,
+				err := db.QueryRow(`SELECT u.balance,k.quota_used,
  (SELECT count(*) FROM usage_logs WHERE api_key_id=k.id AND request_id=$2),
  (SELECT count(*) FROM usage_billing_dedup WHERE api_key_id=k.id AND request_id=$2),
  (SELECT count(*) FROM ops_error_logs WHERE api_key_id=k.id AND request_id=$2 AND error_type='tariff_unsettled' AND NOT resolved),
@@ -125,7 +159,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 				h = 1
 				var raw, reason string
 				var owners [4]int64
-				require.NoError(t, integrationDB.QueryRow(`SELECT error_body,error_message,user_id,api_key_id,account_id,group_id FROM ops_error_logs WHERE request_id=$1 AND api_key_id=$2 AND error_type='tariff_unsettled'`, id, k.ID).Scan(&raw, &reason, &owners[0], &owners[1], &owners[2], &owners[3]))
+				require.NoError(t, db.QueryRow(`SELECT error_body,error_message,user_id,api_key_id,account_id,group_id FROM ops_error_logs WHERE request_id=$1 AND api_key_id=$2 AND error_type='tariff_unsettled'`, id, k.ID).Scan(&raw, &reason, &owners[0], &owners[1], &owners[2], &owners[3]))
 				require.Equal(t, [4]int64{u.ID, k.ID, a.ID, g.ID}, owners)
 				require.Contains(t, reason, "audio")
 				require.Contains(t, reason, "sale")
@@ -174,7 +208,7 @@ func TestCustomerMediaTariffPostgres(t *testing.T) {
 			var actual, total float64
 			var report sql.NullFloat64
 			var images, in, out int
-			require.NoError(t, integrationDB.QueryRow(`SELECT actual_cost,total_cost,account_stats_cost,image_count,input_tokens,output_tokens FROM usage_logs WHERE request_id=$1 AND api_key_id=$2`, id, k.ID).Scan(&actual, &total, &report, &images, &in, &out))
+			require.NoError(t, db.QueryRow(`SELECT actual_cost,total_cost,account_stats_cost,image_count,input_tokens,output_tokens FROM usage_logs WHERE request_id=$1 AND api_key_id=$2`, id, k.ID).Scan(&actual, &total, &report, &images, &in, &out))
 			wantImages, wantTotal := 2, tc.price*2
 			if tc.generic {
 				wantImages, wantTotal = 0, .43
