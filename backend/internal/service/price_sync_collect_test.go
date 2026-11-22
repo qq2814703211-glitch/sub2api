@@ -71,7 +71,10 @@ func TestPriceSyncV2CollectSnapshot(t *testing.T) {
 	q := got.Quotes["claude-opus-4-8"]
 	require.Equal(t, "anthropic", q.Provider, "Azure is a reseller of this exact ID")
 	require.Empty(t, q.Tiers, "no Azure-specific context tier in Anthropic's tariff")
-	require.NotContains(t, q.Rates, "cache_creation_input_token_cost_above_1hr")
+	// Anthropic publishes a 1-hour cache write at 2x the base input rate while
+	// models.dev only carries the 5-minute component; the collector fills that
+	// published multiple so 1h cache usage stays quotable.
+	require.Equal(t, 2*q.Rates["input_cost_per_token"], q.Rates["cache_creation_input_token_cost_above_1hr"])
 	require.NotContains(t, got.Quotes, "gpt-6.2-sol")
 	require.Contains(t, got.Problems["gpt-6.2-sol"], "no complete OpenAI API Standard official quote")
 	require.Contains(t, got.Problems["gpt-6.2-sol"], "no fixture for "+officialOpenAIURL)

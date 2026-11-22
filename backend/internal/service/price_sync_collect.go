@@ -179,6 +179,7 @@ func (c *priceSyncV2Collector) readRegistry(ctx context.Context, fetcher modelPr
 			}
 			quote := PriceSyncQuote{Model: model, Provider: providerID, Currency: currency,
 				SourceURL: endpoint, Evidence: evidence + " " + providerID + "/" + sourceID, VerifiedAt: verifiedAt}
+			priceSyncV2ApplyPublishedCacheWrite1h(providerID, row.Cost)
 			if err := priceSyncV2DecodeTariff(&quote, row.Cost); err != nil {
 				c.reject(model, quote.Evidence+": "+err.Error())
 				continue
