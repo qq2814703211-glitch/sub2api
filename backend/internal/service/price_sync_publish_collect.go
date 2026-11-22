@@ -110,6 +110,7 @@ func (s *ModelPricingSyncService) syncPublished(ctx context.Context) (applied in
 				m.Issue = ""
 				changed = true
 			}
+			keepRestoreProjection := m.Mode == "auto" && m.PreserveRestoreProjection && samePriceSyncTariff(m.Auto, &q)
 			if !priceSyncEqual(m.Auto, q) {
 				m.Auto = &q
 				changed = true
@@ -125,14 +126,21 @@ func (s *ModelPricingSyncService) syncPublished(ctx context.Context) (applied in
 				if !p.AutoRestore {
 					continue
 				}
-				if e := restorePriceSync(k, m, now); e != nil {
+				if e := restorePriceSync(k, m, now, h.Entries[k], p); e != nil {
 					continue
 				}
 				delete(h.Settings.ManualOverrides, k)
 				changed = true
 			} else {
 				m.Mode = "auto"
-				m.Effective = m.Auto
+				if keepRestoreProjection {
+					effective := *m.Auto
+					effective.Rates, effective.Tiers = m.Effective.Rates, m.Effective.Tiers
+					m.Effective = &effective
+				} else {
+					m.Effective = m.Auto
+					m.PreserveRestoreProjection = false
+				}
 			}
 			// A verified quote replaces the whole row, including a prior legacy
 			// quarantine marker. Clear the policy state in the same revision.
@@ -140,6 +148,9 @@ func (s *ModelPricingSyncService) syncPublished(ctx context.Context) (applied in
 				m.LegacyAuto = false
 				m.LegacyQuarantine = nil
 				changed = true
+			}
+			if m.preserveLegacyRestoreEntry(h.Entries[k]) {
+				continue
 			}
 			row, e := priceSyncRender(h.Entries[k], m.Effective, nil, m.NativeCNY)
 			if e != nil {
