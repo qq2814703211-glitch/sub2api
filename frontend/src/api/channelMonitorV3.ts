@@ -17,8 +17,6 @@ export interface ChannelMonitorV3ProbeConfig {
   primary_model: string
   extra_models: string[]
   interval_seconds: number
-  /** Ciphertext is never returned by the API; this key only exists on writes. */
-  api_key_encrypted?: string
 }
 
 /** Cache-window units accepted by the backend. */
@@ -29,16 +27,10 @@ export interface ChannelMonitorV3GroupConfig {
   enabled: boolean
   models: string[]
   probe_enabled: boolean
-  /**
-   * Per-group probe identity. An empty endpoint + primary_model means "inherit
-   * the global probe": every group used to share one key, but each group holds
-   * different models and therefore needs its own key.
-   */
+  /** Only used by this group. */
   probe?: ChannelMonitorV3ProbeConfig
   /** Derived: this group has its own stored key. The key itself is never sent. */
   api_key_set?: boolean
-  /** Derived: this group still inherits the global probe identity. */
-  probe_inherited?: boolean
 }
 
 export interface ChannelMonitorV3Config {
@@ -46,7 +38,6 @@ export interface ChannelMonitorV3Config {
   /** V3 master switch. It controls V3 only. */
   enabled: boolean
   groups: ChannelMonitorV3GroupConfig[]
-  probe: ChannelMonitorV3ProbeConfig
   /**
    * Look-back window for the real-traffic cache average (ADR 0009).
    * `cache_average_window_value` + `cache_average_window_unit` is authoritative;
@@ -57,13 +48,9 @@ export interface ChannelMonitorV3Config {
   cache_average_window_unit?: ChannelMonitorV3WindowUnit
   updated_at?: string
   updated_by?: number
-  /** Derived flag: whether a probe key is stored. The key itself is never sent. */
-  api_key_set?: boolean
 }
 
 export interface ChannelMonitorV3ConfigPayload extends ChannelMonitorV3Config {
-  /** Plain key on write; empty means "keep the stored key". */
-  api_key?: string
   /** Per-group plain keys keyed by group id; empty/missing means "keep stored". */
   group_api_keys?: Record<string, string>
 }

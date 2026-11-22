@@ -135,10 +135,7 @@ func (c ChannelMonitorV3Config) CacheAverageWindowMinutes() int {
 //
 // Models 为空表示「该分组不按模型拆分」，只有 ProbeEnabled 的分组才会被主动探针填充。
 //
-// Probe 是该分组专属的探针身份。零值表示「继承配置根上的全局 Probe」——
-// 升级前的配置只有全局那份，靠这条回落规则行为完全不变。每个分组的可用 key 和
-// 模型本来就不同（一个 key 通吃所有分组时，只有碰巧支持全部模型的那把能跑），
-// 所以真正上线多分组时必须能各配各的。
+// Probe 只用于当前分组；未配置不会借用其他分组的身份。
 type ChannelMonitorV3Group struct {
 	GroupID      int64                 `json:"group_id"`
 	Enabled      bool                  `json:"enabled"`
@@ -147,37 +144,18 @@ type ChannelMonitorV3Group struct {
 	Probe        ChannelMonitorV3Probe `json:"probe"`
 	// APIKeySet 是响应侧派生字段：该分组是否配了自己的探针 key。不回传密文。
 	APIKeySet bool `json:"api_key_set"`
-	// ProbeInherited 是响应侧派生字段：该分组是否仍在继承全局探针身份。
-	// 前端据此显示「继承全局配置」而不是让管理员以为这里已经配过了。
-	ProbeInherited bool `json:"probe_inherited"`
-}
-
-// ResolveProbe 返回该分组实际生效的探针身份。
-//
-// 分组级配置存在（endpoint 与 primary_model 都有值）就整份用分组级的；否则回落到
-// 全局那份。刻意不做字段级合并：一个分组配了 endpoint 但没配 key 却借用全局 key，
-// 会去用别的分组的凭证打另一个上游，这种「半继承」在排查时会非常难解释。
-func (g ChannelMonitorV3Group) ResolveProbe(global ChannelMonitorV3Probe) ChannelMonitorV3Probe {
-	if !g.HasOwnProbe() {
-		return global
-	}
-	return g.Probe
 }
 
 // HasOwnProbe 报告分组是否配了自己的探针身份。
 //
-// 判据是 endpoint + primary_model：这两个字段是「打哪个上游、打哪个模型」的最小
-// 完整信息，缺任一都无法单独成一次探测。只判 key 会把「换了个 key 但没换 endpoint」
-// 误判成继承，从而用全局 endpoint 打分组自己的 key。
+// endpoint 与 primary_model 一起确定该分组的探测目标。
 func (g ChannelMonitorV3Group) HasOwnProbe() bool {
 	return strings.TrimSpace(g.Probe.Endpoint) != "" && strings.TrimSpace(g.Probe.PrimaryModel) != ""
 }
 
-// EffectiveIntervalSeconds 返回该分组的探测间隔：自带配置优先，否则用全局。
-func (g ChannelMonitorV3Group) EffectiveIntervalSeconds(global ChannelMonitorV3Probe) int {
-	probe := g.ResolveProbe(global)
-	if probe.IntervalSeconds > 0 {
-		return probe.IntervalSeconds
+func (g ChannelMonitorV3Group) EffectiveIntervalSeconds() int {
+	if g.Probe.IntervalSeconds > 0 {
+		return g.Probe.IntervalSeconds
 	}
 	return ChannelMonitorV3DefaultIntervalSeconds
 }
@@ -199,9 +177,6 @@ type ChannelMonitorV3Config struct {
 	Version int                     `json:"version"`
 	Enabled bool                    `json:"enabled"`
 	Groups  []ChannelMonitorV3Group `json:"groups"`
-	// Probe 是全局探针身份。它有两个作用：老配置（分组里没有 probe）的回落默认值，
-	// 以及页面上「所有分组共用一个身份」时的唯一配置点。
-	Probe ChannelMonitorV3Probe `json:"probe"`
 	// CacheAverageWindowDays 是老字段，只为兼容旧客户端与旧数据保留。
 	// 新代码一律读 CacheWindow()。
 	CacheAverageWindowDays int `json:"cache_average_window_days"`
@@ -211,9 +186,6 @@ type ChannelMonitorV3Config struct {
 	CacheAverageWindowUnit  string    `json:"cache_average_window_unit"`
 	UpdatedAt               time.Time `json:"updated_at"`
 	UpdatedBy               *int64    `json:"updated_by,omitempty"`
-
-	// APIKeySet 是响应侧派生字段：全局探针 key 是否已配置。不回传密文本身。
-	APIKeySet bool `json:"api_key_set"`
 }
 
 // EnabledGroupIDs 返回所有启用分组的 ID（升序），V3 只监控这些分组。
@@ -349,13 +321,10 @@ func (s *ChannelMonitorV3Service) PublicStatus(ctx context.Context) (map[string]
 
 // UpdateConfig 校验并保存 V3 配置。
 //
-// plainAPIKey 非空时加密覆盖全局探针 key；groupAPIKeys 是「分组 id → 明文 key」，
-// 语义相同但作用于分组级探针。空 map / 缺项表示保留已存的密文，这样设置页不必回填
-// 明文，改一个分组的间隔也不会把其他分组的 key 抹掉。
+// groupAPIKeys 只覆盖对应分组的密钥；留空表示保留该分组原有密文。
 func (s *ChannelMonitorV3Service) UpdateConfig(
 	ctx context.Context,
 	cfg ChannelMonitorV3Config,
-	plainAPIKey string,
 	groupAPIKeys map[int64]string,
 	expectedVersion int,
 	actorID int64,
@@ -363,28 +332,10 @@ func (s *ChannelMonitorV3Service) UpdateConfig(
 	if err := normalizeChannelMonitorV3Config(&cfg); err != nil {
 		return nil, err
 	}
-	if err := validateChannelMonitorV3Probe(cfg.Probe.Endpoint, cfg.Probe.Provider, cfg.Probe.PrimaryModel, cfg.Probe.IntervalSeconds); err != nil {
-		return nil, err
-	}
 	existing, err := s.repo.GetConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	key := strings.TrimSpace(plainAPIKey)
-	switch {
-	case key != "":
-		encrypted, encErr := s.encryptSecret(key)
-		if encErr != nil {
-			return nil, encErr
-		}
-		cfg.Probe.APIKeyEncrypted = encrypted
-	case existing != nil:
-		// 未填新 key：沿用已存的密文，避免把已配置的探针身份清空。
-		cfg.Probe.APIKeyEncrypted = existing.Probe.APIKeyEncrypted
-	}
-
-	// 分组级 key 与全局同一套「空 = 保留」规则。按 group_id 对齐 existing，
-	// 这样前端只回传它改过的那些分组的 key。
 	existingKeys := map[int64]string{}
 	if existing != nil {
 		for _, g := range existing.Groups {
@@ -394,6 +345,9 @@ func (s *ChannelMonitorV3Service) UpdateConfig(
 	for i := range cfg.Groups {
 		group := &cfg.Groups[i]
 		if plain := strings.TrimSpace(groupAPIKeys[group.GroupID]); plain != "" {
+			if !group.HasOwnProbe() {
+				return nil, fmt.Errorf("%w: group %d needs its own probe before setting a key", ErrChannelMonitorV3InvalidConfig, group.GroupID)
+			}
 			encrypted, encErr := s.encryptSecret(plain)
 			if encErr != nil {
 				return nil, encErr
@@ -409,12 +363,8 @@ func (s *ChannelMonitorV3Service) UpdateConfig(
 		}
 	}
 
-	if cfg.Enabled {
-		// 开启 V3 必须有一条可用的探针身份或至少一个分组；否则开启后什么也不会跑，
-		// 页面却是「已启用」，比直接报错更难排查。
-		if len(cfg.EnabledGroupIDs()) == 0 {
-			return nil, fmt.Errorf("%w: at least one enabled group is required", ErrChannelMonitorV3InvalidConfig)
-		}
+	if cfg.Enabled && len(cfg.EnabledGroupIDs()) == 0 {
+		return nil, fmt.Errorf("%w: at least one enabled group is required", ErrChannelMonitorV3InvalidConfig)
 	}
 	cfg.UpdatedBy = &actorID
 	updated, err := s.repo.UpdateConfig(ctx, cfg, expectedVersion)
@@ -424,7 +374,7 @@ func (s *ChannelMonitorV3Service) UpdateConfig(
 	return redactChannelMonitorV3Config(updated), nil
 }
 
-// encryptSecret 加密一条明文 key，供全局与分组级共用。
+// encryptSecret 加密分组的明文 key。
 func (s *ChannelMonitorV3Service) encryptSecret(plain string) (string, error) {
 	if s.encryptor == nil {
 		return "", fmt.Errorf("%w: secret encryptor unavailable", ErrChannelMonitorV3InvalidConfig)
@@ -446,13 +396,8 @@ func redactChannelMonitorV3Config(cfg *ChannelMonitorV3Config) *ChannelMonitorV3
 	if cfg == nil {
 		return nil
 	}
-	cfg.APIKeySet = strings.TrimSpace(cfg.Probe.APIKeyEncrypted) != ""
-	cfg.Probe.APIKeyEncrypted = ""
 	if cfg.Groups == nil {
 		cfg.Groups = []ChannelMonitorV3Group{}
-	}
-	if cfg.Probe.ExtraModels == nil {
-		cfg.Probe.ExtraModels = []string{}
 	}
 	for i := range cfg.Groups {
 		group := &cfg.Groups[i]
@@ -465,7 +410,6 @@ func redactChannelMonitorV3Config(cfg *ChannelMonitorV3Config) *ChannelMonitorV3
 		if group.Models == nil {
 			group.Models = []string{}
 		}
-		group.ProbeInherited = !group.HasOwnProbe()
 	}
 	window := cfg.CacheWindow()
 	cfg.CacheAverageWindowValue = window.Value
@@ -483,20 +427,6 @@ func normalizeChannelMonitorV3Config(cfg *ChannelMonitorV3Config) error {
 	cfg.CacheAverageWindowValue = window.Value
 	cfg.CacheAverageWindowUnit = window.Unit
 	cfg.CacheAverageWindowDays = window.LegacyDays()
-
-	if cfg.Probe.IntervalSeconds <= 0 {
-		cfg.Probe.IntervalSeconds = ChannelMonitorV3DefaultIntervalSeconds
-	}
-	if err := validateInterval(cfg.Probe.IntervalSeconds); err != nil {
-		return fmt.Errorf("%w: %s", ErrChannelMonitorV3InvalidConfig, err)
-	}
-	cfg.Probe.Endpoint = normalizeEndpoint(cfg.Probe.Endpoint)
-	cfg.Probe.Provider = strings.TrimSpace(cfg.Probe.Provider)
-	if cfg.Probe.Provider == "" {
-		cfg.Probe.Provider = MonitorProviderAnthropic
-	}
-	cfg.Probe.PrimaryModel = strings.TrimSpace(cfg.Probe.PrimaryModel)
-	cfg.Probe.ExtraModels = normalizeStringSet(cfg.Probe.ExtraModels)
 
 	groups := make([]ChannelMonitorV3Group, 0, len(cfg.Groups))
 	seen := make(map[int64]struct{}, len(cfg.Groups))
@@ -521,8 +451,7 @@ func normalizeChannelMonitorV3Config(cfg *ChannelMonitorV3Config) error {
 
 // normalizeChannelMonitorV3GroupProbe 归一化分组级探针身份。
 //
-// 完全空的 probe（老配置）保持零值，代表「继承全局」；一旦填了任何字段就必须是
-// 一份完整的身份，否则会掉进「半继承」——用 A 组的 endpoint 配 B 组的 key。
+// 只看真实流量的分组可以不配置探针。
 func normalizeChannelMonitorV3GroupProbe(g *ChannelMonitorV3Group) error {
 	probe := &g.Probe
 	probe.Endpoint = normalizeEndpoint(probe.Endpoint)
@@ -531,7 +460,9 @@ func normalizeChannelMonitorV3GroupProbe(g *ChannelMonitorV3Group) error {
 	probe.ExtraModels = normalizeStringSet(probe.ExtraModels)
 
 	if probe.Endpoint == "" && probe.PrimaryModel == "" {
-		// 老配置：整份清空，明确表达「继承全局」。
+		if g.Enabled && g.ProbeEnabled {
+			return fmt.Errorf("%w: group %d requires its own probe endpoint and primary_model", ErrChannelMonitorV3InvalidConfig, g.GroupID)
+		}
 		g.Probe = ChannelMonitorV3Probe{ExtraModels: []string{}}
 		return nil
 	}

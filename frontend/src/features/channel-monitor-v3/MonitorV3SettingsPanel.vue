@@ -82,54 +82,6 @@
         </div>
       </div>
 
-      <!-- Global probe identity: the default every group inherits. -->
-      <div class="card !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
-        <div class="border-b border-gray-100 px-5 py-4 dark:border-dark-700">
-          <strong class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV3.admin.probeTitle') }}</strong>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('channelMonitorV3.admin.probeHint') }}</p>
-        </div>
-        <div class="grid gap-4 px-5 py-4 sm:grid-cols-2">
-          <label class="block">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.endpoint') }}</span>
-            <input v-model.trim="draft.probe.endpoint" type="url" class="input mt-1 w-full text-sm" placeholder="https://api.example.com" />
-          </label>
-          <label class="block">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.provider') }}</span>
-            <Select v-model="draft.probe.provider" class="mt-1 w-full" :options="providerOptions" />
-          </label>
-          <label class="block">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.primaryModel') }}</span>
-            <input v-model.trim="draft.probe.primary_model" type="text" class="input mt-1 w-full text-sm" placeholder="claude-sonnet-4" />
-          </label>
-          <label class="block">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.interval') }}</span>
-            <input v-model.number="draft.probe.interval_seconds" type="number" min="15" max="3600" class="input mt-1 w-full text-sm" />
-          </label>
-          <label class="block sm:col-span-2">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.extraModels') }}</span>
-            <input
-              v-model.trim="extraModelsText"
-              type="text"
-              class="input mt-1 w-full text-sm"
-              :placeholder="t('channelMonitorV3.admin.extraModelsPlaceholder')"
-            />
-          </label>
-          <label class="block sm:col-span-2">
-            <span class="text-xs font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.apiKey') }}</span>
-            <input
-              v-model.trim="apiKeyInput"
-              type="password"
-              autocomplete="new-password"
-              class="input mt-1 w-full text-sm"
-              :placeholder="draft.api_key_set ? t('channelMonitorV3.admin.apiKeyKeep') : t('channelMonitorV3.admin.apiKeyPlaceholder')"
-            />
-            <span class="mt-1 block text-[11px] text-gray-500 dark:text-dark-400">
-              {{ draft.api_key_set ? t('channelMonitorV3.admin.apiKeyStored') : t('channelMonitorV3.admin.apiKeyMissing') }}
-            </span>
-          </label>
-        </div>
-      </div>
-
       <!-- Group picker: the only precondition for V3 is being checked here. -->
       <div class="card !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
@@ -179,9 +131,6 @@
                   <span v-if="row.deleted" class="text-red-600 dark:text-red-400">
                     {{ t('channelMonitorV3.admin.deletedGroupHint') }}
                   </span>
-                  <span v-else-if="row.entry.enabled" class="text-gray-500 dark:text-dark-400">
-                    {{ row.entry.probe_inherited === false ? t('channelMonitorV3.admin.groupProbeOwn') : t('channelMonitorV3.admin.groupProbeInherited') }}
-                  </span>
                 </div>
               </div>
               <template v-if="!row.deleted">
@@ -211,27 +160,11 @@
               </button>
             </div>
 
-            <!-- Per-group probe identity. Each group holds different models and
-                 therefore needs its own key; empty means "inherit the global one". -->
             <div
               v-if="!row.deleted && expandedGroups.has(row.id)"
               class="mt-3 rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3 dark:border-dark-600 dark:bg-dark-900/40"
               :data-group-probe-panel="row.id"
             >
-              <label class="mb-3 flex items-center gap-2 text-xs font-medium text-gray-700 dark:text-dark-200">
-                <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5"
-                  :checked="isInheriting(row)"
-                  :data-group-probe-inherit="row.id"
-                  @change="onInheritToggle(row, ($event.target as HTMLInputElement).checked)"
-                />
-                {{ t('channelMonitorV3.admin.groupProbeInheritToggle') }}
-                <span class="font-normal text-gray-500 dark:text-dark-400">
-                  {{ isInheriting(row) ? t('channelMonitorV3.admin.groupProbeInherited') : t('channelMonitorV3.admin.groupProbeOwn') }}
-                </span>
-              </label>
-
               <div class="grid gap-3 sm:grid-cols-2">
                 <label class="block">
                   <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.endpoint') }}</span>
@@ -239,7 +172,6 @@
                     v-model.trim="row.entry.probe!.endpoint"
                     type="url"
                     class="input mt-1 w-full text-sm"
-                    :disabled="isInheriting(row)"
                     placeholder="https://api.example.com"
                   />
                 </label>
@@ -249,7 +181,6 @@
                     v-model="row.entry.probe!.provider"
                     class="mt-1 w-full"
                     :options="providerOptions"
-                    :disabled="isInheriting(row)"
                   />
                 </label>
                 <label class="block">
@@ -258,7 +189,6 @@
                     v-model.trim="row.entry.probe!.primary_model"
                     type="text"
                     class="input mt-1 w-full text-sm"
-                    :disabled="isInheriting(row)"
                     placeholder="claude-sonnet-4"
                   />
                 </label>
@@ -267,15 +197,18 @@
                   <input
                     v-model.number="row.entry.probe!.interval_seconds"
                     type="number"
-                    min="0"
+                    min="15"
                     max="3600"
                     class="input mt-1 w-full text-sm"
-                    :disabled="isInheriting(row)"
-                    :placeholder="String(draft.probe.interval_seconds || 300)"
+                    placeholder="300"
                   />
                   <span class="mt-0.5 block text-[11px] text-gray-500 dark:text-dark-400">
                     {{ t('channelMonitorV3.admin.groupIntervalHint') }}
                   </span>
+                </label>
+                <label class="block sm:col-span-2">
+                  <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.extraModels') }}</span>
+                  <input v-model.trim="groupExtraModelsText[row.id]" type="text" class="input mt-1 w-full text-sm" :placeholder="t('channelMonitorV3.admin.extraModelsPlaceholder')" />
                 </label>
                 <label class="block sm:col-span-2">
                   <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">{{ t('channelMonitorV3.admin.groupModels') }}</span>
@@ -283,7 +216,6 @@
                     v-model.trim="groupModelsText[row.id]"
                     type="text"
                     class="input mt-1 w-full text-sm"
-                    :disabled="isInheriting(row)"
                     :placeholder="t('channelMonitorV3.admin.groupModelsPlaceholder')"
                   />
                 </label>
@@ -294,7 +226,6 @@
                     type="password"
                     autocomplete="new-password"
                     class="input mt-1 w-full text-sm"
-                    :disabled="isInheriting(row)"
                     :placeholder="row.entry.api_key_set
                       ? t('channelMonitorV3.admin.groupApiKeyKeep')
                       : t('channelMonitorV3.admin.groupApiKeyMissing')"
@@ -357,8 +288,7 @@ const probing = ref(false)
 const draft = ref<ChannelMonitorV3Config | null>(null)
 const original = ref('')
 const candidates = ref<ChannelMonitorV3MonitorableGroup[]>([])
-const apiKeyInput = ref('')
-const extraModelsText = ref('')
+const groupExtraModelsText = reactive<Record<number, string>>({})
 const windowValue = ref(30)
 const windowUnit = ref<ChannelMonitorV3WindowUnit>('day')
 /** Groups whose probe block is expanded. */
@@ -411,7 +341,10 @@ const windowValid = computed(() => {
   return Number.isFinite(value) && value >= 1 && value <= windowMax.value
 })
 
-const dirty = computed(() => (draft.value ? serialize(draft.value) !== original.value : false))
+const dirty = computed(() => draft.value !== null && (
+  serialize(draft.value) !== original.value ||
+  groupRows.value.some((row) => row.entry.enabled && !!groupKeyInputs[row.id]?.trim())
+))
 
 interface GroupRow {
   id: number
@@ -428,31 +361,7 @@ function emptyProbe(): ChannelMonitorV3ProbeConfig {
     provider: 'anthropic',
     primary_model: '',
     extra_models: [],
-    interval_seconds: 0,
-  }
-}
-
-/** A group inherits the global probe until it has both an endpoint and a model. */
-function isInheriting(row: GroupRow): boolean {
-  const probe = row.entry.probe
-  return !probe || (!probe.endpoint && !probe.primary_model)
-}
-
-function onInheritToggle(row: GroupRow, useGlobal: boolean) {
-  if (useGlobal) {
-    row.entry.probe = emptyProbe()
-    groupKeyInputs[row.id] = ''
-    groupModelsText[row.id] = ''
-    return
-  }
-  // Seed from the global identity so the operator starts from something that works.
-  // A half-filled probe is rejected by the backend on purpose.
-  row.entry.probe = {
-    endpoint: draft.value?.probe.endpoint ?? '',
-    provider: draft.value?.probe.provider ?? 'anthropic',
-    primary_model: draft.value?.probe.primary_model ?? '',
-    extra_models: [...(draft.value?.probe.extra_models ?? [])],
-    interval_seconds: row.entry.probe?.interval_seconds || 0,
+    interval_seconds: 300,
   }
 }
 
@@ -491,7 +400,6 @@ function buildRows(config: ChannelMonitorV3Config, available: ChannelMonitorV3Mo
         probe_enabled: stored?.probe_enabled ?? true,
         probe: stored?.probe ? { ...stored.probe, extra_models: [...(stored.probe.extra_models ?? [])] } : emptyProbe(),
         api_key_set: stored?.api_key_set ?? false,
-        probe_inherited: stored?.probe_inherited ?? true,
       },
     })
     seen.add(candidate.id)
@@ -512,7 +420,6 @@ function buildRows(config: ChannelMonitorV3Config, available: ChannelMonitorV3Mo
         probe_enabled: false,
         probe: stored.probe ? { ...stored.probe, extra_models: [...(stored.probe.extra_models ?? [])] } : emptyProbe(),
         api_key_set: stored.api_key_set ?? false,
-        probe_inherited: stored.probe_inherited ?? true,
       },
     })
   }
@@ -537,19 +444,9 @@ function removeDeletedGroup(groupID: number) {
 }
 
 function serialize(config: ChannelMonitorV3Config): string {
-  // api_key / group keys / updated_at are intentionally excluded: keys are
-  // write-only and the timestamp changes on every save, so neither should mark
-  // the form dirty.
   return JSON.stringify({
     enabled: config.enabled,
     window: { value: windowValue.value, unit: windowUnit.value },
-    probe: {
-      endpoint: config.probe.endpoint,
-      provider: config.probe.provider,
-      primary_model: config.probe.primary_model,
-      extra_models: config.probe.extra_models,
-      interval_seconds: config.probe.interval_seconds,
-    },
     // Including the dangling set is what makes "remove a deleted group" a real
     // change: without it the row already dropped out of `groups`, so the form
     // would look untouched and the save button would stay disabled.
@@ -561,15 +458,13 @@ function serialize(config: ChannelMonitorV3Config): string {
       .map((row) => ({
         group_id: row.id,
         enabled: row.entry.enabled,
-        models: splitModels(groupModelsText[row.id]).length
-          ? splitModels(groupModelsText[row.id])
-          : row.entry.models,
+        models: splitModels(groupModelsText[row.id]),
         probe_enabled: row.entry.probe_enabled,
         probe: {
           endpoint: row.entry.probe?.endpoint ?? '',
           provider: row.entry.probe?.provider ?? '',
           primary_model: row.entry.probe?.primary_model ?? '',
-          extra_models: row.entry.probe?.extra_models ?? [],
+          extra_models: splitModels(groupExtraModelsText[row.id]),
           interval_seconds: row.entry.probe?.interval_seconds ?? 0,
         },
       }))
@@ -590,8 +485,6 @@ async function load() {
     const [config, groups] = await Promise.all([getV3Config(), listV3Groups()])
     draft.value = config
     candidates.value = groups
-    extraModelsText.value = (config.probe.extra_models ?? []).join(', ')
-    apiKeyInput.value = ''
     removedDangling.value = new Set()
     // The value+unit pair is authoritative; fall back to the legacy days field.
     if (config.cache_average_window_value && config.cache_average_window_unit) {
@@ -613,9 +506,11 @@ async function load() {
 
 /** Align the per-row text inputs with a freshly loaded/saved config. */
 function resetRowInputs(config: ChannelMonitorV3Config) {
+  for (const key of Object.keys(groupExtraModelsText)) delete groupExtraModelsText[Number(key)]
   for (const key of Object.keys(groupModelsText)) delete groupModelsText[Number(key)]
   for (const key of Object.keys(groupKeyInputs)) delete groupKeyInputs[Number(key)]
   for (const group of config.groups ?? []) {
+    groupExtraModelsText[group.group_id] = (group.probe?.extra_models ?? []).join(', ')
     groupModelsText[group.group_id] = (group.models ?? []).join(', ')
     groupKeyInputs[group.group_id] = ''
   }
@@ -630,11 +525,20 @@ async function save() {
     }))
     return
   }
+  const missing = groupRows.value.find(({ entry }) => entry.enabled && entry.probe_enabled &&
+    (!entry.probe?.endpoint || !entry.probe.primary_model))
+  if (missing) {
+    expandedGroups.value = new Set([...expandedGroups.value, missing.id])
+    appStore.showError(t('channelMonitorV3.admin.groupProbeRequired', { group: missing.name }))
+    return
+  }
   saving.value = true
   try {
     const groupAPIKeys: Record<string, string> = {}
     const payload = {
-      ...draft.value,
+      version: draft.value.version,
+      enabled: draft.value.enabled,
+      cache_average_window_days: draft.value.cache_average_window_days,
       // Only enabled groups belong in the stored config, and deleted entries are
       // dropped: they are shown so the operator can act on them, not to persist.
       groups: groupRows.value
@@ -642,38 +546,25 @@ async function save() {
         .map((row) => ({
           group_id: row.id,
           enabled: true,
-          models: splitModels(groupModelsText[row.id]).length
-            ? splitModels(groupModelsText[row.id])
-            : (row.entry.models ?? []),
+          models: splitModels(groupModelsText[row.id]),
           probe_enabled: row.entry.probe_enabled,
-          probe: isInheriting(row)
-            ? emptyProbe()
-            : {
-                endpoint: row.entry.probe!.endpoint,
-                provider: row.entry.probe!.provider,
-                primary_model: row.entry.probe!.primary_model,
-                extra_models: row.entry.probe!.extra_models ?? [],
-                interval_seconds: row.entry.probe!.interval_seconds || 0,
-              },
+          probe: {
+            ...row.entry.probe!,
+            extra_models: splitModels(groupExtraModelsText[row.id]),
+            interval_seconds: row.entry.probe!.interval_seconds || 300,
+          },
         }))
         .map((group) => {
           const key = (groupKeyInputs[group.group_id] ?? '').trim()
           if (key) groupAPIKeys[String(group.group_id)] = key
           return group
         }),
-      probe: {
-        ...draft.value.probe,
-        extra_models: splitModels(extraModelsText.value),
-      },
       cache_average_window_value: windowValue.value,
       cache_average_window_unit: windowUnit.value,
-      api_key: apiKeyInput.value,
       group_api_keys: groupAPIKeys,
     }
     const updated = await updateV3Config(payload)
     draft.value = updated
-    apiKeyInput.value = ''
-    extraModelsText.value = (updated.probe.extra_models ?? []).join(', ')
     removedDangling.value = new Set()
     if (updated.cache_average_window_value && updated.cache_average_window_unit) {
       windowValue.value = updated.cache_average_window_value

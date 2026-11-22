@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -38,22 +39,20 @@ func (h *ChannelMonitorV3Handler) GetConfig(c *gin.Context) {
 }
 
 type channelMonitorV3UpdateRequest struct {
-	Version int                             `json:"version"`
-	Enabled bool                            `json:"enabled"`
-	Groups  []service.ChannelMonitorV3Group `json:"groups"`
-	Probe   service.ChannelMonitorV3Probe   `json:"probe"`
-	APIKey  string                          `json:"api_key"`
-	// GroupAPIKeys 是「分组 id → 明文 key」，与 api_key 同一语义但作用于分组级
-	// 探针。string 键是 JSON 对象键的天然形态，服务层按 group_id 转换。
-	GroupAPIKeys            map[string]string `json:"group_api_keys"`
-	CacheAverageWindowDays  int               `json:"cache_average_window_days"`
-	CacheAverageWindowValue int               `json:"cache_average_window_value"`
-	CacheAverageWindowUnit  string            `json:"cache_average_window_unit"`
+	Version                 int                             `json:"version"`
+	Enabled                 bool                            `json:"enabled"`
+	Groups                  []service.ChannelMonitorV3Group `json:"groups"`
+	Probe                   json.RawMessage                 `json:"probe"`
+	APIKey                  string                          `json:"api_key"`
+	GroupAPIKeys            map[string]string               `json:"group_api_keys"`
+	CacheAverageWindowDays  int                             `json:"cache_average_window_days"`
+	CacheAverageWindowValue int                             `json:"cache_average_window_value"`
+	CacheAverageWindowUnit  string                          `json:"cache_average_window_unit"`
 }
 
 // UpdateConfig PUT /admin/channel-monitor-v3/config
 //
-// api_key / group_api_keys 为空表示保留已存的 key；非空则加密覆盖。响应里永远不回传密文。
+// group_api_keys 为空表示保留已存的 key；非空则加密覆盖。响应里永远不回传密文。
 func (h *ChannelMonitorV3Handler) UpdateConfig(c *gin.Context) {
 	var input channelMonitorV3UpdateRequest
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -63,6 +62,10 @@ func (h *ChannelMonitorV3Handler) UpdateConfig(c *gin.Context) {
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
 		response.Unauthorized(c, "user not found in context")
+		return
+	}
+	if len(input.Probe) != 0 || input.APIKey != "" {
+		response.BadRequest(c, "shared probe settings are no longer supported; configure the probe and key for each group")
 		return
 	}
 	groupKeys := make(map[int64]string, len(input.GroupAPIKeys))
@@ -77,11 +80,10 @@ func (h *ChannelMonitorV3Handler) UpdateConfig(c *gin.Context) {
 		Version:                 input.Version,
 		Enabled:                 input.Enabled,
 		Groups:                  input.Groups,
-		Probe:                   input.Probe,
 		CacheAverageWindowDays:  input.CacheAverageWindowDays,
 		CacheAverageWindowValue: input.CacheAverageWindowValue,
 		CacheAverageWindowUnit:  input.CacheAverageWindowUnit,
-	}, input.APIKey, groupKeys, input.Version, subject.UserID)
+	}, groupKeys, input.Version, subject.UserID)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrChannelMonitorV3ConfigConflict):

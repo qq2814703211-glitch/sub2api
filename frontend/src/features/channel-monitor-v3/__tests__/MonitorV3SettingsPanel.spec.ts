@@ -48,15 +48,9 @@ function config(overrides: Partial<ChannelMonitorV3Config> = {}): ChannelMonitor
     cache_average_window_days: 30,
     cache_average_window_value: 30,
     cache_average_window_unit: 'day',
-    groups: [{ group_id: 7, enabled: true, models: [], probe_enabled: true }],
-    probe: {
-      endpoint: 'https://api.example.com',
-      provider: 'anthropic',
-      primary_model: 'claude-sonnet-4',
-      extra_models: ['claude-haiku'],
-      interval_seconds: 60,
-    },
-    api_key_set: true,
+    groups: [{ group_id: 7, enabled: true, models: [], probe_enabled: true,
+      probe: { endpoint: 'https://api.example.com', provider: 'anthropic', primary_model: 'claude-sonnet-4', extra_models: ['claude-haiku'], interval_seconds: 60 },
+      api_key_set: true }],
     ...overrides,
   }
 }
@@ -95,10 +89,10 @@ describe('MonitorV3SettingsPanel', () => {
   it('still renders a fully editable form when V3 is disabled', async () => {
     const wrapper = await mountPanel(config({ enabled: false }))
 
-    // 不是空白页：开关、缓存窗口、探针、分组四块都在。
     expect(wrapper.text()).toContain('channelMonitorV3.admin.enableTitle')
     expect(wrapper.text()).toContain('channelMonitorV3.admin.cacheWindowTitle')
-    expect(wrapper.text()).toContain('channelMonitorV3.admin.probeTitle')
+    expect(wrapper.text()).not.toContain('channelMonitorV3.admin.probeTitle')
+    await wrapper.get('[data-group-probe-toggle="7"]').trigger('click')
     expect(wrapper.text()).toContain('channelMonitorV3.admin.groupsTitle')
     expect(wrapper.find('input[type="url"]').exists()).toBe(true)
     expect(wrapper.find('input[type="password"]').exists()).toBe(true)
@@ -128,13 +122,8 @@ describe('MonitorV3SettingsPanel', () => {
     expect(payload.cache_average_window_days).toBe(30)
     expect(payload.cache_average_window_value).toBe(30)
     expect(payload.cache_average_window_unit).toBe('day')
-    expect(payload.probe).toMatchObject({
-      endpoint: 'https://api.example.com',
-      provider: 'anthropic',
-      primary_model: 'claude-sonnet-4',
-      extra_models: ['claude-haiku'],
-      interval_seconds: 60,
-    })
+    expect(payload).not.toHaveProperty('probe')
+    expect(payload).not.toHaveProperty('api_key')
     expect(payload.groups).toEqual([
       expect.objectContaining({ group_id: 7, enabled: true, probe_enabled: true }),
     ])
@@ -159,7 +148,7 @@ describe('MonitorV3SettingsPanel', () => {
     const wrapper = await mountPanel(
       config({
         groups: [
-          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          config().groups[0],
           { group_id: 42, enabled: true, models: [], probe_enabled: true },
         ],
       }),
@@ -183,7 +172,7 @@ describe('MonitorV3SettingsPanel', () => {
     const wrapper = await mountPanel(
       config({
         groups: [
-          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          config().groups[0],
           { group_id: 42, enabled: true, models: [], probe_enabled: true },
         ],
       }),
@@ -203,7 +192,7 @@ describe('MonitorV3SettingsPanel', () => {
     const wrapper = await mountPanel(
       config({
         groups: [
-          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          config().groups[0],
           { group_id: 42, enabled: true, models: [], probe_enabled: true },
         ],
       }),
@@ -224,7 +213,7 @@ describe('MonitorV3SettingsPanel', () => {
     const wrapper = await mountPanel(
       config({
         groups: [
-          { group_id: 7, enabled: true, models: [], probe_enabled: true },
+          config().groups[0],
           { group_id: 42, enabled: true, models: [], probe_enabled: true },
           { group_id: 43, enabled: true, models: [], probe_enabled: true },
         ],
@@ -241,16 +230,22 @@ describe('MonitorV3SettingsPanel', () => {
 
   // ── L1-2：每组独立探针 ────────────────────────────────────────────────────
 
-  it('shows "inherits the global configuration" for a group without its own probe', async () => {
+  it('opens the affected group when an active probe is missing', async () => {
     const wrapper = await mountPanel(config())
+    await wrapper.get('[data-group-id="9"] [role="switch"]').trigger('click')
+    await saveButton(wrapper).trigger('click')
+    expect(mocks.updateV3Config).not.toHaveBeenCalled()
+    expect(mocks.showError).toHaveBeenCalledWith(expect.stringContaining('gpt-main'))
+    expect(wrapper.get('[data-group-probe-panel="9"] input[type="url"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
 
-    const row = wrapper.find('[data-group-id="7"]')
-    expect(row.text()).toContain('channelMonitorV3.admin.groupProbeInherited')
-    // 展开后默认是「使用全局探针」状态。
-    await row.find('[data-group-probe-toggle="7"]').trigger('click')
-    await flushPromises()
-    const inherit = wrapper.find('[data-group-probe-inherit="7"]').element as HTMLInputElement
-    expect(inherit.checked).toBe(true)
+  it('saves a key-only rotation for the selected group', async () => {
+    const wrapper = await mountPanel(config())
+    await wrapper.get('[data-group-probe-toggle="7"]').trigger('click')
+    await wrapper.get('input[type="password"]').setValue('rotated')
+    await saveButton(wrapper).trigger('click')
+    expect(mocks.updateV3Config).toHaveBeenCalledWith(expect.objectContaining({ group_api_keys: { '7': 'rotated' } }))
     wrapper.unmount()
   })
 
@@ -267,15 +262,10 @@ describe('MonitorV3SettingsPanel', () => {
     const panel = wrapper.find('[data-group-probe-panel="9"]')
     expect(panel.exists()).toBe(true)
 
-    // 关掉「使用全局探针」→ 从全局身份派生一份可编辑的初值，而不是空白半成品。
-    await wrapper.find('[data-group-probe-inherit="9"]').setValue(false)
-    await flushPromises()
-
-    // 重新取 panel：上一步触发了重渲染，先前抓的 wrapper 已失效。
-    const seededInputs = wrapper.find('[data-group-probe-panel="9"]').findAll('input')
-    const seededEndpoint = seededInputs.find((i) => i.attributes('type') === 'url')!
-    expect((seededEndpoint.element as HTMLInputElement).value).toBe('https://api.example.com')
-
+    const seededInputs = panel.findAll('input')
+    const seededEndpoint = panel.get('input[type="url"]')
+    expect((seededEndpoint.element as HTMLInputElement).value).toBe('')
+    await panel.get('input[placeholder="claude-sonnet-4"]').setValue('gpt-test')
     await seededEndpoint.setValue('https://gpt.example.com')
     const passwordInput = seededInputs.find((i) => i.attributes('type') === 'password')!
     await passwordInput.setValue('gpt-group-key')
@@ -295,12 +285,10 @@ describe('MonitorV3SettingsPanel', () => {
     wrapper.unmount()
   })
 
-  it('saves a per-group model list distinct from the global one', async () => {
+  it('saves a group model override independently of its primary model', async () => {
     const wrapper = await mountPanel(config())
 
     await wrapper.find('[data-group-probe-toggle="7"]').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-group-probe-inherit="7"]').setValue(false)
     await flushPromises()
 
     const panel = wrapper.find('[data-group-probe-panel="7"]')
