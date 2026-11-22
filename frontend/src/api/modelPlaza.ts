@@ -1,24 +1,57 @@
 /**
  * Model Plaza API（公开端点，可匿名访问）
- * 以分组为中心的模型价目：分组信息 + 模型渠道定价 + LiteLLM 官方参考价。
+ * 以分组为中心的模型价目：分组信息 + 模型售价 + 全局目录参考价。
  * 带 token 请求时后端会额外返回专属分组与用户专属倍率。
  */
 
 import { apiClient } from './client'
 import type { UserPricingInterval, UserSupportedModelPricing } from './channels'
 
-/** 官方参考价（USD per token，与计费目录同源；字段缺失 = 目录未覆盖）。 */
+export type PlazaUnitMode = 'per_request' | 'per_second' | 'per_image'
+
+/** Absolute token rates in catalog units per token. Missing component keys are not zero. */
+export interface PlazaPriceWindow {
+  timezone: string
+  /** Local start weekday, Sunday = 0. An omitted or empty list means every day. */
+  weekdays?: number[]
+  start: string
+  end: string
+  exclude_cn_holidays?: boolean
+  rates: Record<string, number>
+}
+
+export type PlazaPricingInterval = UserPricingInterval & { cache_write_30m_price?: number | null }
+
+/**
+ * 实付（分组售价）区间：在白名单区间字段上追加该档 30m 缓存写价。
+ * 缺项 = 该分组/该档没有 30m 价，不是 0，也不能用参考价补。
+ */
+export type PlazaPaidPricingInterval = UserPricingInterval & { cache_write_30m_price?: number | null }
+
+/** 实付（分组售价）定价：白名单字段 + 广场专属的 30m 缓存写价（同样保留显式 0）。 */
+export type PlazaPaidPricing = Omit<UserSupportedModelPricing, 'billing_mode' | 'intervals'> & {
+  billing_mode: UserSupportedModelPricing['billing_mode'] | PlazaUnitMode
+  unit_price?: number | null
+  cache_write_30m_price?: number | null
+  intervals: PlazaPaidPricingInterval[]
+}
+
+/** Global catalog reference, in the catalog's billing units. */
 export interface PlazaOfficialPricing {
+  billing_mode?: PlazaUnitMode
+  unit_price?: number | null
   input_price: number | null
   output_price: number | null
   /** 5m 缓存写入（= LiteLLM cache_creation）。 */
   cache_write_price: number | null
   /** 1h 缓存写入（LiteLLM cache_creation_above_1hr），多数模型缺失。 */
   cache_write_1h_price?: number | null
+  cache_write_30m_price?: number | null
   cache_write_12h_price?: number | null
   cache_read_price: number | null
   /** 官方长上下文阶梯（多档模型才有），不受分组开关影响。 */
-  intervals?: UserPricingInterval[]
+  intervals?: PlazaPricingInterval[]
+  price_windows?: PlazaPriceWindow[]
 }
 
 /**
@@ -54,12 +87,14 @@ export interface PlazaModel {
   name: string
   platform: string
   /** 实收口径的展示定价：档位可提供绝对单价或相对基础价倍率；均为标准时段价。 */
-  pricing: UserSupportedModelPricing | null
+  pricing: PlazaPaidPricing | null
   official_pricing: PlazaOfficialPricing | null
   /** 仅多档模型返回。 */
   long_context_basis?: PlazaLongContextBasis
   /** 仅配置了分时倍率的模型返回。 */
   time_pricing?: PlazaTimePricing
+  /** Effective absolute windows before the group/user rate. Omitted when replaced by group policy. */
+  price_windows?: PlazaPriceWindow[]
   /** Applicable endpoint rates; a card cannot determine the request endpoint. */
   media_rate_options?: PlazaMediaRateOption[]
 }

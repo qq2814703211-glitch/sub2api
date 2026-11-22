@@ -2,7 +2,7 @@ export default {
   modelPricingSync: {
     title: 'models.dev Price Sync',
     description:
-      'A background job pulls the official reference prices from models.dev, writes them into the pricing.override_file overlay layer, and reloads it live. Only models without a manual price in our table are filled or updated; models with manual pricing are never overwritten, and group price cards always take precedence over synced prices.',
+      'Sync publishes global reference prices. Manual overrides take precedence until restored to automatic pricing. Group and channel price cards still take precedence over global prices.',
     empty: 'No sync records yet',
     loadFailed: 'Failed to load sync records',
     statusLoadFailed: 'Failed to load sync status',
@@ -27,7 +27,13 @@ export default {
       input_cost_per_token: 'Input',
       output_cost_per_token: 'Output',
       cache_read_input_token_cost: 'Cache Read',
-      cache_creation_input_token_cost: 'Cache Write'
+      cache_creation_input_token_cost: 'Cache Write (Default / Short)',
+      cache_creation_input_token_cost_above_1hr: 'Cache Write (1 Hour)',
+      cache_creation_input_token_cost_30m: 'Cache Write (30 Minutes)',
+      cache_creation_input_token_cost_12h: 'Cache Write (12 Hours)',
+      cost_per_request: 'Per Request',
+      cost_per_second: 'Per Second',
+      output_cost_per_image: 'Per Output Image'
     },
     status: {
       title: 'Sync Status',
@@ -41,11 +47,37 @@ export default {
       lastError: 'Last Error',
       changes: '{count} field(s)'
     },
-    priceUnitHint: 'Prices are shown in USD / 1M tokens (the overlay stores USD / token; converted here).',
+    v2: {
+      storedRevision: 'Saved revision', activeRevision: 'Active revision (this process)', refreshStatus: 'Refresh prices',
+      activationPending: 'The revision is saved but not active yet. The effective price still comes from the active revision.',
+      scopeConverged: 'This process has loaded the committed head: {revision}. Check every process during blue-green or scale-out.',
+      scopeLagging: 'This process is behind: head {head}, applied {active}, last verified {age}s ago. Check every process during blue-green or scale-out.',
+      scopeUnverified: 'This process has not verified the committed head ({reason}); do not claim it is live everywhere.',
+      scopeStale: 'verification expired',
+      billingMode: 'Billing mode', siteCurrency: 'Site units',
+      mode: { token: 'Per token', per_request: 'Per request', per_second: 'Per second', per_image: 'Per image' },
+      unit: { token: '1M tokens', per_request: 'request', per_second: 'second', per_image: 'image', storage: '1M token-hours' },
+      quote: { auto: 'Latest verified automatic price', manual: 'Saved manual override', effective: 'Effective price in this process (global catalog)' },
+      quoteMode: { auto: 'Automatic source', manual: 'Manual source' },
+      empty: { auto: 'No verified automatic quote', manual: 'No manual override', effective: 'No confirmed effective price' },
+      provider: 'Provider', evidence: 'Evidence', verifiedAt: 'Verified at', contextTier: 'Context tier',
+      effectivePriceHint: 'Global billing catalog rates. Procurement costs and group selling prices may differ.',
+      day: { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' },
+      excludeHolidays: 'Excludes Chinese public holidays',
+      inspectModel: 'Inspect model prices (exact model name)', editSelected: 'Edit manual override',
+      missingReason: 'Quote diagnostics', noVerifiedQuote: 'No verified automatic quote for this model; the service supplied no further reason.',
+      unknownRate: 'Unknown or not applicable', unsetRate: 'Not configured', manualPinned: 'Keep manual override',
+      autoRestore: 'Restore automatically when a trusted price returns', autoRestoreHint: 'Removes the override only after validation of a newly verified quote for the same model.',
+      restoreAuto: 'Restore automatic price', restoreCleanFirst: 'Save or discard other drafts first.',
+      revisionConflict: 'The price revision changed. Your draft is still here. Note your edits before loading the latest revision.',
+      discardAndReload: 'Discard draft and reload', discardDraft: 'Discard unsaved changes',
+      sourceFailures: 'Source errors',
+      restoreFailed: 'Failed to restore automatic pricing'
+    },
     pricingSource: {
       title: 'Pricing Source Priority',
       description:
-        'Sync resolves prices through three tiers. A lower tier yields to a higher one. Manual entries always win and are never overwritten by sync.',
+        'Global prices have three tiers. Manual entries take precedence until restored manually or by the selected automatic policy.',
       priorityLabel: 'Priority (low → high)',
       highestBadge: 'Highest',
       tierUsd: 'USD sync',
@@ -53,7 +85,7 @@ export default {
       tierCny: 'CNY official',
       tierCnyNote: 'Native CNY list prices for Chinese vendors, overrides USD',
       tierManual: 'Manual',
-      tierManualNote: 'Configured on this card, never overwritten by sync',
+      tierManualNote: 'Overrides automatic quotes until removed',
       loading: 'Loading pricing source config…',
       loadFailed: 'Failed to load pricing source config',
       endpointMissing: 'The backend endpoint {path} is not registered yet, so this card is read-only for now.',
@@ -69,7 +101,7 @@ export default {
       sourceUrl: 'Source',
       manualTitle: 'Manual overrides',
       manualHint:
-        'CNY per 1M tokens, highest priority. Enter the full request model name as-is (e.g. deepseek-v4.1-flash-1017 or siliconflow/deepseek-v3.2) — no vendor prefix needed.',
+        'Use the exact request model name. Prices are in site units per billing unit for the selected mode.',
       manualEmpty: 'No manual overrides yet. Add a row to pin a model price.',
       manualPriorityNote: 'Highest priority, sync never overwrites this',
       addRow: 'Add row',
@@ -80,23 +112,27 @@ export default {
         input: 'Input',
         output: 'Output',
         cache_read: 'Cache read',
-        cache_write: 'Cache write',
+        cache_write: 'Cache write (default / short)',
+        cache_write_1h: 'Cache write (1 hour)',
+        cache_write_30m: 'Cache write (30 minutes)',
+        cache_write_12h: 'Cache write (12 hours)',
+        per_request_price: 'Price per request',
+        per_second_price: 'Price per second',
+        image_output_per_image: 'Price per output image',
         long_context_threshold: 'Threshold (tokens)',
         long_context_input_multiplier: 'Input multiplier',
         long_context_output_multiplier: 'Output multiplier'
       },
       extraTitle: 'Other billing fields',
-      extraHint: 'Only the four above are shown by default — add more from the catalog.',
+      extraHint: 'Add priority, image and cache storage rates as needed.',
       addExtra: 'Add field',
       removeExtra: 'Remove this field',
       extraGroup: {
-        cache: 'Cache write tiers',
         priority: 'Priority service tier',
         image: 'Image billing',
         storage: 'Context cache storage'
       },
       extra: {
-        cache_write_1h: '1-hour cache write',
         input_priority: 'Priority input',
         output_priority: 'Priority output',
         cache_read_priority: 'Priority cache read',
@@ -108,9 +144,9 @@ export default {
         cache_storage_per_hour: 'Cache storage'
       },
       extraUnit: {
-        per_million_tokens: 'CNY / 1M tokens',
-        per_million_tokens_hour: 'CNY / 1M tokens · hour',
-        per_image: 'CNY / image'
+        per_million_tokens: 'Site units / 1M tokens',
+        per_million_tokens_hour: 'Site units / 1M token-hours',
+        per_image: 'Site units / image'
       },
       colPlaceholder: {
         long_context_threshold: 'e.g. 32000',

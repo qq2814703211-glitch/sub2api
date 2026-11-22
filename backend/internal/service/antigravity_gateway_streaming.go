@@ -275,6 +275,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				}
 
 				// 解析 usage
+				observeGeminiImageOutputs(c, inner)
 				if u := extractGeminiUsage(inner); u != nil {
 					usage = u
 				}
@@ -474,6 +475,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 			last = parsed
 
 			// 提取 usage
+			observeGeminiImageOutputs(c, inner)
 			if u := extractGeminiUsage(inner); u != nil {
 				usage = u
 			}

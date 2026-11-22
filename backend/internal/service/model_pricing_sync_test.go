@@ -129,7 +129,7 @@ func TestModelPricingSync_NeverOverridesManualPricing(t *testing.T) {
 	}`
 	svc, path, history := newModelPricingSyncTestService(t, manualEntry)
 
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	require.Greater(t, applied, 0, "没有手配价的新模型应被补入")
 
@@ -164,7 +164,7 @@ func TestModelPricingSync_ManualModelSkippedEntirely(t *testing.T) {
 	manualEntry := `{"gpt-5.6-sol": {"input_cost_per_token": 9e-06}}`
 	svc, path, history := newModelPricingSyncTestService(t, manualEntry)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(path)
@@ -195,7 +195,7 @@ func TestModelPricingSync_SyncedFieldFollowsRegistryDrift(t *testing.T) {
 		nil, history, stubModelPricingSyncFetcher{body: []byte(modelsDevRegistryJSON)},
 	)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(path)
@@ -229,7 +229,7 @@ func TestModelPricingSync_RegistryFailureKeepsOverrideFile(t *testing.T) {
 		stubModelPricingSyncFetcher{err: errors.New("network unreachable")},
 	)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.Error(t, err)
 
 	body, err := os.ReadFile(path)
@@ -284,7 +284,7 @@ func TestModelPricingSync_SuccessfulWriteReplacesAtomically(t *testing.T) {
 	const original = `{"gpt-5.6-sol": {"input_cost_per_token": 9e-06, "fast_multiplier": 1.5}}`
 	svc, path, _ := newModelPricingSyncTestService(t, original)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(path)
@@ -302,7 +302,7 @@ func TestModelPricingSync_SuccessfulWriteReplacesAtomically(t *testing.T) {
 func TestModelPricingSync_DisabledWithoutOverrideFile(t *testing.T) {
 	svc := NewModelPricingSyncService(&ModelPricingSyncConfig{}, nil, nil, nil)
 	require.False(t, svc.SyncEnabled())
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.Error(t, err)
 }
 

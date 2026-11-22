@@ -256,7 +256,7 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 				float64(cache1h)*deref(p.CacheWrite1hPrice)
 		}
 	}
-	if cost, ok := openAICacheCreationTTLCost(tokens, deref(p.CacheWritePrice), p.CacheWrite12hPrice); ok {
+	if cost, ok := openAICacheCreationTTLCost(tokens, deref(p.CacheWritePrice), nil, p.CacheWrite12hPrice); ok {
 		cacheCreationCost = cost
 	}
 	cost := float64(tokens.InputTokens)*deref(p.InputPrice) +
@@ -286,6 +286,8 @@ func applyAccountStatsCost(
 	upstreamPriceFactor float64,
 	mediaUsage ...*MediaUsage,
 ) error {
+	cs = cs.forRequestPricing(ctx)
+	bs = bs.forRequest(ctx)
 	model := upstreamModel
 	if model == "" {
 		model = requestedModel

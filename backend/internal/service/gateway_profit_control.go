@@ -37,6 +37,9 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		}
 	}
 
+	if pin := RequestCatalogFromContext(ctx); pin != nil {
+		billingGroup = pin.groupFor(&APIKey{GroupID: &billingGroup.ID, Group: billingGroup}).Group
+	}
 	downstream := billingGroup.RateMultiplier
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
 		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)

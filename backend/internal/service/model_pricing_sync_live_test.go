@@ -70,7 +70,7 @@ func TestModelPricingSync_RealRegistrySnapshotEndToEnd(t *testing.T) {
 		stubModelPricingSyncFetcher{body: []byte(modelsDevRegistrySnapshotJSON)},
 	)
 
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	require.Greater(t, applied, 0)
 
@@ -99,7 +99,7 @@ func TestModelPricingSync_RealRegistrySnapshotEndToEnd(t *testing.T) {
 	// 第二条：内容与当前一致时是幂等的，不再产生变更、不再写文件。
 	before, err := os.Stat(path)
 	require.NoError(t, err)
-	appliedAgain, err := svc.Sync(context.Background())
+	appliedAgain, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	require.Zero(t, appliedAgain, "内容未变时应无变更")
 	after, err := os.Stat(path)
@@ -120,7 +120,7 @@ func TestModelPricingSync_RealtimeFetch(t *testing.T) {
 		&ModelPricingSyncConfig{OverrideFile: path, Interval: time.Minute},
 		nil, history, nil, // nil fetcher → 真实 HTTP 客户端
 	)
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err, "真实抓取失败说明是网络问题（检查 https_proxy），不是代码问题")
 	require.Greater(t, applied, 0, "真实注册表应产生大量新条目")
 

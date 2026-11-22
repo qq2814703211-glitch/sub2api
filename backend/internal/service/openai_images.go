@@ -874,21 +874,22 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
-					RequestID:        resp.Header.Get("x-request-id"),
-					UpstreamHeaders:  resp.Header,
-					Usage:            streamUsage,
-					Model:            requestModel,
-					UpstreamModel:    upstreamModel,
-					Stream:           parsed.Stream,
-					ResponseHeaders:  resp.Header.Clone(),
-					Duration:         time.Since(startTime),
-					FirstTokenMs:     ttft,
-					ImageEndpoint:    true,
-					ImageCount:       streamCount,
-					ImageSize:        parsed.SizeTier,
-					ImageInputSize:   parsed.Size,
-					ImageOutputSizes: streamSizes,
-					MediaUsage:       imageCounter.MediaUsage(requestMedia),
+					RequestID:         resp.Header.Get("x-request-id"),
+					UpstreamHeaders:   resp.Header,
+					Usage:             streamUsage,
+					Model:             requestModel,
+					UpstreamModel:     upstreamModel,
+					Stream:            parsed.Stream,
+					ResponseHeaders:   resp.Header.Clone(),
+					Duration:          time.Since(startTime),
+					FirstTokenMs:      ttft,
+					ImageEndpoint:     true,
+					UnitRequestFailed: true,
+					ImageCount:        streamCount,
+					ImageSize:         parsed.SizeTier,
+					ImageInputSize:    parsed.Size,
+					ImageOutputSizes:  streamSizes,
+					MediaUsage:        imageCounter.MediaUsage(requestMedia),
 				}, err
 			}
 			return nil, err

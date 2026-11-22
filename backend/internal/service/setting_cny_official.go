@@ -2,8 +2,8 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -34,13 +34,7 @@ func (s *SettingService) GetCNYOfficialPricingSettings(ctx context.Context) (*CN
 	return settings, nil
 }
 
-// SetCNYOfficialPricingSettings 写入配置。
-//
-// 校验规则（写坏配置会让整轮同步失败，所以在这里拦）：
-//   - manual_overrides 的键必须是非空的 vendor/model 形式
-//   - 价格必须是非负有限数
-//   - source_url 留空时回落到默认数据源
-func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, settings *CNYOfficialPricingSettings) (*CNYOfficialPricingSettings, error) {
+func normalizePriceSyncSettings(settings *CNYOfficialPricingSettings) (*CNYOfficialPricingSettings, error) {
 	if settings == nil {
 		return nil, fmt.Errorf("settings cannot be nil")
 	}
@@ -72,6 +66,11 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 			return nil, fmt.Errorf("manual_overrides 模型键 %q 重复（大小写或空格不同）", rawKey)
 		}
 		price := settings.ManualOverrides[rawKey]
+		for name, ptr := range map[string]*float64{"cache_write_30m": price.CacheWrite30m, "cache_write_12h": price.CacheWrite12h, "per_request_price": price.PerRequestPrice, "per_second_price": price.PerSecondPrice} {
+			if ptr != nil && !priceSyncFinite(*ptr) {
+				return nil, fmt.Errorf("manual_overrides[%s].%s 必须为非负有限数", key, name)
+			}
+		}
 		negative := map[string]float64{
 			"input":       price.Input,
 			"output":      price.Output,
@@ -88,7 +87,7 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			if negative[name] < 0 {
+			if !priceSyncFinite(negative[name]) {
 				return nil, fmt.Errorf("manual_overrides[%s].%s 不能为负", key, name)
 			}
 		}
@@ -101,7 +100,7 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 			"long_context_input_multiplier":  price.LongContextInputMultiplier,
 			"long_context_output_multiplier": price.LongContextOutputMultiplier,
 		} {
-			if value < 0 {
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 				return nil, fmt.Errorf("manual_overrides[%s].%s 不能为负", key, name)
 			}
 			if value > 0 && value < 1 {
@@ -117,12 +116,5 @@ func (s *SettingService) SetCNYOfficialPricingSettings(ctx context.Context, sett
 		normalized.ManualOverrides[key] = price
 	}
 
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return nil, fmt.Errorf("marshal %s: %w", SettingKeyPricingCNYOfficial, err)
-	}
-	if err := s.settingRepo.Set(ctx, SettingKeyPricingCNYOfficial, string(data)); err != nil {
-		return nil, fmt.Errorf("write %s: %w", SettingKeyPricingCNYOfficial, err)
-	}
 	return normalized, nil
 }

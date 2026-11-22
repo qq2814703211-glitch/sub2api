@@ -1,8 +1,11 @@
 import { defineComponent } from 'vue'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ModelPricingSyncView from '@/views/admin/ModelPricingSyncView.vue'
+import { apiClient } from '@/api/client'
+import { getCnyOfficialConfig as getConfig, normalizeCnyOfficialConfig, updateCnyOfficialConfig as putConfig, type PricingCnyOfficialConfig } from '@/api/admin/modelPricingSync'
 
 /**
  * /admin/model-pricing-sync 的「计价口径配置」卡片。
@@ -132,7 +135,7 @@ async function fillPrice(
   await wrapper.find(`[data-testid="pricing-row-cache_read-${suffix}"]`).setValue('0.02')
 }
 
-async function mountReady(config = defaultConfig()) {
+async function mountReady(config: Omit<PricingCnyOfficialConfig, 'source_url'> & { source_url?: string } = defaultConfig()) {
   getCnyOfficialConfig.mockResolvedValue(config)
   const wrapper = mountView()
   await flushPromises()
@@ -808,7 +811,7 @@ describe('manual 行折叠', () => {
         'deepseek/deepseek-flash': { input: 1, output: 4, cache_read: 0.02 }
       }
     })
-    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('¥1 / 4 / 0.02')
+    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('1 / 4 / 0.02 / — · 站内单位 / 百万 tokens')
   })
 
   it('配了阶梯的行在收起态亮出标记', async () => {
@@ -874,7 +877,7 @@ describe('manual 行折叠', () => {
     await wrapper.find('[data-testid="pricing-row-input-1"]').setValue('9')
     await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
 
-    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('¥9')
+    expect(wrapper.find('[data-testid="pricing-row-1"]').text()).toContain('9 / 4')
   })
 })
 
@@ -897,7 +900,7 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
       .replace('pricing-row-model-', '')
   }
 
-  it('默认只展示输入 / 输出 / 缓存读 / 缓存写四项', async () => {
+  it('默认展示输入、输出、缓存读与四种缓存写', async () => {
     const wrapper = await mountReady()
     const id = await addRow(wrapper)
 
@@ -905,6 +908,9 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
     expect(wrapper.find(`[data-testid="pricing-row-output-${id}"]`).exists()).toBe(true)
     expect(wrapper.find(`[data-testid="pricing-row-cache_read-${id}"]`).exists()).toBe(true)
     expect(wrapper.find(`[data-testid="pricing-row-cache_write-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-cache_write_1h-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-cache_write_30m-${id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="pricing-row-cache_write_12h-${id}"]`).exists()).toBe(true)
 
     // 其他计费项默认一个都不渲染。
     expect(wrapper.find(`[data-testid="pricing-row-extras-list-${id}"]`).exists()).toBe(false)
@@ -918,9 +924,8 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
 
     const menu = wrapper.find(`[data-testid="pricing-row-extra-menu-${id}"]`)
     expect(menu.exists()).toBe(true)
-    // 十项全在目录里（1h 缓存 + 4 个 priority + 4 个图片 + 1 个存储）。
+    expect(menu.findAll('button')).toHaveLength(9)
     for (const key of [
-      'cache_write_1h',
       'input_priority',
       'output_priority',
       'cache_read_priority',
@@ -962,12 +967,12 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
     const id = await addRow(wrapper)
 
     await wrapper.find(`[data-testid="pricing-row-add-extra-${id}"]`).trigger('click')
-    await wrapper.find(`[data-testid="pricing-row-extra-option-cache_write_1h-${id}"]`).trigger('click')
-    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_write_1h-${id}"]`).exists()).toBe(true)
+    await wrapper.find(`[data-testid="pricing-row-extra-option-cache_storage_per_hour-${id}"]`).trigger('click')
+    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_storage_per_hour-${id}"]`).exists()).toBe(true)
 
-    await wrapper.find(`[data-testid="pricing-row-remove-extra-cache_write_1h-${id}"]`).trigger('click')
+    await wrapper.find(`[data-testid="pricing-row-remove-extra-cache_storage_per_hour-${id}"]`).trigger('click')
 
-    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_write_1h-${id}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[data-testid="pricing-row-extra-input-cache_storage_per_hour-${id}"]`).exists()).toBe(false)
     // 整组都空了就整块不渲染。
     expect(wrapper.find(`[data-testid="pricing-row-extras-list-${id}"]`).exists()).toBe(false)
   })
@@ -1063,7 +1068,7 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
     await wrapper.find('[data-testid="pricing-row-toggle-1"]').trigger('click')
 
     expect(
-      (wrapper.find('[data-testid="pricing-row-extra-input-cache_write_1h-1"]').element as HTMLInputElement).value
+      (wrapper.find('[data-testid="pricing-row-cache_write_1h-1"]').element as HTMLInputElement).value
     ).toBe('0.22')
     expect(
       (wrapper.find('[data-testid="pricing-row-extra-input-cache_storage_per_hour-1"]').element as HTMLInputElement)
@@ -1118,5 +1123,226 @@ describe('manual 其他计费项（添加目录 / 删除）', () => {
       manual_overrides: Record<string, Record<string, number>>
     }
     expect(payload.manual_overrides['glm-4.6']).not.toHaveProperty('input_priority')
+  })
+})
+
+describe('Pricing V2 contract', () => {
+  const byId = (name: string) => `[data-testid="${name}"]`
+  const model = 'vendor/exact-model'
+  const persisted = { ...defaultConfig({ [model]: { input: 1, output: 4, cache_read: 0 } }), revision: 'r1', active_revision: 'r1' }
+
+  beforeEach(() => {
+    listHistory.mockReset().mockResolvedValue({ items: [], total: 0 })
+    getStatus.mockReset().mockResolvedValue({ enabled: true })
+    getCnyOfficialConfig.mockReset()
+    updateCnyOfficialConfig.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+  })
+
+  function recordDom(label: string, wrapper: ReturnType<typeof mountView>, selectors: string[]) {
+    if (!process.env.PRICING_UI_DOM) return
+    const nodes = selectors.map((selector) => wrapper.get(selector).element)
+    const values = nodes.flatMap((node) => Array.from(node.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'), (control) => ({
+      id: control.dataset.testid,
+      value: control instanceof HTMLInputElement && control.type === 'checkbox' ? control.checked : control.value
+    })))
+    console.info(`DOM ${label}\n${nodes.map((node) => node.outerHTML).join('\n')}\nControl values: ${JSON.stringify(values)}`)
+  }
+
+  it('sends the editable fields and revision to the existing API route', async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: persisted })
+    const put = vi.spyOn(apiClient, 'put').mockImplementation(async (_path, payload) => ({ data: { ...payload, revision: 'r2', active_revision: 'r1' } }))
+    try {
+      const config = await getConfig()
+      expect(get).toHaveBeenCalledWith('/admin/model-pricing-sync/cny-official')
+      const manual = { [model]: { billing_mode: 'per_image' as const, image_output_per_image: 0, auto_restore: false } }
+      const next = await putConfig({ ...config, manual_overrides: manual })
+      expect(put).toHaveBeenCalledWith('/admin/model-pricing-sync/cny-official', { ...defaultConfig(), revision: 'r1', manual_overrides: manual })
+      expect(next).toMatchObject({ revision: 'r2', active_revision: 'r1', manual_overrides: manual })
+    } finally {
+      get.mockRestore()
+      put.mockRestore()
+    }
+  })
+
+  it.each([
+    ['per_request', 'per_request_price', '站内单位 / 次', '0'],
+    ['per_second', 'per_second_price', '站内单位 / 秒', '0.375'],
+    ['per_image', 'image_output_per_image', '站内单位 / 张', '2.125']
+  ])('creates, saves and reopens a %s price without token inputs', async (mode, key, unit, price) => {
+    updateCnyOfficialConfig.mockImplementation(async (payload) => normalizeCnyOfficialConfig({ ...payload, revision: 'r2', active_revision: 'r2' }))
+    const wrapper = await mountReady(persisted)
+    await wrapper.get(byId('pricing-add-row')).trigger('click')
+    const suffix = rowSuffix(wrapper, 1)
+    await wrapper.get(byId(`pricing-row-model-${suffix}`)).setValue('new-model')
+    const select = wrapper.get(byId(`pricing-row-mode-${suffix}`))
+    expect(select.findAll('option').map((opt) => opt.attributes('value'))).toEqual(['token', 'per_request', 'per_second', 'per_image'])
+    await select.setValue(mode)
+    expect(wrapper.find(byId(`pricing-row-input-${suffix}`)).exists()).toBe(false)
+    expect(wrapper.get(byId(`pricing-row-unit-${suffix}`)).text()).toBe(unit)
+    await wrapper.get(byId(`pricing-row-${key}-${suffix}`)).setValue(price)
+    await wrapper.get(byId(`pricing-row-auto-restore-${suffix}`)).setValue(true)
+    await wrapper.get(byId('pricing-save')).trigger('click')
+    await flushPromises()
+    expect(updateCnyOfficialConfig).toHaveBeenCalledWith({
+      ...defaultConfig(), revision: 'r1', manual_overrides: { ...persisted.manual_overrides, 'new-model': { billing_mode: mode, [key]: Number(price), auto_restore: true } }
+    })
+    const reopened = rowSuffix(wrapper)
+    await wrapper.get(byId(`pricing-row-toggle-${reopened}`)).trigger('click')
+    expect(wrapper.get<HTMLSelectElement>(byId(`pricing-row-mode-${reopened}`)).element.value).toBe(mode)
+    expect(wrapper.get<HTMLInputElement>(byId(`pricing-row-${key}-${reopened}`)).element.value).toBe(price)
+    expect(wrapper.get<HTMLInputElement>(byId(`pricing-row-auto-restore-${reopened}`)).element.checked).toBe(true)
+    recordDom(mode, wrapper, [`fieldset:has(${byId(`pricing-row-mode-${reopened}`)})`])
+    wrapper.unmount()
+  })
+
+  it('edits four TTLs independently and preserves zero, null and absent prices across the API decoder', async () => {
+    const config = normalizeCnyOfficialConfig({ ...persisted, manual_overrides: { [model]: {
+      input: 1, output: 4, cache_read: 0, cache_write: 0, cache_write_1h: null, cache_write_12h: 12
+    } } })
+    expect(config).toMatchObject({ revision: 'r1', active_revision: 'r1', manual_overrides: { [model]: {
+      cache_write: 0, cache_write_1h: null, cache_write_12h: 12
+    } } })
+    expect(config.manual_overrides[model]).not.toHaveProperty('cache_write_30m')
+    updateCnyOfficialConfig.mockResolvedValue(config)
+    const wrapper = await mountReady(config)
+    const suffix = rowSuffix(wrapper)
+    await wrapper.get(byId(`pricing-row-toggle-${suffix}`)).trigger('click')
+    const fields = ['cache_write', 'cache_write_1h', 'cache_write_30m', 'cache_write_12h']
+    expect(fields.map((field) => wrapper.get<HTMLInputElement>(byId(`pricing-row-${field}-${suffix}`)).element.value)).toEqual(['0', '', '', '12'])
+    expect(wrapper.get(byId(`pricing-row-cache_write_1h-${suffix}`)).attributes('placeholder')).not.toBe(wrapper.get(byId(`pricing-row-cache_write_30m-${suffix}`)).attributes('placeholder'))
+    recordDom('token TTLs', wrapper, [`fieldset:has(${byId(`pricing-row-mode-${suffix}`)})`])
+    await wrapper.get(byId(`pricing-row-cache_write_30m-${suffix}`)).setValue('0.3')
+    await wrapper.get(byId('pricing-save')).trigger('click')
+    expect(updateCnyOfficialConfig.mock.calls[0][0].manual_overrides[model]).toEqual({
+      input: 1, output: 4, cache_read: 0, cache_write: 0, cache_write_1h: null, cache_write_30m: 0.3, cache_write_12h: 12
+    })
+    wrapper.unmount()
+  })
+
+  it('compares stored manual, verified auto and confirmed effective prices without conflating them', async () => {
+    const quote = { model, provider: 'vendor', currency: 'USD', billing_mode: 'per_second', rates: { cost_per_second: 0.125 }, evidence: 'snapshot-abc', source_url: 'https://example.com/official', verified_at: '2026-11-22T00:00:00Z' }
+    getStatus.mockResolvedValue({ enabled: true, pricing_v2: { active_revision: 'r0', models: {
+      [model]: { mode: 'auto', auto: quote, effective: { ...quote, rates: { cost_per_second: 0 } }, issue: 'missing_required_rate: cost_per_request' }
+    } } })
+    const wrapper = await mountReady({ ...persisted, active_revision: 'r0' })
+    expect(wrapper.get(byId('pricing-revisions')).text()).toContain('r1')
+    expect(wrapper.get(byId('pricing-activation-pending')).text()).toContain('尚未生效')
+    expect(wrapper.get(byId('pricing-quote-auto')).text()).toContain('0.125 USD / 秒')
+    expect(wrapper.get(byId('pricing-quote-auto')).text()).toContain('snapshot-abc')
+    expect(wrapper.get(byId('pricing-quote-auto')).text()).toContain('https://example.com/official')
+    expect(wrapper.get(byId('pricing-quote-manual')).text()).toContain('4 站内单位 / 百万 tokens')
+    expect(wrapper.get(byId('pricing-quote-effective')).text()).toContain('0 USD / 秒')
+    expect(wrapper.get(byId('pricing-model-issue')).text()).toContain('missing_required_rate: cost_per_request')
+    recordDom('stored but not active', wrapper, ['pricing-revisions', 'pricing-activation-pending', 'pricing-quote-auto', 'pricing-quote-manual', 'pricing-quote-effective', 'pricing-model-issue'].map(byId))
+    wrapper.unmount()
+  })
+
+  it('shows a dated original-currency quote with its absolute window conditions', async () => {
+    const quote = {
+      model, provider: 'fixture vendor', currency: 'CNY', billing_mode: 'token',
+      rates: { input_cost_per_token: 2e-6, output_cost_per_token: 3e-6 },
+      source_url: 'https://example.com/tariff', evidence: 'fixture-sheet', verified_at: '2026-11-21T05:20:00Z',
+      windows: [{ start: '09:00', end: '13:00', timezone: 'Asia/Shanghai', weekdays: [1, 3, 5], exclude_cn_holidays: true,
+        rates: { input_cost_per_token: 9e-6, cache_creation_input_token_cost_30m: 0, cache_creation_input_token_cost_12h: 13e-6 } }]
+    }
+    getStatus.mockResolvedValue({ enabled: true, pricing_v2: { models: { [model]: { mode: 'auto', auto: quote, effective: quote } } } })
+    const wrapper = await mountReady(persisted)
+    const card = wrapper.get(byId('pricing-quote-auto'))
+    expect(card.get('time').attributes('datetime')).toBe(quote.verified_at)
+    const window = card.findAll('dl').at(-1)!
+    for (const value of ['09:00–13:00 (Asia/Shanghai)', '周一', '周三', '周五', '9 CNY / 百万 tokens', '0 CNY / 百万 tokens', '13 CNY / 百万 tokens']) {
+      expect(window.text()).toContain(value)
+    }
+    expect(window.text()).toMatch(/节假日/)
+    expect(wrapper.get(byId('pricing-quote-effective')).text()).toContain('不代表实际采购成本')
+    wrapper.unmount()
+  })
+
+  const exportPath = process.env.PLAZA_ADMIN_PAYLOAD_OUT
+  const responsePath = process.env.PLAZA_ADMIN_READBACK
+  it.runIf(!!exportPath || !!responsePath)('bridges edited controls to the disposable HTTP publication test', async () => {
+    if (responsePath) {
+      const { data } = JSON.parse(readFileSync(responsePath, 'utf8'))
+      const reopened = await mountReady(normalizeCnyOfficialConfig(data))
+      const row = reopened.findAll<HTMLInputElement>('input[data-testid^="pricing-row-model-"]').find(input => input.element.value === 'fixture-manual')!
+      const suffix = row.attributes('data-testid')!.replace('pricing-row-model-', '')
+      await reopened.get(byId(`pricing-row-toggle-${suffix}`)).trigger('click')
+      for (const [key, value] of Object.entries({ input: '2', output: '11', cache_write: '4', cache_write_1h: '', cache_write_30m: '0', cache_write_12h: '13' })) {
+        expect(reopened.get<HTMLInputElement>(byId(`pricing-row-${key}-${suffix}`)).element.value).toBe(value)
+      }
+      reopened.unmount()
+      return
+    }
+    updateCnyOfficialConfig.mockResolvedValue(persisted)
+    const wrapper = await mountReady({ ...defaultConfig(), revision: 'r1' })
+    for (const [name, mode, fields] of [
+      ['fixture-manual', 'token', { input: '2', output: '11', cache_read: '0.5', cache_write: '4', cache_write_30m: '0', cache_write_12h: '13' }],
+      ['fixture-request', 'per_request', { per_request_price: '0' }],
+      ['fixture-second', 'per_second', { per_second_price: '0.375' }],
+      ['fixture-image', 'per_image', { image_output_per_image: '2.125' }]
+    ] as const) {
+      await wrapper.get(byId('pricing-add-row')).trigger('click')
+      const suffix = rowSuffix(wrapper, wrapper.findAll('[data-testid^="pricing-row-model-"]').length - 1)
+      await wrapper.get(byId(`pricing-row-model-${suffix}`)).setValue(name)
+      await wrapper.get(byId(`pricing-row-mode-${suffix}`)).setValue(mode)
+      for (const [field, value] of Object.entries(fields)) await wrapper.get(byId(`pricing-row-${field}-${suffix}`)).setValue(value)
+    }
+    await wrapper.get(byId('pricing-save')).trigger('click')
+    expect(updateCnyOfficialConfig).toHaveBeenCalledTimes(1)
+    writeFileSync(exportPath!, JSON.stringify(updateCnyOfficialConfig.mock.calls[0][0]), { mode: 0o600 })
+    wrapper.unmount()
+  })
+
+  it('keeps manual on failed restore and removes only that model on a revisioned retry', async () => {
+    const other = { input: 8, output: 9, cache_read: 0 }
+    const config = { ...persisted, manual_overrides: { ...persisted.manual_overrides, 'another/model': other } }
+    updateCnyOfficialConfig.mockRejectedValueOnce({ status: 409, message: '价格修订已变更，请重新读取后保存: no trusted price: missing cache_write_12h' })
+      .mockImplementationOnce(async (payload) => ({ ...payload, revision: 'r2', active_revision: 'r2' }))
+    const wrapper = await mountReady(config)
+    const restore = wrapper.get(byId(`pricing-restore-row-${rowSuffix(wrapper, 1)}`))
+    await restore.trigger('click')
+    await flushPromises()
+    expect(wrapper.get(byId('pricing-save-error')).text()).toContain('missing cache_write_12h')
+    expect(wrapper.findAll('input[data-testid^="pricing-row-model-"]')).toHaveLength(2)
+    recordDom('restore refused', wrapper, [byId('pricing-save-error')])
+    await restore.trigger('click')
+    await flushPromises()
+    expect(updateCnyOfficialConfig.mock.calls[1][0]).toEqual({ ...defaultConfig({ 'another/model': other }), revision: 'r1' })
+    expect(wrapper.findAll('input[data-testid^="pricing-row-model-"]')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('will not restore a saved override while another draft is unsaved', async () => {
+    const wrapper = await mountReady(persisted)
+    await wrapper.get(byId('pricing-add-row')).trigger('click')
+    const restore = wrapper.get(byId('pricing-restore-row-1'))
+    expect(restore.attributes('disabled')).toBeDefined()
+    await restore.trigger('click')
+    expect(updateCnyOfficialConfig).not.toHaveBeenCalled()
+    await wrapper.get(byId('pricing-discard-draft')).trigger('click')
+    expect(wrapper.findAll('input[data-testid^="pricing-row-model-"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid^="pricing-restore-row-"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps the draft on conflict and requires explicit reload', async () => {
+    updateCnyOfficialConfig.mockRejectedValueOnce({ status: 409, message: '价格修订已变更，请重新读取后保存' })
+    const wrapper = await mountReady(persisted)
+    const suffix = rowSuffix(wrapper)
+    await wrapper.get(byId(`pricing-row-output-${suffix}`)).setValue('9')
+    await wrapper.get(byId('pricing-save')).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(byId('pricing-revision-conflict')).text()).toContain('请重新读取后保存')
+    expect(wrapper.get<HTMLInputElement>(byId(`pricing-row-output-${suffix}`)).element.value).toBe('9')
+    expect(wrapper.get(byId('pricing-save')).attributes('disabled')).toBeDefined()
+    recordDom('revision conflict', wrapper, [byId('pricing-revision-conflict')])
+    getCnyOfficialConfig.mockResolvedValue({ ...persisted, revision: 'r2' })
+    await wrapper.get(byId('pricing-conflict-reload')).trigger('click')
+    await flushPromises()
+    expect(wrapper.get(byId('pricing-revisions')).text()).toContain('r2')
+    expect(updateCnyOfficialConfig).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 })

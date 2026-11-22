@@ -28,6 +28,7 @@ func captureVideoPreparedUsage(ctx context.Context, usage *UsageLog, in *OpenAIR
 	}
 	i := &VideoBillingIntent{Command: *cmd, Usage: *usage, QuotaPlatform: in.QuotaPlatform, RateLimitOnly: rateOnly,
 		SimpleMode: cfg != nil && cfg.RunMode == config.RunModeSimple && !rateOnly}
+	i.CatalogUnitMode = cost.catalogUnitMode
 	i.Usage.User = nil
 	i.Usage.APIKey = nil
 	i.Usage.Account = nil
@@ -97,6 +98,7 @@ func (s *OpenAIGatewayService) BeginVideoBillingJob(ctx context.Context, in *Ope
 	if provider != "seedance" && provider != "grok" {
 		return nil, errors.New("unsupported video provider")
 	}
+	ctx = s.WithRequestCatalog(ctx)
 	copyInput := *in
 	result := *in.Result
 	copyInput.Result = &result
@@ -104,9 +106,17 @@ func (s *OpenAIGatewayService) BeginVideoBillingJob(ctx context.Context, in *Ope
 	result.ResponseID = result.RequestID
 	result.VideoCount = 1
 	result.VideoDurationSeconds = 1
+	probeSeconds := 1.0
+	result.ProviderBillableSeconds = &probeSeconds
 	result.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
 	if provider == "seedance" {
 		result.VideoCount = 0
+		billing := s.billingService.forRequest(ctx)
+		model := billing.catalogBillingModel(ctx, s.resolver, in.APIKey, firstNonEmpty(result.BillingModel, result.Model), result.UpstreamModel, in.ChannelUsageFields)
+		if billing.exactCatalogUnit(model) != nil && s.resolveOpenAIChannelPricing(ctx, model, in.APIKey) == nil {
+			result.ResponseID = "seedance:unit-quote"
+			result.MediaUsage = &MediaUsage{Count: 1}
+		}
 		result.Usage = OpenAIUsage{OutputTokens: 1}
 	}
 	unit, err := s.prepareVideoUsage(ctx, &copyInput)
@@ -117,8 +127,8 @@ func (s *OpenAIGatewayService) BeginVideoBillingJob(ctx context.Context, in *Ope
 	if provider == "grok" && tokenBilled {
 		return nil, errors.New("Grok asynchronous video requires duration or request pricing")
 	}
-	perSecond := false
-	if provider == "grok" {
+	perSecond := unit.Usage.BillingMode != nil && *unit.Usage.BillingMode == string(BillingModePerSecond)
+	if provider == "grok" && !unit.CatalogUnitMode.isCatalogUnit() {
 		result.VideoDurationSeconds = 2
 		two, e := s.prepareVideoUsage(ctx, &copyInput)
 		if e != nil {
@@ -176,7 +186,24 @@ func videoIntentForCompletion(j *VideoBillingJob, result *OpenAIForwardResult) (
 	snapshot := j.Snapshot
 	seconds := result.VideoDurationSeconds
 	factor := 1.0
-	if j.Provider == "seedance" {
+	nativeMode := snapshot.Unit.CatalogUnitMode
+	if nativeMode.isCatalogUnit() {
+		if result.VideoCount <= 0 && (result.MediaUsage == nil || result.MediaUsage.Count == 0) {
+			return nil, errors.New("completion_artifact_missing")
+		}
+		usage := result.catalogUsage()
+		if j.Provider == "seedance" {
+			usage.success = result.VideoStatus == "succeeded" && result.MediaUsage != nil && result.MediaUsage.Count > 0
+		}
+		if !usage.success {
+			return nil, errors.New("completion_artifact_missing")
+		}
+		var err error
+		factor, err = usage.units(nativeMode)
+		if err != nil {
+			return nil, err
+		}
+	} else if j.Provider == "seedance" {
 		if result.VideoStatus != "succeeded" || !result.VideoUsageKnown || result.Usage.OutputTokens < 0 {
 			return nil, errors.New("completion_usage_missing")
 		}
@@ -218,7 +245,10 @@ func videoIntentForCompletion(j *VideoBillingJob, result *OpenAIForwardResult) (
 	}
 	intent.Usage.ActualCost = QuantizeUsageBillingAmount(intent.Usage.ActualCost)
 	intent.Usage.VideoCount = 1
-	if seconds > 0 {
+	if nativeMode.isCatalogUnit() {
+		intent.Usage.BillingUnits = &factor
+		intent.Usage.VideoDurationSeconds = wholeProviderSeconds(result.ProviderBillableSeconds)
+	} else if seconds > 0 {
 		intent.Usage.VideoDurationSeconds = &seconds
 	} else {
 		intent.Usage.VideoDurationSeconds = nil
@@ -290,6 +320,9 @@ func (s *OpenAIGatewayService) settleVideoBillingJob(ctx context.Context, j *Vid
 	if err != nil {
 		_ = s.videoBillingJobs.Finish(ctx, j, j.State, j.ProviderStatus, "ledger_apply_failed", 30*time.Second)
 		return err
+	}
+	if result != nil && result.Applied {
+		logRequestPriceTrace(ctx, &j.Intent.Usage)
 	}
 	// Caches are invalidated even on replay, including a crash after the debit.
 	cmd := j.Intent.Command

@@ -68,6 +68,11 @@ func observedGeminiImageOutputs(c *gin.Context) int {
 	return counter.count
 }
 
+func observedGeminiImageCount(c *gin.Context) *int {
+	n := observedGeminiImageOutputs(c)
+	return &n
+}
+
 // resolveGeminiImageCount 决定本次请求按几张图计费。
 //
 // 优先用上游真正返回的图片数：走 GeminiMessagesCompatService 的账号多是

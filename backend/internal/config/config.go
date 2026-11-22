@@ -759,6 +759,10 @@ type PricingConfig struct {
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
 	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+	// 已发布修订的兜底校对间隔（秒）。保存后由提交事务直接通知其它实例；
+	// 通知丢失、监听重连或进程重启时，最多滞后这么久才发现新修订。
+	// 0 或负数取默认 15 秒。
+	PublishFollowBackstopSeconds int `mapstructure:"publish_follow_backstop_seconds"`
 }
 
 type ServerConfig struct {
@@ -2461,6 +2465,7 @@ func setDefaults() {
 	viper.SetDefault("pricing.override_file", "")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
+	viper.SetDefault("pricing.publish_follow_backstop_seconds", 15)
 
 	// 本地进程插件。插件必须由管理员手动上传，项目默认不携带任何插件能力。
 	viper.SetDefault("plugins.data_dir", "")

@@ -26,10 +26,11 @@ func TestCNYOfficial_RealSourceSnapshotParses(t *testing.T) {
 
 	dataset := buildCNYOfficialDataset(registry, &CNYOfficialPricingSettings{Enabled: true}, "snapshot")
 
-	// 实测约束：50 vendor / 548 模型，其中 182 个可人民币计价。
+	// 国模归属和可用原生人民币价分别统计。
 	require.Greater(t, len(registry), 40)
 	require.Greater(t, dataset.Report.ProvidersCNY, 10, "人民币厂商应多于 10 个")
-	require.Greater(t, dataset.Report.UsablePrices, 100, "可计价模型应多于 100 个")
+	require.Greater(t, dataset.Report.UsablePrices, 0)
+	require.Greater(t, dataset.Report.NationalModels, dataset.Report.UsablePrices)
 
 	// deepseek-flash 官方人民币牌价 1 / 4 / 0.02。
 	deepseek, ok := dataset.pricing("deepseek-flash")
@@ -37,19 +38,10 @@ func TestCNYOfficial_RealSourceSnapshotParses(t *testing.T) {
 	require.InDelta(t, 1e-6, deepseek.PerToken["input_cost_per_token"], 1e-15)
 	require.InDelta(t, 4e-6, deepseek.PerToken["output_cost_per_token"], 1e-15)
 
-	// qwen3-max 两档阶梯，只表达 32000 档。
-	qwen, ok := dataset.pricing("qwen3-max")
-	require.True(t, ok)
-	require.NotNil(t, qwen.LongContext)
-	require.Equal(t, 32000, qwen.LongContext.Threshold)
-
-	// 所有解析出的价格都必须是人民币量级（每 token 1e-7 ~ 1e-4 区间）。
-	// 若误把美元价当人民币，这个区间检查会兜住明显偏小的值。
-	for model, priced := range dataset.Pricing {
-		input := priced.PerToken["input_cost_per_token"]
-		require.Greater(t, input, 0.0, model)
-		require.Less(t, input, 1e-3, "%s 输入价 %.10g 超出人民币合理区间", model, input)
-	}
+	// 地区 CNY 与数字量级都不能证明模型原价。
+	require.True(t, dataset.isNationalModel("qwen3-max"))
+	require.NotContains(t, dataset.Pricing, "qwen3-max")
+	require.NotContains(t, dataset.Pricing, "kimi-k3.1-pro-highspeed")
 
 	t.Logf("real snapshot: providers=%d cny_providers=%d entries=%d usable=%d national=%d ladders=%d conflicts=%d skipped_no_cny=%d time_pricing=%d",
 		dataset.Report.Providers, dataset.Report.ProvidersCNY, dataset.Report.ModelEntries,
@@ -82,7 +74,7 @@ func TestCNYOfficial_LiveSourceFetch(t *testing.T) {
 		&stubModelPricingSyncHistory{},
 		nil,
 	)
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	if err != nil {
 		t.Fatalf("live sync failed: %v", err)
 	}

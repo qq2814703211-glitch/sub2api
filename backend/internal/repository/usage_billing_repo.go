@@ -320,6 +320,14 @@ func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 		RETURNING balance, frozen_balance
 	`, cmd.HoldAmount, cmd.ActualAmount, cmd.UserID).Scan(&balance, &frozen)
 	if err == nil {
+		// 批图结算与普通用量计费共用同一套 Key 配额语义：钱包实扣的同一笔金额
+		// 也要累加到设置了额度上限的 Key（quota > 0，0 表示无限额度）。
+		// Key 已删除或无限额度时跳过，与 applyUsageBillingEffects 忽略
+		// ErrAPIKeyNotFound 的行为一致；配额累加失败则整个捕获事务回滚，
+		// 不会出现只扣钱包不记配额的不一致账本。
+		if _, quotaErr := incrementBatchImageAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.ActualAmount); quotaErr != nil {
+			return nil, quotaErr
+		}
 		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -331,6 +339,31 @@ func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 		return nil, service.ErrUserNotFound
 	}
 	return nil, errors.New("batch image frozen balance is insufficient")
+}
+
+// incrementBatchImageAPIKeyQuota 把批图钱包实扣的同一笔金额累加到 Key 的已用额度。
+// 与普通计费的 APIKeyQuotaCost 对齐：
+//   - 金额 <= 0 不累加；
+//   - 仅 Key 存在、未删除且 quota > 0（0 表示无限额度）时累加，无限额度的 Key
+//     在普通计费路径同样不累加 quota_used；
+//   - Key 已删除或无限额度时静默跳过，不影响钱包捕获，对应普通路径忽略
+//     ErrAPIKeyNotFound 的行为。
+func incrementBatchImageAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
+	if apiKeyID <= 0 || amount <= 0 {
+		return false, nil
+	}
+	var exhausted bool
+	err := tx.QueryRowContext(ctx, usageBillingAPIKeyQuotaUpdate+`
+		AND quota > 0
+		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
+	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return exhausted, nil
 }
 
 func releaseUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {

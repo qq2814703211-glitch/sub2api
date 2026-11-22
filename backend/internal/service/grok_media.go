@@ -415,13 +415,14 @@ func (s *OpenAIGatewayService) SelectMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string      `json:"model"`
-	BillingModel         string      `json:"billing_model,omitempty"`
-	UpstreamModel        string      `json:"upstream_model,omitempty"`
-	VideoResolution      string      `json:"video_resolution,omitempty"`
-	VideoDurationSeconds int         `json:"video_duration_seconds,omitempty"`
-	OriginalModel        string      `json:"original_model,omitempty"`
-	MediaUsage           *MediaUsage `json:"media_usage,omitempty"`
+	CatalogQuote         *CatalogVideoQuote `json:"catalog_quote,omitempty"`
+	Model                string             `json:"model"`
+	BillingModel         string             `json:"billing_model,omitempty"`
+	UpstreamModel        string             `json:"upstream_model,omitempty"`
+	VideoResolution      string             `json:"video_resolution,omitempty"`
+	VideoDurationSeconds int                `json:"video_duration_seconds,omitempty"`
+	OriginalModel        string             `json:"original_model,omitempty"`
+	MediaUsage           *MediaUsage        `json:"media_usage,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
@@ -713,14 +714,15 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		media = MergeMediaUsage(pending.MediaUsage, media)
 	}
 	return &OpenAIForwardResult{
-		MediaUsage:           media,
-		ResponseID:           responseID,
-		Model:                model,
-		BillingModel:         billingModel,
-		UpstreamModel:        upstreamModel,
-		VideoCount:           1,
-		VideoResolution:      resolution,
-		VideoDurationSeconds: durationSeconds,
+		MediaUsage:              media,
+		ProviderBillableSeconds: mediaNonNegativeNumber(gjson.GetBytes(statusBody, "video.duration")),
+		ResponseID:              responseID,
+		Model:                   model,
+		BillingModel:            billingModel,
+		UpstreamModel:           upstreamModel,
+		VideoCount:              1,
+		VideoResolution:         resolution,
+		VideoDurationSeconds:    durationSeconds,
 	}
 }
 
@@ -879,6 +881,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	}
 	if endpoint == GrokMediaEndpointVideoStatus {
 		result.VideoDurationSeconds = actualGrokVideoSeconds(respBody)
+		result.ProviderBillableSeconds = mediaNonNegativeNumber(gjson.GetBytes(respBody, "video.duration"))
 	}
 	if isGrokVideoCreateEndpoint(endpoint) {
 		result.DeferredHTTPStatus = resp.StatusCode
@@ -1024,6 +1027,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoCount = billed.VideoCount
 		result.VideoResolution = billed.VideoResolution
 		result.VideoDurationSeconds = actualGrokVideoSeconds(statusBody)
+		result.ProviderBillableSeconds = billed.ProviderBillableSeconds
 	}
 	return result, nil
 }

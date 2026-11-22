@@ -1920,6 +1920,7 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+  billing_units?: number | null
 
   created_at: string
 

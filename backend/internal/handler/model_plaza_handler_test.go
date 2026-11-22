@@ -162,6 +162,7 @@ func TestToModelPlazaOfficialPricing_NilPassthrough(t *testing.T) {
 
 func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 	maxTokens := 272000
+	zero := 0.0
 	g := service.PlazaGroup{
 		ID: 3, Name: "ladder", Platform: "openai", SubscriptionType: "standard", RateMultiplier: 1,
 		LongContextPricingEnabled: true,
@@ -176,11 +177,15 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 					{MinTokens: 272000, TierLabel: ">272K", InputPrice: testPtr(5e-6)},
 				},
 			},
+			// 实收 30m 只读投影：基础档显式 0，首档 0，次档缺项（nil）。
+			CacheWrite30m: &service.PlazaCacheWrite30m{Base: &zero, Intervals: []*float64{&zero, nil}},
 			OfficialPricing: &service.PlazaOfficialPricing{
-				InputPrice: testPtr(2.5e-6),
-				Intervals: []service.PricingInterval{
-					{MinTokens: 0, MaxTokens: &maxTokens, TierLabel: "≤272K", InputPrice: testPtr(2.5e-6)},
-					{MinTokens: 272000, TierLabel: ">272K", InputPrice: testPtr(5e-6)},
+				CacheWrite30mPrice: testPtr(0),
+				CacheWrite12hPrice: testPtr(7e-6),
+				InputPrice:         testPtr(2.5e-6),
+				Intervals: []service.PlazaOfficialPricingInterval{
+					{PricingInterval: service.PricingInterval{MinTokens: 0, MaxTokens: &maxTokens, TierLabel: "≤272K", InputPrice: testPtr(2.5e-6), CacheWrite12hPrice: testPtr(7e-6)}, CacheWrite30mPrice: testPtr(0)},
+					{PricingInterval: service.PricingInterval{MinTokens: 272000, TierLabel: ">272K", InputPrice: testPtr(5e-6), CacheWrite12hPrice: testPtr(14e-6)}, CacheWrite30mPrice: testPtr(0)},
 				},
 			},
 			LongContextBasis: service.ContextPricingBasisWholeRequest,
@@ -200,6 +205,10 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 	paidTiers := pricing["intervals"].([]any)
 	require.Len(t, paidTiers, 2)
 	require.Equal(t, ">272K", paidTiers[1].(map[string]any)["tier_label"])
+	// 售价 30m 来自分组实收投影：显式 0 必须保留，缺项必须缺项。
+	require.Equal(t, float64(0), pricing["cache_write_30m_price"])
+	require.Equal(t, float64(0), paidTiers[0].(map[string]any)["cache_write_30m_price"])
+	require.NotContains(t, paidTiers[1].(map[string]any), "cache_write_30m_price", "缺项档不得补 0 或参考价")
 
 	official := model["official_pricing"].(map[string]any)
 	officialTiers := official["intervals"].([]any)
@@ -208,6 +217,26 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 	require.Equal(t, "≤272K", first["tier_label"])
 	require.InDelta(t, 272000, first["max_tokens"].(float64), 0)
 	require.Contains(t, first, "cache_write_price", "区间 DTO 字段齐全（nil 输出 null）")
+	require.Equal(t, float64(0), official["cache_write_30m_price"])
+	require.Equal(t, 7e-6, official["cache_write_12h_price"])
+	require.Equal(t, float64(0), first["cache_write_30m_price"])
+	require.Equal(t, 14e-6, officialTiers[1].(map[string]any)["cache_write_12h_price"])
+
+	// 没有实收 30m 投影时（例如运营卡覆盖会清掉 30m），售价字段必须缺席：
+	// 参考价的 30m 绝不能冒充分组售价。
+	gNoSale30m := g
+	gNoSale30m.Models = append([]service.PlazaModel(nil), g.Models...)
+	gNoSale30m.Models[0].CacheWrite30m = nil
+	rawNoSale, err := json.Marshal(toModelPlazaGroupDTO(&gNoSale30m, nil))
+	require.NoError(t, err)
+	var decodedNoSale map[string]any
+	require.NoError(t, json.Unmarshal(rawNoSale, &decodedNoSale))
+	noSaleModel := decodedNoSale["models"].([]any)[0].(map[string]any)
+	noSalePricing := noSaleModel["pricing"].(map[string]any)
+	require.NotContains(t, noSalePricing, "cache_write_30m_price", "reference prices must not masquerade as configured sale prices")
+	for _, tier := range noSalePricing["intervals"].([]any) {
+		require.NotContains(t, tier.(map[string]any), "cache_write_30m_price")
+	}
 }
 
 func testPtr(v float64) *float64 { return &v }

@@ -42,11 +42,11 @@ func (h *OpenAIGatewayHandler) SeedanceTasks(c *gin.Context) {
 // Grok's per-second video tariff. Repeated polls share the durable task dedup key.
 func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandler, key *service.APIKey, subject middleware.AuthSubject, taskID string, result *service.OpenAIForwardResult) *service.OpenAIForwardResult {
 	if h == nil || h.gatewayService == nil || key == nil || result == nil ||
-		result.UpstreamTerminalEvent != "succeeded" || result.Usage.OutputTokens <= 0 || result.MediaUsage == nil || result.MediaUsage.Count <= 0 {
+		result.UpstreamTerminalEvent != "succeeded" || result.MediaUsage == nil || result.MediaUsage.Count <= 0 {
 		return nil
 	}
 	pending, err := h.gatewayService.LoadGrokVideoPendingBilling(ctx, taskID, subject.UserID, key.ID)
-	if err != nil || pending == nil {
+	if err != nil || pending == nil || (pending.CatalogQuote == nil && result.Usage.OutputTokens <= 0) {
 		return nil
 	}
 	owner, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskID, subject.UserID, key.ID)
@@ -54,6 +54,7 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 		return nil
 	}
 	merged := *result
+	merged.FrozenVideoQuote = pending.CatalogQuote
 	merged.BillingClaimOwner = owner
 	merged.MediaUsage = service.MergeMediaUsage(pending.MediaUsage, result.MediaUsage)
 	merged.Model = pending.Model

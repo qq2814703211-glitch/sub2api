@@ -5,6 +5,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +69,10 @@ type compatStreamUsageRun struct {
 // runCompatStreamUsageHandler 经 GatewayHandler 转发一次流式请求；上游写完 upstreamStream 后，
 // closeUpstream 为 false 时保持连接不再发送数据。
 func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, closeUpstream bool) compatStreamUsageRun {
+	return runCompatStreamWithPricing(t, endpoint, upstreamStream, closeUpstream, nil, nil)
+}
+
+func runCompatStreamWithPricing(t *testing.T, endpoint, upstreamStream string, closeUpstream bool, catalog *service.PricingService, betweenEvents func() error) compatStreamUsageRun {
 	t.Helper()
 	cfg := &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}
 	groupID := int64(9300)
@@ -90,6 +95,15 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pr.Close(); _ = pw.Close() })
 	go func() {
+		if betweenEvents != nil {
+			if _, err := io.WriteString(pw, compatStreamUsagePartialStream); err != nil {
+				return
+			}
+			if err := betweenEvents(); err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+		}
 		_, _ = io.WriteString(pw, upstreamStream)
 		if closeUpstream {
 			_ = pw.Close()
@@ -101,7 +115,7 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 	}}
 	gw := service.NewGatewayService(
 		nil, &fakeGroupRepo{group: group}, run.usageRepo, run.billingRepo, nil, nil, nil, nil, cfg,
-		snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, run.upstream,
+		snapshot, nil, service.NewBillingService(cfg, catalog), nil, nil, nil, run.upstream,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &GatewayHandler{
@@ -113,19 +127,79 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 	if endpoint == "chat/completions" {
 		body = `{"model":"claude-sonnet-4.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`
 	}
-	c, _ := gin.CreateTestContext(run.rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/"+endpoint, bytes.NewBufferString(body))
-	c.Request.Header.Set("Content-Type", "application/json")
+	request := httptest.NewRequest(http.MethodPost, "/v1/"+endpoint, bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
 	apiKey := &service.APIKey{ID: 9302, UserID: 9303, GroupID: &groupID, Group: group, User: &service.User{ID: 9303, Balance: 100}}
-	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
-	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 9303})
 
+	router := gin.New()
+	router.Use(func(req *gin.Context) {
+		req.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		req.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 9303})
+	}, h.PrepareAPIKeyRoutes(nil))
+	handle := h.Responses
 	if endpoint == "chat/completions" {
-		h.ChatCompletions(c)
-	} else {
-		h.Responses(c)
+		handle = h.ChatCompletions
 	}
+	router.POST("/v1/"+endpoint, handle)
+	router.ServeHTTP(run.rec, request)
 	return run
+}
+
+type pinStreamRemote struct {
+	input int
+	model string
+}
+
+func (p *pinStreamRemote) FetchPricingJSON(context.Context, string) ([]byte, error) {
+	return []byte(fmt.Sprintf(`{%q:{"input_cost_per_token":%d,"output_cost_per_token":1}}`, p.model, p.input)), nil
+}
+func (*pinStreamRemote) FetchHashText(context.Context, string) (string, error) {
+	panic("unexpected hash fetch")
+}
+
+func TestRequestCatalogPinWebSocketTwoFrames(t *testing.T) {
+	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeCtxPool} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Pricing.DataDir = t.TempDir()
+			cfg.Pricing.RemoteURL = "https://fixture.invalid/prices"
+			remote := &pinStreamRemote{input: 2, model: "gpt-5.6-sol"}
+			p := service.NewPricingService(cfg, remote)
+			require.NoError(t, p.ForceUpdate())
+			got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{catalog: p, ingressMode: mode, firstPayload: wsGroupPricingFirst, secondPayload: wsGroupPricingSecond, apiKeyCredential: wsGroupPricingKey, apiKeyService: newWSGroupPricingAPIKeyService(newWSGroupPricingAPIKeyRepoStub(1)), afterFirstUpstreamRequest: func(*service.ChannelService) error { remote.input = 7; return p.ForceUpdate() }})
+			require.Len(t, got.logs, 2)
+			require.Equal(t, 5.0, got.logs[0].ActualCost)
+			require.Equal(t, 15.0, got.logs[1].ActualCost)
+			require.NotEqual(t, got.logs[0].PriceTrace.BaseHash, got.logs[1].PriceTrace.BaseHash)
+		})
+	}
+}
+
+func TestRequestCatalogPinHTTPMidStream(t *testing.T) {
+	for _, endpoint := range []string{"chat/completions", "responses"} {
+		t.Run(endpoint, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Pricing.DataDir = t.TempDir()
+			cfg.Pricing.RemoteURL = "https://fixture.invalid/prices"
+			remote := &pinStreamRemote{input: 2, model: "claude-sonnet-4.5"}
+			catalog := service.NewPricingService(cfg, remote)
+			require.NoError(t, catalog.ForceUpdate())
+			old := runCompatStreamWithPricing(t, endpoint, compatStreamUsageCompletion, true, catalog, func() error { remote.input = 7; return catalog.ForceUpdate() })
+			fresh := runCompatStreamWithPricing(t, endpoint, compatStreamUsagePartialStream+compatStreamUsageCompletion, true, catalog, nil)
+			for _, tc := range []struct {
+				run  compatStreamUsageRun
+				want float64
+			}{{old, 31}, {fresh, 91}} {
+				require.Equal(t, 200, tc.run.rec.Code)
+				require.Len(t, tc.run.billingRepo.commands, 1)
+				require.Equal(t, tc.want, tc.run.billingRepo.commands[0].BalanceCost)
+				u := <-tc.run.usageRepo.created
+				require.Equal(t, tc.want, u.ActualCost)
+				require.True(t, u.Stream)
+				require.Equal(t, "claude-sonnet-4.5", u.PriceTrace.Basis.Row.SKU)
+			}
+		})
+	}
 }
 
 // compatStreamUsageMarkers 返回成功收尾与终止错误的标记。

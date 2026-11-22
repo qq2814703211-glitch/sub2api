@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,7 +43,19 @@ type BuildInfo struct {
 
 // ProvidePricingService creates and initializes PricingService
 func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
-	svc := NewPricingService(cfg, remoteClient)
+	local := *cfg
+	var privateDir string
+	if strings.TrimSpace(cfg.Pricing.OverrideFile) != "" {
+		// A V1 binary sharing the volume must never see or write V2's projection.
+		var err error
+		privateDir, err = os.MkdirTemp("", "sub2api-price-v2-*")
+		if err != nil {
+			return nil, err
+		}
+		local.Pricing.OverrideFile = filepath.Join(privateDir, "override.json")
+	}
+	svc := NewPricingService(&local, remoteClient)
+	svc.privateProjectionDir = privateDir
 	if err := svc.Initialize(); err != nil {
 		// Pricing service initialization failure should not block startup, use fallback prices
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
@@ -663,13 +676,19 @@ func ProvideModelPricingSyncService(
 	historyRepo ModelPricingSyncHistoryRepository,
 	remoteClient PricingRemoteClient,
 	settingService *SettingService,
-) *ModelPricingSyncService {
+	store PriceSyncPublishStore,
+) (*ModelPricingSyncService, error) {
 	if cfg == nil {
-		return NewModelPricingSyncService(nil, pricingService, historyRepo, nil)
+		return NewModelPricingSyncService(nil, pricingService, historyRepo, nil), nil
 	}
 	syncCfg := &ModelPricingSyncConfig{
-		OverrideFile: strings.TrimSpace(cfg.Pricing.OverrideFile),
-		Interval:     time.Duration(cfg.Pricing.HashCheckIntervalMinutes) * time.Minute,
+		OverrideFile:       strings.TrimSpace(pricingService.cfg.Pricing.OverrideFile),
+		LegacyOverrideFile: strings.TrimSpace(cfg.Pricing.OverrideFile),
+		Store:              store, Collector: collectPriceSyncV2,
+		Interval: time.Duration(cfg.Pricing.HashCheckIntervalMinutes) * time.Minute,
+		// Followers are woken by the commit itself; this is only the bounded
+		// backstop for lost notifications, reconnects and restarts.
+		FollowInterval: time.Duration(cfg.Pricing.PublishFollowBackstopSeconds) * time.Second,
 	}
 	if settingService != nil {
 		syncCfg.SettingsReader = settingService
@@ -680,10 +699,19 @@ func ProvideModelPricingSyncService(
 		fetcher = remoteClient
 	}
 	svc := NewModelPricingSyncService(syncCfg, pricingService, historyRepo, fetcher)
+	if svc.SyncEnabled() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := svc.publish(ctx, nil); err != nil {
+			return nil, err
+		}
+		svc.followPriceSync()
+		pricingService.pricePublisher = svc
+	}
 	if BackgroundJobsEnabled() {
 		svc.Start()
 	}
-	return svc
+	return svc, nil
 }
 
 // ProvideAuditLogService 创建操作审计日志服务并启动异步写入与保留期清理协程。

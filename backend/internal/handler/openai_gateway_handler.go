@@ -258,7 +258,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
-	return base
+	return service.CopyRequestPricing(parent, base)
 }
 
 // wrapUsageRecordTaskContext 包装计费任务：复制请求级 context 值，并接管请求的在途余额预留引用。
@@ -872,6 +872,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// #5148 对齐：错误返回携带的部分 result（流中断前上游已计量的 usage）照常
 		// 入账；failover 错误恒定 result=nil，不会重复计费。
 		submitResponsesUsage := func(res *service.OpenAIForwardResult) {
+			if res != nil && err != nil {
+				res.UnitRequestFailed = true
+			}
 			if res == nil {
 				return
 			}
@@ -1476,6 +1479,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		// usage 照常入账，避免上游已产生消耗的请求完全漏记（#5148，对齐 anthropic
 		// 网关同名修复）。failover 错误恒定 result=nil，不会重复计费。
 		submitMessagesUsage := func(res *service.OpenAIForwardResult) {
+			if res != nil && err != nil {
+				res.UnitRequestFailed = true
+			}
 			if res == nil {
 				return
 			}
@@ -2631,6 +2637,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	firstTurnStartedAt := time.Now()
+	ctx = h.gatewayService.WithRequestCatalog(ctx)
+	attemptCatalog := service.RequestCatalogFromContext(ctx).WithPricingGroup(apiKey.Group)
+	ctx = attemptCatalog.Context(ctx)
 	if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "unsupported websocket message type")
 		return
@@ -3116,6 +3125,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
+		var turnCatalogs wsTurnCatalogs
+		turnCatalogs.store(1, attemptCatalog)
 		// 后续 turn 的计费分组同样在 BeforeTurn 经认证缓存重取，使分组调价对
 		// 已打开的连接生效。
 		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
@@ -3133,6 +3144,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				if turn > 1 && turnCatalogs.get(turn) == nil {
+					turnCatalogs.store(turn, h.gatewayService.NewTurnCatalog(ctx))
+				}
 				p := service.APIKeyQueueRequestPermissions{Models: requestmodel.FromBodyCandidates("", "application/json", payload), Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
 				if service.IsExplicitImageGenerationIntent("/v1/responses", originalModel, payload) {
 					p.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
@@ -3244,7 +3258,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnBillingAPIKeys.set(turn, refreshed)
 					turnBillingCtx = service.ContextWithAPIKeyRoute(turnBillingCtx, refreshed)
 				}
-				turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
+				catalog := turnCatalogs.get(turn)
+				if catalog != nil && turn > 1 {
+					catalog = turnCatalogs.bindGroup(turn, turnBillingAPIKeys.forTurn(turn, apiKey).Group)
+				}
+				var turnCtx context.Context
+				var turnAt time.Time
+				if catalog != nil {
+					turnCtx, turnAt = h.gatewayService.WithPinnedOpenAITurnPricingContext(catalog.Context(turnBillingCtx), apiKey.GroupID)
+				} else {
+					turnCtx, turnAt = h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
+					turnCatalogs.store(turn, service.RequestCatalogFromContext(turnCtx))
+				}
 				if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
 					reqLog.Info("openai.websocket_turn_profit_vetoed",
 						zap.Int("turn", turn),
@@ -3285,6 +3310,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
 				turnStart := getTurnStart(turn)
+				turnCatalog := turnCatalogs.get(turn)
 				cyberBlockBody := takeCyberTurnBody(turn)
 				// 每次 attempt 都清 cyber mark；failover 链结束前保留 recorded guard，
 				// 避免同一逻辑 turn 换号后重复落风控。CyberBlocked 必须在 submit 前
@@ -3314,7 +3340,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				cyberMarked := service.GetOpsCyberPolicy(c) != nil
-				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash)
+				h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, turnRequestedModel, turnErr != nil, cyberBlockBody, turnUsageFields, requestPayloadHash, turnCatalog)
 				cyberBlockedThisConn, cyberBlockPendingAfterFailover = advanceOpenAIWSCyberBlockState(
 					cyberBlockedThisConn,
 					cyberBlockPendingAfterFailover,
@@ -3362,7 +3388,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
+				h.submitOpenAIUsageRecordTask(turnCatalog.Context(ctx), result, func(taskCtx context.Context) {
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
 						APIKey:             turnBillingAPIKey,
@@ -3432,6 +3458,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
+					// The transport renumbers a retried frame as turn 1, including on the same account.
+					attemptCatalog = turnCatalogs.latest()
+					turnCatalogs.restart(attemptCatalog)
 					previousResponseID = ""
 					reqLog.Warn("openai.websocket_current_turn_failover_retry",
 						zap.Int64("account_id", account.ID),
@@ -4578,7 +4607,7 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 // 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
-func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string, turnCatalog ...*service.RequestCatalog) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -4661,6 +4690,10 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
 	}
+	pricing := service.CopyRequestPricing(requestCtx, context.Background())
+	if len(turnCatalog) > 0 {
+		pricing = turnCatalog[0].Context(pricing)
+	}
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
 	if gwSvc != nil && apiKey != nil && !cyberLogOnly {
 		block := buildCyberSessionBlock(apiKey.ID, c, cyberBlockBody)
@@ -4693,7 +4726,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			})
 		}
 		if forwardErrored && gwSvc != nil {
-			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
+			gwSvc.RecordCyberPolicyUsageLog(service.CopyRequestPricing(pricing, ctx), service.CyberPolicyUsageInput{
 				APIKey:             apiKey,
 				Account:            account,
 				Subscription:       subscription,

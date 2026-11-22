@@ -404,6 +404,8 @@ const billingModeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingModes') },
   { value: 'token', label: t('admin.usage.billingModeToken') },
   { value: 'per_request', label: t('admin.usage.billingModePerRequest') },
+  { value: 'per_second', label: t('modelPlaza.table.perSecond') },
+  { value: 'per_image', label: t('modelPlaza.table.perImage') },
   { value: 'image', label: t('admin.usage.billingModeImage') },
   { value: 'video', label: t('admin.usage.billingModeVideo') },
 ])

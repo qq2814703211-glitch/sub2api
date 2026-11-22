@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
@@ -653,4 +656,33 @@ func TestGetModelDefaultPricing_OmitsUnsupportedCache1hPrice(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	require.True(t, body.Data.Found)
 	require.Nil(t, body.Data.CacheWrite1hPrice)
+}
+
+func TestGetModelDefaultPricing_IndependentGPTCacheTTLs(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Pricing.DataDir = t.TempDir()
+	cfg.Pricing.UpdateIntervalHours = 24
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Pricing.DataDir, "model_pricing.json"), []byte(`{"gpt-6-luna":{
+		"input_cost_per_token":0.000001, "cache_creation_input_token_cost":0.000003,
+		"cache_creation_input_token_cost_above_1hr":0.000009,
+		"cache_creation_input_token_cost_30m":0.000007, "cache_creation_input_token_cost_12h":0
+	}}`), 0600))
+	catalog := service.NewPricingService(cfg, nil)
+	require.NoError(t, catalog.Initialize())
+	t.Cleanup(catalog.Stop)
+	h := &ChannelHandler{billingService: service.NewBillingService(cfg, catalog)}
+	router := gin.New()
+	router.GET("/channels/model-pricing", h.GetModelDefaultPricing)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/channels/model-pricing?model=gpt-6-luna", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var body struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, true, body.Data["found"])
+	require.Equal(t, 3e-6, body.Data["cache_write_price"])
+	require.Equal(t, 9e-6, body.Data["cache_write_1h_price"])
+	require.Equal(t, 7e-6, body.Data["cache_write_30m_price"])
+	require.Equal(t, float64(0), body.Data["cache_write_12h_price"])
 }

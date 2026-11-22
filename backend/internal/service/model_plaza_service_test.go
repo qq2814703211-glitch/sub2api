@@ -765,3 +765,38 @@ func TestListPlazaGroups_AllowlistWildcardStillFilters(t *testing.T) {
 	}
 	require.Equal(t, []string{"claude-opus-5"}, names, "通配白名单只放行匹配的模型")
 }
+
+func TestPlazaCacheWrite30mFromSchedule(t *testing.T) {
+	// 整表没有 30m 价：保持缺项，不合成 0。
+	require.Nil(t, plazaCacheWrite30mFromSchedule(nil))
+	require.Nil(t, plazaCacheWrite30mFromSchedule(&ContextPricingSchedule{
+		Tiers: []ContextPricingTier{{Input: testPtrFloat64(1e-6)}},
+	}))
+
+	// 基础档显式 0，次档独立价：逐档投影，显式 0 不被吞掉。
+	zero, second := 0.0, 5e-6
+	out := plazaCacheWrite30mFromSchedule(&ContextPricingSchedule{
+		Tiers: []ContextPricingTier{{CacheWrite30m: &zero}, {CacheWrite30m: &second}},
+	})
+	require.NotNil(t, out)
+	require.Equal(t, &zero, out.Base)
+	require.Len(t, out.Intervals, 2)
+	require.Equal(t, &zero, out.Intervals[0])
+	require.Equal(t, &second, out.Intervals[1])
+
+	// 单档：不产生阶梯投影。
+	single := plazaCacheWrite30mFromSchedule(&ContextPricingSchedule{
+		Tiers: []ContextPricingTier{{CacheWrite30m: &zero}},
+	})
+	require.NotNil(t, single)
+	require.Equal(t, &zero, single.Base)
+	require.Nil(t, single.Intervals)
+
+	// 首档缺项但后档有价：结构保留，首档仍为 nil（缺项不补）。
+	mixed := plazaCacheWrite30mFromSchedule(&ContextPricingSchedule{
+		Tiers: []ContextPricingTier{{CacheWrite30m: nil}, {CacheWrite30m: &second}},
+	})
+	require.NotNil(t, mixed)
+	require.Nil(t, mixed.Base)
+	require.Equal(t, &second, mixed.Intervals[1])
+}

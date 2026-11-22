@@ -37,7 +37,7 @@ func TestCNYOfficial_LiveSourceWritesRMBValues(t *testing.T) {
 		&stubModelPricingSyncHistory{},
 		nil,
 	)
-	_, err = svc.Sync(context.Background())
+	_, err = syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(path)

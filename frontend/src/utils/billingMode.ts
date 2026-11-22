@@ -5,6 +5,8 @@ export const BILLING_MODE_VIDEO = 'video'
 
 export function getBillingModeLabel(mode: string | null | undefined, t: (key: string) => string): string {
   switch (mode) {
+    case 'per_second': return t('modelPlaza.table.perSecond')
+    case 'per_image': return t('modelPlaza.table.perImage')
     case BILLING_MODE_PER_REQUEST: return t('admin.usage.billingModePerRequest')
     case BILLING_MODE_IMAGE: return t('admin.usage.billingModeImage')
     case BILLING_MODE_VIDEO: return t('admin.usage.billingModeVideo')
@@ -24,10 +26,12 @@ export function getBillingModeBadgeClass(mode: string | null | undefined): strin
 interface ImageBillingRow {
   image_count: number
   billing_mode?: string | null
+  billing_units?: number | null
   total_cost: number
 }
 
-export function isImageUsage(row: Pick<ImageBillingRow, 'image_count' | 'billing_mode'> | null | undefined): boolean {
+export function isImageUsage(row: Pick<ImageBillingRow, 'image_count' | 'billing_mode' | 'billing_units'> | null | undefined): boolean {
+  if (row?.billing_units != null) return row.billing_mode === 'per_image'
   return (row?.image_count ?? 0) > 0 && row?.billing_mode !== BILLING_MODE_TOKEN && row?.billing_mode !== BILLING_MODE_VIDEO
 }
 

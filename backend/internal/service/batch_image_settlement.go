@@ -34,24 +34,46 @@ func (r *BatchImageModelPricingResolver) BatchImageUnitPrice(ctx context.Context
 	if r == nil || r.Resolver == nil || job == nil || strings.TrimSpace(job.Model) == "" {
 		return 0, ErrBatchImageSettlementPricingMissing
 	}
-	resolved := r.Resolver.Resolve(ctx, PricingInput{Model: job.Model})
+	price, _, err := r.batchUnitPrice(ctx, PricingInput{Model: job.Model})
+	return price, err
+}
+
+func (r *BatchImageModelPricingResolver) batchUnitPrice(ctx context.Context, in PricingInput) (float64, BillingMode, error) {
+	if r == nil || r.Resolver == nil {
+		return 0, "", ErrBatchImageSettlementPricingMissing
+	}
+	if r.Resolver.billingService.exactCatalogUnit(in.Model) == nil {
+		in.Group = nil
+		in.GroupID = nil
+	}
+	resolved := r.Resolver.Resolve(ctx, in)
+	if resolved.isCatalogUnit() {
+		if resolved.Mode == BillingModePerSecond {
+			return 0, "", ErrBatchImageSettlementPricingMissing.WithCause(ErrMediaUsageIncomplete)
+		}
+		cost, err := resolved.catalogUnitCost(1, 1)
+		if err != nil {
+			return 0, "", err
+		}
+		return cost.TotalCost, resolved.Mode, nil
+	}
 	if resolved == nil {
-		return 0, ErrBatchImageSettlementPricingMissing
+		return 0, "", ErrBatchImageSettlementPricingMissing
 	}
 	switch resolved.Mode {
 	case BillingModeImage, BillingModePerRequest:
-		if resolved.DefaultPerRequestPrice > 0 {
-			return resolved.DefaultPerRequestPrice, nil
+		if resolved.DefaultPerRequestPrice > 0 || (resolved.channelPricing != nil && resolved.channelPricing.PerRequestPrice != nil && resolved.DefaultPerRequestPrice == 0) {
+			return resolved.DefaultPerRequestPrice, "", nil
 		}
 		if len(resolved.RequestTiers) == 1 && resolved.RequestTiers[0].PerRequestPrice != nil && *resolved.RequestTiers[0].PerRequestPrice >= 0 {
-			return *resolved.RequestTiers[0].PerRequestPrice, nil
+			return *resolved.RequestTiers[0].PerRequestPrice, "", nil
 		}
 	case BillingModeToken:
 		if resolved.BasePricing != nil && (resolved.BasePricing.ImageOutputPriceExplicit || resolved.BasePricing.ImageOutputPricePerToken > 0) {
-			return resolved.BasePricing.ImageOutputPricePerToken, nil
+			return resolved.BasePricing.ImageOutputPricePerToken, "", nil
 		}
 	}
-	return 0, ErrBatchImageSettlementPricingMissing
+	return 0, "", ErrBatchImageSettlementPricingMissing
 }
 
 type BatchImageSettlementService struct {
@@ -135,7 +157,20 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 		}
 		return nil, err
 	}
-	actualCost := float64(job.SuccessCount) * unitPrice
+	units, images := job.SuccessCount, job.SuccessCount
+	if job.CatalogUnitMode.isCatalogUnit() {
+		images, err = s.catalogBatchOutputCount(ctx, job)
+		if err != nil {
+			if recordErr := s.recordSettlementFailure(ctx, job, "SETTLEMENT_INVALID_COUNTS", err.Error()); recordErr != nil {
+				return nil, recordErr
+			}
+			return nil, err
+		}
+		if job.CatalogUnitMode == BillingModePerImage {
+			units = images
+		}
+	}
+	actualCost := float64(units) * unitPrice
 	result.ActualCost = actualCost
 	holdAmount := job.EstimatedCost
 	if job.HoldAmount != nil {
@@ -177,9 +212,32 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 	}); err != nil {
 		return nil, err
 	}
-	s.recordUsageLog(ctx, job, actualCost, result.RequestID, now)
+	s.recordUsageLog(ctx, job, actualCost, units, images, result.RequestID, now)
 
 	return result, nil
+}
+
+// The immutable index records an image count for each successful provider item.
+func (s *BatchImageSettlementService) catalogBatchOutputCount(ctx context.Context, job *BatchImageJob) (int, error) {
+	const pageSize = 500
+	images := 0
+	for offset := 0; offset < job.SuccessCount; {
+		rows, err := s.Repo.ListBatchImageItems(ctx, job.BatchID, BatchImageItemFilter{Status: BatchImageParsedStatusSucceeded, Limit: pageSize, Offset: offset})
+		if err != nil {
+			return 0, err
+		}
+		if len(rows) == 0 || offset+len(rows) > job.SuccessCount {
+			return 0, ErrBatchImageSettlementInvalidCounts
+		}
+		for _, item := range rows {
+			if item == nil || item.ImageCount <= 0 {
+				return 0, ErrBatchImageSettlementInvalidCounts
+			}
+			images += item.ImageCount
+		}
+		offset += len(rows)
+	}
+	return images, nil
 }
 
 // isBatchImageSettlementRetryExhausted 判断 settling job 是否已达重试上限。
@@ -249,7 +307,7 @@ func (s *BatchImageSettlementService) failExhaustedSettlement(ctx context.Contex
 	return ErrBatchImageSettlementBillingFailed
 }
 
-func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *BatchImageJob, actualCost float64, requestID string, createdAt time.Time) {
+func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *BatchImageJob, actualCost float64, units, images int, requestID string, createdAt time.Time) {
 	if s == nil || s.UsageLogRepo == nil || job == nil || job.APIKeyID == nil || job.AccountID == nil {
 		return
 	}
@@ -267,7 +325,7 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		RequestedModel:        job.Model,
 		InboundEndpoint:       &inboundEndpoint,
 		UpstreamEndpoint:      &upstreamEndpoint,
-		ImageCount:            job.SuccessCount,
+		ImageCount:            images,
 		ImageOutputCost:       actualCost,
 		TotalCost:             actualCost,
 		ActualCost:            actualCost,
@@ -279,6 +337,11 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		ImageSize:             &imageSize,
 		SessionID:             job.SessionID,
 		CreatedAt:             createdAt,
+	}
+	if job.CatalogUnitMode.isCatalogUnit() {
+		billingMode = string(job.CatalogUnitMode)
+		quantity := float64(units)
+		usageLog.BillingUnits = &quantity
 	}
 	writeUsageLogBestEffort(ctx, s.UsageLogRepo, usageLog, "service.batch_image_settlement")
 }

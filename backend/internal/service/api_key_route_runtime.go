@@ -44,6 +44,9 @@ func ContextWithAPIKeyRoute(ctx context.Context, key *APIKey) context.Context {
 	if key == nil || key.GroupID == nil || key.Group == nil {
 		return ctx
 	}
+	if pin := RequestCatalogFromContext(ctx); pin != nil {
+		ctx = pin.WithPricingGroup(key.Group).Context(ctx)
+	}
 	ctx = context.WithValue(ctx, ctxkey.Group, key.Group)
 	if key.HasMultipleRoutes() {
 		ctx = context.WithValue(ctx, gatewayTokenRequestBillingGroupCtxKey{}, key.Group)

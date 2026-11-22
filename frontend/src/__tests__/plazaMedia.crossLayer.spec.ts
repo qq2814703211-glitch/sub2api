@@ -1,11 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import PlazaModelPricingTable from '@/components/modelPlaza/PlazaModelPricingTable.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
 import { createDefaultTimePricingForm } from '@/components/admin/channel/types'
 import { readFileSync } from 'node:fs'
 vi.mock('vue-i18n',async()=>({...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),useI18n:()=>({t:(key:string, values?:Record<string,unknown>)=>key==='mediaPricing.inputSurcharge' ? `${key} price:${values?.price} count:${values?.count}` : key})}))
 const root=process.env.PLAZA_FIXTURE_DIR || process.cwd()+'/src/__tests__/fixtures/plaza'
+beforeEach(() => { setActivePinia(createPinia()) })
 
 describe('independent UI review real cross-layer fixtures',()=>{
  it('advertises the effective media period price returned by billing',()=>{

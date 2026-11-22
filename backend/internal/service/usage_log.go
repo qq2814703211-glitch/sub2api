@@ -102,6 +102,10 @@ func ApplyLegacyRequestFields(requestType RequestType, fallbackStream bool, fall
 }
 
 type UsageLog struct {
+	// PriceTrace accompanies the structured billing audit and durable job JSON.
+	// It is not an SQL column or part of the idempotency fingerprint.
+	PriceTrace *RequestPriceTrace `json:"price_trace,omitempty" gorm:"-"`
+
 	ID        int64
 	UserID    int64
 	APIKeyID  int64
@@ -127,7 +131,8 @@ type UsageLog struct {
 	// BillingTier 计费层级标签（per_request/image 模式）
 	BillingTier *string
 	// BillingMode 计费模式：token/image
-	BillingMode *string
+	BillingMode  *string
+	BillingUnits *float64 // measured quantity for explicit catalog unit billing
 	// ServiceTier records the billable request tier, e.g. OpenAI "priority" / "flex"
 	// or Anthropic "fast".
 	ServiceTier *string

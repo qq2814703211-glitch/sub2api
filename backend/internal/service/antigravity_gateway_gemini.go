@@ -43,6 +43,7 @@ func WithForwardGeminiSession(groupID int64, sessionHash string) ForwardGeminiOp
 
 func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool, options ...ForwardGeminiOption) (*ForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
+	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
 	forwardOpts := forwardGeminiOptions{}
 	for _, apply := range options {
@@ -472,6 +473,7 @@ handleSuccess:
 		ClientDisconnect:              clientDisconnect,
 		ImageEndpoint:                 imageCount > 0,
 		ImageCount:                    imageCount,
+		actualImageCount:              observedGeminiImageCount(c),
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
 	}, nil

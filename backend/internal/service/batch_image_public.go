@@ -95,6 +95,7 @@ type BatchImagePublicService struct {
 }
 
 type BatchImagePricingSnapshot struct {
+	CatalogUnitMode         BillingMode
 	BaseUnitPrice           float64
 	GroupRateMultiplier     float64
 	AccountRateMultiplier   float64
@@ -278,6 +279,7 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		BillableUnitPrice:       pricingSnapshot.BillableUnitPrice,
 		HoldUnitPrice:           pricingSnapshot.HoldUnitPrice,
 		PricingSnapshotVersion:  1,
+		CatalogUnitMode:         pricingSnapshot.CatalogUnitMode,
 		Currency:                "USD",
 		HoldID:                  &holdID,
 		IdempotencyKey:          batchImageOptionalStringPtr(idempotencyKey),
@@ -999,6 +1001,8 @@ func (s *BatchImagePublicService) ensureGroupAllowsBatchImage(ctx context.Contex
 
 func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, owner BatchImageOwner, req BatchImageSubmitRequest, provider string, account *Account) (*BatchImagePricingSnapshot, error) {
 	unit := -1.0
+	var catalogMode BillingMode
+	var pricingGroup *Group
 	groupMultiplier := 1.0
 	discountMultiplier := defaultBatchImageDiscountMultiplier
 	holdMultiplier := defaultBatchImageHoldMultiplier
@@ -1013,6 +1017,7 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if !group.AllowBatchImageGeneration {
 			return nil, ErrBatchImageGroupDisabled
 		}
+		pricingGroup = group
 		groupDefaultMultiplier := group.RateMultiplier
 		if groupDefaultMultiplier < 0 {
 			groupDefaultMultiplier = 0
@@ -1049,8 +1054,20 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if s.Pricing == nil {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		resolvedUnit, err := s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: provider, Model: req.Model})
-		if err != nil || resolvedUnit < 0 {
+		var resolvedUnit float64
+		var err error
+		if r, ok := s.Pricing.(*BatchImageModelPricingResolver); ok {
+			resolvedUnit, catalogMode, err = r.batchUnitPrice(ctx, PricingInput{Model: req.Model, GroupID: owner.GroupID, Group: pricingGroup})
+		} else {
+			resolvedUnit, err = s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: provider, Model: req.Model})
+		}
+		if err != nil {
+			if errors.Is(err, ErrMediaUsageIncomplete) {
+				return nil, ErrBatchImageSettlementPricingMissing.WithCause(err)
+			}
+			return nil, ErrBatchImageSettlementPricingMissing
+		}
+		if resolvedUnit < 0 {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
 		unit = resolvedUnit
@@ -1076,6 +1093,7 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 	billableUnitPrice := standardUnitPrice * discountMultiplier
 	holdUnitPrice := standardUnitPrice * holdMultiplier
 	return &BatchImagePricingSnapshot{
+		CatalogUnitMode:         catalogMode,
 		BaseUnitPrice:           unit,
 		GroupRateMultiplier:     groupMultiplier,
 		AccountRateMultiplier:   accountMultiplier,

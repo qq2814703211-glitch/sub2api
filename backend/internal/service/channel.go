@@ -15,7 +15,10 @@ const (
 	BillingModeToken      BillingMode = "token"       // 按 token 区间计费
 	BillingModePerRequest BillingMode = "per_request" // 按次计费（支持上下文窗口分层）
 	BillingModeImage      BillingMode = "image"       // 图片计费（当前按次，预留 token 计费）
-	BillingModeVideo      BillingMode = "video"       // 视频生成计费（按视频生成次数）
+	BillingModeVideo      BillingMode = "video"       // 既有视频分辨率价卡
+	// Explicit global catalog modes, distinct from historical channel cards.
+	BillingModePerSecond BillingMode = "per_second"
+	BillingModePerImage  BillingMode = "per_image"
 )
 
 // IsValid 检查 BillingMode 是否为合法值
@@ -30,7 +33,7 @@ func (m BillingMode) IsValid() bool {
 // IsValidUsageFilter 检查 BillingMode 是否可用于使用记录筛选。
 func (m BillingMode) IsValidUsageFilter() bool {
 	switch m {
-	case BillingModeToken, BillingModePerRequest, BillingModeImage, BillingModeVideo, "":
+	case BillingModeToken, BillingModePerRequest, BillingModePerSecond, BillingModePerImage, BillingModeImage, BillingModeVideo, "":
 		return true
 	}
 	return false
@@ -88,6 +91,8 @@ type AccountStatsPricingRule struct {
 
 // ChannelModelPricing 渠道模型定价条目
 type ChannelModelPricing struct {
+	CatalogUnitPrice *float64 `json:"-"` // display-only scalar in units of BillingMode
+
 	ID                         int64               `json:"id,omitempty"`
 	ChannelID                  int64               `json:"channel_id,omitempty"`
 	Platform                   string              `json:"platform"` // 所属平台（anthropic/openai/gemini/...）
@@ -465,9 +470,10 @@ type ChannelUsageFields struct {
 
 // SupportedModel 渠道的一个支持模型条目（无通配符、可直接展示给用户）
 type SupportedModel struct {
-	Name     string               // 用户侧模型名
-	Platform string               // 所属平台
-	Pricing  *ChannelModelPricing // 定价详情（nil 表示未配置定价）
+	catalogModel string               // populated only for a literal, channel-mapped billing identity
+	Name         string               // 用户侧模型名
+	Platform     string               // 所属平台
+	Pricing      *ChannelModelPricing // 定价详情（nil 表示未配置定价）
 }
 
 // wildcardSuffix 是模型模式中的通配符后缀标记（仅支持尾部匹配）。
@@ -603,16 +609,17 @@ func (c *Channel) SupportedModels() []SupportedModel {
 		return name, nil
 	}
 
-	add := func(platform, displayName string, pricing *ChannelModelPricing) {
+	add := func(platform, displayName, catalogModel string, pricing *ChannelModelPricing) {
 		key := dedupKey{platform: platform, name: strings.ToLower(displayName)}
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
 		result = append(result, SupportedModel{
-			Name:     displayName,
-			Platform: platform,
-			Pricing:  pricing,
+			Name:         displayName,
+			catalogModel: catalogModel,
+			Platform:     platform,
+			Pricing:      pricing,
 		})
 	}
 
@@ -632,7 +639,7 @@ func (c *Channel) SupportedModels() []SupportedModel {
 				for _, candidate := range pidx.names {
 					if strings.HasPrefix(strings.ToLower(candidate), prefixLower) {
 						display, pricing := lookup(pidx, candidate)
-						add(platform, display, pricing)
+						add(platform, display, "", pricing)
 					}
 				}
 				continue
@@ -648,7 +655,11 @@ func (c *Channel) SupportedModels() []SupportedModel {
 			_, pricing := lookup(pidx, pricingKey)
 			// 显示名优先用 src 在定价里的原始大小写（若 src 本身是个定价模型名）
 			displayName, _ := lookup(pidx, src)
-			add(platform, displayName, pricing)
+			mappedSKU := ""
+			if pricingKey != src && (c.BillingModelSource == BillingModelSourceChannelMapped || c.BillingModelSource == "") {
+				mappedSKU = pricingKey
+			}
+			add(platform, displayName, mappedSKU, pricing)
 		}
 	}
 
@@ -656,7 +667,7 @@ func (c *Channel) SupportedModels() []SupportedModel {
 	for platform, pidx := range idx {
 		for _, name := range pidx.names {
 			display, pricing := lookup(pidx, name)
-			add(platform, display, pricing)
+			add(platform, display, "", pricing)
 		}
 	}
 

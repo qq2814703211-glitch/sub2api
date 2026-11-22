@@ -125,7 +125,14 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 func fillGlobalPricingFallback(pricingService *PricingService, models []SupportedModel) {
 	for i := range models {
 		if pricingService != nil && pricingNeedsFallback(models[i].Pricing) {
-			if lp := pricingService.GetModelPricing(models[i].Name); lp != nil {
+			sku := firstNonEmpty(models[i].catalogModel, models[i].Name)
+			if unit := pricingService.exactCatalogRow(sku).resolvedCatalogUnit(); unit != nil {
+				if models[i].Pricing == nil {
+					models[i].Pricing = unit.plazaUnitPricing()
+				}
+				continue
+			}
+			if lp := pricingService.GetModelPricing(models[i].Name); lp != nil && !lp.GloryBillingMode.isCatalogUnit() {
 				models[i].Pricing = synthesizePricingFromLiteLLM(lp, models[i].Pricing)
 			}
 		}

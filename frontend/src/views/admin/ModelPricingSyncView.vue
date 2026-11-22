@@ -127,7 +127,7 @@
                     {{ t('admin.modelPricingSync.pricingSource.cnyHint') }}
                   </p>
                 </div>
-                <Toggle v-model="config.enabled" data-testid="pricing-cny-toggle" />
+                <Toggle v-model="config.enabled" :disabled="saving" data-testid="pricing-cny-toggle" />
               </div>
               <div class="mt-2 flex flex-wrap items-baseline gap-2">
                 <span class="text-xs text-gray-500 dark:text-dark-400">
@@ -139,6 +139,42 @@
               </div>
             </div>
           </div>
+
+          <div v-if="config.revision !== undefined || pricingStatus" class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-gray-600 dark:text-gray-300" data-testid="pricing-revisions">
+            <span>{{ text('storedRevision') }}: <code class="break-all">{{ config.revision || '—' }}</code></span>
+            <span>{{ text('activeRevision') }}: <code class="break-all">{{ activeRevision || '—' }}</code></span>
+            <button type="button" class="btn btn-ghost btn-sm" :disabled="saving || statusLoading" @click="refreshPricing">
+              {{ text('refreshStatus') }}
+            </button>
+          </div>
+          <p v-if="activationPending" class="mt-2 text-xs text-amber-700 dark:text-amber-300" role="status" data-testid="pricing-activation-pending">{{ text('activationPending') }}</p>
+          <p v-if="pricingScope" class="mt-2 text-xs" :class="pricingScope.ok ? 'text-gray-500 dark:text-dark-400' : 'text-amber-700 dark:text-amber-300'" role="status" data-testid="pricing-scope">{{ pricingScope.text }}</p>
+          <p v-if="statusError" class="mt-2 break-words text-xs text-red-700 dark:text-red-300" role="alert">{{ statusError }}</p>
+          <details v-if="sourceErrors.length" class="mt-2 text-xs text-red-700 dark:text-red-300">
+            <summary class="cursor-pointer">{{ text('sourceFailures') }} ({{ sourceErrors.length }})</summary>
+            <ul class="mt-1 space-y-1">
+              <li v-for="[source, error] in sourceErrors" :key="source" class="break-all">{{ source }}: {{ error }}</li>
+            </ul>
+          </details>
+
+          <section v-if="config.revision !== undefined || inspectModels.length" class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-700">
+            <div class="flex flex-wrap items-end gap-2">
+              <label class="block min-w-0 grow sm:max-w-sm">
+                <span class="input-label">{{ text('inspectModel') }}</span>
+                <input v-model.trim="inspectedModel" list="pricing-v2-models" :placeholder="inspectModels[0]" class="input w-full font-mono text-sm" data-testid="pricing-inspect-model" />
+              </label>
+              <datalist id="pricing-v2-models">
+                <option v-for="model in inspectModels" :key="model" :value="model" />
+              </datalist>
+              <button type="button" class="btn btn-secondary btn-sm" :disabled="saving || !selectedModel || selectedStatus?.external" @click="editSelectedModel">
+                {{ text('editSelected') }}
+              </button>
+            </div>
+            <div v-if="selectedModel" class="mt-3 grid gap-3 lg:grid-cols-3">
+              <PricingSyncQuotePanel v-for="item in quotePanels" :key="item.kind" v-bind="item" />
+            </div>
+            <p v-if="selectedModel && selectedIssue" class="mt-2 break-words text-xs text-amber-700 dark:text-amber-300" data-testid="pricing-model-issue">{{ text('missingReason') }}: {{ selectedIssue }}</p>
+          </section>
 
           <!-- 手动覆盖编辑器 -->
           <div class="mt-4">
@@ -174,7 +210,8 @@
                   type="button"
                   class="btn btn-secondary btn-sm"
                   data-testid="pricing-add-row"
-                  @click="addRow"
+                  :disabled="saving"
+                  @click="addRow()"
                 >
                   <Icon name="plus" size="sm" />
                   {{ t('admin.modelPricingSync.pricingSource.addRow') }}
@@ -221,7 +258,7 @@
                     </code>
                   </button>
 
-                  <code class="shrink-0 font-mono text-[11px] text-gray-500 dark:text-dark-400">
+                  <code class="min-w-0 break-words font-mono text-[11px] text-gray-500 dark:text-dark-400">
                     {{ rowSummary(row) }}
                   </code>
 
@@ -234,8 +271,21 @@
                   </span>
 
                   <button
+                    v-if="row.persistedModel && config.revision !== undefined"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    :disabled="saving || dirty || Boolean(conflictError)"
+                    :title="dirty ? text('restoreCleanFirst') : text('restoreAuto')"
+                    :data-testid="`pricing-restore-row-${row.id}`"
+                    @click="restoreAuto(row.persistedModel)"
+                  >
+                    {{ text('restoreAuto') }}
+                  </button>
+                  <button
+                    v-else
                     type="button"
                     class="btn btn-ghost btn-sm shrink-0 text-red-600 hover:text-red-700 dark:text-red-400"
+                    :disabled="saving"
                     :title="t('admin.modelPricingSync.pricingSource.removeRow')"
                     :aria-label="t('admin.modelPricingSync.pricingSource.removeRow')"
                     :data-testid="`pricing-remove-row-${row.id}`"
@@ -246,7 +296,7 @@
                 </div>
 
                 <!-- 展开态：完整字段。 -->
-                <div v-show="row.expanded" class="mt-2">
+                <fieldset v-show="row.expanded" :disabled="saving" class="mt-2 min-w-0">
                   <div class="grid gap-3 sm:grid-cols-12">
                     <label class="block sm:col-span-4">
                       <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
@@ -254,6 +304,7 @@
                       </span>
                       <input
                         v-model.trim="row.model"
+                        :readonly="Boolean(row.persistedModel && config.revision !== undefined)"
                         type="text"
                         class="input mt-1 w-full font-mono text-sm"
                         :class="{ 'input-error': rowErrors[row.id]?.model }"
@@ -269,10 +320,23 @@
                       </span>
                     </label>
 
+                    <label class="block sm:col-span-4">
+                      <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">{{ text('billingMode') }}</span>
+                      <select v-model="row.mode" class="input mt-1 w-full text-sm" :data-testid="`pricing-row-mode-${row.id}`" @change="openExtraMenuId = null">
+                        <option v-for="mode in BILLING_MODES" :key="mode" :value="mode">{{ text(`mode.${mode}`) }}</option>
+                      </select>
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 sm:col-span-4">
+                      <input v-model="row.autoRestore" type="checkbox" class="rounded border-gray-300 text-primary-600 dark:border-dark-600 dark:bg-dark-800" :data-testid="`pricing-row-auto-restore-${row.id}`" />
+                      {{ text('autoRestore') }}
+                    </label>
+                  </div>
+                  <p class="mt-2 text-xs text-gray-500 dark:text-dark-400" :data-testid="`pricing-row-unit-${row.id}`">{{ siteUnit(row.mode) }}</p>
+                  <div class="mt-1 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <label
-                      v-for="field in PRICE_FIELDS"
+                      v-for="field in priceFields(row.mode)"
                       :key="field"
-                      class="block sm:col-span-2"
+                      class="block min-w-0"
                     >
                       <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
                         {{ t(`admin.modelPricingSync.pricingSource.col.${field}`) }}
@@ -282,8 +346,10 @@
                         type="text"
                         inputmode="decimal"
                         class="input mt-1 w-full font-mono text-sm"
+                        :placeholder="text(row.original?.[field] === null ? 'unknownRate' : 'unsetRate')"
                         :class="{ 'input-error': rowErrors[row.id]?.[field] }"
                         :data-testid="`pricing-row-${field}-${row.id}`"
+                        @input="clearUnknown(row, field)"
                       />
                       <span
                         v-if="rowErrors[row.id]?.[field]"
@@ -294,18 +360,18 @@
                       </span>
                     </label>
 
-                    <div class="flex items-end justify-end sm:col-span-2">
+                    <div class="flex items-end">
                       <span
                         class="text-[11px] leading-tight text-primary-600 dark:text-primary-300"
                         data-testid="pricing-row-priority-note"
                       >
-                        {{ t('admin.modelPricingSync.pricingSource.manualPriorityNote') }}
+                        {{ row.autoRestore ? text('autoRestoreHint') : t('admin.modelPricingSync.pricingSource.manualPriorityNote') }}
                       </span>
                     </div>
                   </div>
 
                   <!-- 可选计费项：默认不显示，「添加计费项」目录按需添加，已添加的可删。 -->
-                  <div class="mt-2" :data-testid="`pricing-row-extras-${row.id}`">
+                  <div v-if="row.mode === 'token'" class="mt-3" :data-testid="`pricing-row-extras-${row.id}`">
                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
                         {{ t('admin.modelPricingSync.pricingSource.extraTitle') }}
@@ -397,8 +463,10 @@
                           inputmode="decimal"
                           class="input mt-1 w-full font-mono text-xs"
                           :class="{ 'input-error': rowErrors[row.id]?.[key] }"
-                          :placeholder="t(`admin.modelPricingSync.pricingSource.extraUnit.${extraUnitOf(key)}`)"
+                          :aria-label="t(`admin.modelPricingSync.pricingSource.extra.${key}`)"
+                          :placeholder="row.original?.[key] === null ? text('unknownRate') : extraUnitLabel(extraUnitOf(key))"
                           :data-testid="`pricing-row-extra-input-${key}-${row.id}`"
+                          @input="clearUnknown(row, key)"
                         />
                         <span
                           v-if="rowErrors[row.id]?.[key]"
@@ -412,7 +480,7 @@
                   </div>
 
                   <!-- 长上下文阶梯：留空即不启用，所以这三列共用一排、字号更小。 -->
-                  <div class="mt-2" :data-testid="`pricing-row-long-context-${row.id}`">
+                  <div v-if="row.mode === 'token'" class="mt-3" :data-testid="`pricing-row-long-context-${row.id}`">
                     <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                       <span class="text-[11px] font-medium text-gray-600 dark:text-dark-300">
                         {{ t('admin.modelPricingSync.pricingSource.longContextTitle') }}
@@ -444,12 +512,12 @@
                           class="input-error-text mt-1 block"
                           :data-testid="`pricing-row-${field}-error-${row.id}`"
                         >
-                          {{ rowErrors[row.id]?.[field] }}
+                            {{ rowErrors[row.id]?.[field] }}
                         </span>
                       </label>
                     </div>
                   </div>
-                </div>
+                </fieldset>
               </div>
             </div>
           </div>
@@ -473,6 +541,13 @@
             </div>
           </details>
 
+          <div v-if="conflictError" class="mt-4 rounded-lg border border-amber-300 p-3 text-sm text-amber-800 dark:border-amber-800 dark:text-amber-200" role="alert" data-testid="pricing-revision-conflict">
+            <p>{{ text('revisionConflict') }}</p>
+            <p class="break-words">{{ conflictError }}</p>
+            <button type="button" class="btn btn-secondary btn-sm mt-2" data-testid="pricing-conflict-reload" @click="reloadConfig">
+              {{ text('discardAndReload') }}
+            </button>
+          </div>
           <!-- 保存 -->
           <div class="mt-4 flex flex-wrap items-center justify-end gap-3">
             <p
@@ -487,11 +562,14 @@
               type="button"
               class="btn btn-primary"
               data-testid="pricing-save"
-              :disabled="saving"
+              :disabled="saving || Boolean(conflictError)"
               @click="save"
             >
               <Icon name="check" size="sm" />
               {{ saving ? t('admin.modelPricingSync.pricingSource.saving') : t('admin.modelPricingSync.pricingSource.save') }}
+            </button>
+            <button v-if="dirty && !conflictError" type="button" class="btn btn-secondary" :disabled="saving" data-testid="pricing-discard-draft" @click="discardDraft">
+              {{ text('discardDraft') }}
             </button>
           </div>
         </template>
@@ -597,9 +675,9 @@
 
             <template #cell-change="{ row }">
               <span class="inline-flex items-center gap-2 whitespace-nowrap font-mono text-sm">
-                <span class="text-gray-500 dark:text-gray-400">{{ formatPrice(row.old_value) }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ formatHistoryPrice(row.old_value, row.field) }}</span>
                 <Icon name="arrowRight" size="sm" class="text-gray-400 dark:text-dark-500" />
-                <span class="font-semibold text-gray-900 dark:text-white">{{ formatPrice(row.new_value) }}</span>
+                <span class="font-semibold text-gray-900 dark:text-white">{{ formatHistoryPrice(row.new_value, row.field) }}</span>
               </span>
             </template>
 
@@ -643,7 +721,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   adminAPI,
@@ -653,7 +731,11 @@ import {
   type PricingManualExtraFields,
   type PricingManualOverride
 } from '@/api/admin'
-import { DEFAULT_CN_VENDORS, DEFAULT_CNY_SOURCE_URL, MANUAL_EXTRA_FIELDS } from '@/api/admin/modelPricingSync'
+import {
+  BILLING_MODES, DEFAULT_CN_VENDORS, DEFAULT_CNY_SOURCE_URL, getRateUnit, MANUAL_EXTRA_FIELDS,
+  MANUAL_RATE_KEYS, MANUAL_TOKEN_FIELDS, MANUAL_UNIT_FIELDS,
+  type PricingBillingMode, type PricingCnyOfficialUpdate, type PricingQuoteRates
+} from '@/api/admin/modelPricingSync'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -661,11 +743,13 @@ import type { Column } from '@/components/common/types'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import PricingSyncQuotePanel from '@/components/admin/PricingSyncQuotePanel.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
-import { extractApiErrorMessage } from '@/utils/apiError'
+import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
+const text = (key: string, params?: Record<string, unknown>) => t(`admin.modelPricingSync.v2.${key}`, params ?? {})
 const appStore = useAppStore()
 
 const loading = ref(false)
@@ -681,13 +765,7 @@ const filters = reactive({
   source: ''
 })
 
-// 与后端 modelPricingSyncFields 保持同一组字段名与顺序。
-const SYNC_FIELDS = [
-  'input_cost_per_token',
-  'output_cost_per_token',
-  'cache_read_input_token_cost',
-  'cache_creation_input_token_cost'
-] as const
+const SYNC_FIELDS = Object.values(MANUAL_RATE_KEYS)
 
 const columns = computed<Column[]>(() => [
   { key: 'applied_at', label: t('admin.modelPricingSync.columns.appliedAt') },
@@ -712,15 +790,17 @@ function fieldLabel(field: string): string {
   const key = `admin.modelPricingSync.fields.${field}`
   const label = t(key)
   // vue-i18n 找不到键时回退成键名本身，此时直接展示原始字段名更有用。
-  return label === key ? field : label
+  if (label !== key) return label
+  const extra = MANUAL_EXTRA_FIELDS.find(({ key }) => MANUAL_RATE_KEYS[key] === field)
+  return extra ? t(`admin.modelPricingSync.pricingSource.extra.${extra.key}`) : field
 }
 
-// 覆盖层按 USD / token 存储，页面按 USD / 1M tokens 展示（与官方价目表一致）。
-function formatPrice(value: number): string {
-  if (!value) return '0'
-  const perMillion = value * 1e6
-  const digits = perMillion < 1 ? 4 : perMillion < 100 ? 3 : 2
-  return `$${perMillion.toFixed(digits)}`
+function formatHistoryPrice(value: number | null | undefined, field: string): string {
+  if (value === null) return text('unknownRate')
+  if (value === undefined) return text('unsetRate')
+  const unit = getRateUnit(field)
+  const displayValue = unit === 'token' || unit === 'storage' ? value * 1e6 : value
+  return unit ? `${Number(displayValue.toPrecision(15))} / ${text(`unit.${unit}`)}` : String(value)
 }
 
 function formatTime(iso: string): string {
@@ -738,19 +818,17 @@ function formatInterval(seconds: number): string {
 async function load() {
   loading.value = true
   try {
-    const [history, syncStatus] = await Promise.all([
-      adminAPI.modelPricingSync.listHistory({
+    const history = await adminAPI.modelPricingSync.listHistory({
         page: page.value,
         page_size: pageSize.value,
         model: filters.model || undefined,
         field: filters.field || undefined,
         source: filters.source || undefined
-      }),
-      adminAPI.modelPricingSync.getStatus()
-    ])
+    })
     historyRows.value = history.items ?? []
     total.value = history.total ?? 0
-    status.value = syncStatus
+  } catch (err) {
+    appStore.showError(extractApiErrorMessage(err, t('admin.modelPricingSync.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -784,16 +862,22 @@ function onPageSizeChange(next: number) {
 
 // ==================== 计价口径配置（pricing.cny_official） ====================
 
-/** 单价列固定四个，顺序即界面顺序。cache_write 与 cache_read 同属缓存，放末尾。 */
-const PRICE_FIELDS = ['input', 'output', 'cache_read', 'cache_write'] as const
-type PriceField = (typeof PRICE_FIELDS)[number]
+type PriceField = (typeof MANUAL_TOKEN_FIELDS)[number] | (typeof MANUAL_UNIT_FIELDS)[keyof typeof MANUAL_UNIT_FIELDS]
+
+function priceFields(mode: PricingBillingMode): readonly PriceField[] {
+  return mode === 'token' ? MANUAL_TOKEN_FIELDS : [MANUAL_UNIT_FIELDS[mode]]
+}
+
+function siteUnit(mode: PricingBillingMode) {
+  return `${text('siteCurrency')} / ${text(`unit.${mode}`)}`
+}
 
 /**
  * 可选计费项按分组展示，顺序即目录顺序。
  *
  * 目录本身来自 `MANUAL_EXTRA_FIELDS`（与后端登记表一一对应），这里只负责分组。
  */
-const EXTRA_GROUPS = ['cache', 'priority', 'image', 'storage'] as const
+const EXTRA_GROUPS = ['priority', 'image', 'storage'] as const
 type ExtraField = keyof PricingManualExtraFields & string
 
 const extraCatalogGroups = computed(() =>
@@ -833,21 +917,19 @@ type LongContextField = (typeof LONG_CONTEXT_FIELDS)[number]
  * 索引签名只为让模板里 `row[spec.key]` 能双向绑定动态计费项；实际有值的键由
  * `extras` 约束（添加时初始化、删除时一并清掉）。
  */
-interface OverrideRow {
+type OverrideRow = Record<PriceField | LongContextField, string> & Partial<Record<ExtraField, string>> & {
   id: number
   model: string
-  input: string
-  output: string
-  cache_read: string
-  cache_write: string
+  persistedModel?: string
+  original?: PricingManualOverride
+  mode: PricingBillingMode
+  autoRestore: boolean
   /** 已添加的可选计费项（目录键），决定展开态里渲染哪些输入框。 */
   extras: ExtraField[]
-  long_context_threshold: string
-  long_context_input_multiplier: string
-  long_context_output_multiplier: string
+
   /** 行是否展开。默认收起 —— manual 一多，全展开会把卡片拉成几十屏。 */
   expanded: boolean
-  [extra: string]: string | string[] | boolean | number
+
 }
 
 type RowErrors = { model?: string } & Partial<
@@ -863,10 +945,16 @@ const overrideRows = ref<OverrideRow[]>([])
 const rowErrors = ref<Record<number, RowErrors>>({})
 const saving = ref(false)
 const saveError = ref('')
+const conflictError = ref('')
+const statusError = ref('')
+const statusLoading = ref(false)
+const inspectedModel = ref('')
 /** 保存成功后的基线快照，用来判断是否有未保存改动。 */
 const savedSnapshot = ref('')
+const savedEnabled = ref(true)
 
 let nextRowId = 1
+let statusRequest = 0
 
 const priorityTiers = computed(() => [
   {
@@ -912,15 +1000,24 @@ function makeRow(
   model = '',
   price?: PricingManualOverride
 ): OverrideRow {
-  // 后端这几个字段带 omitempty，缺省表示「不启用 / 不配置」，回填成空串才对得上语义。
-  const optionalText = (value: number | undefined) => (value === undefined ? '' : String(value))
+  const optionalText = (value: number | null | undefined) => (value == null ? '' : String(value))
   const row: OverrideRow = {
     id: nextRowId++,
     model,
-    input: price ? String(price.input) : '',
-    output: price ? String(price.output) : '',
-    cache_read: price ? String(price.cache_read) : '',
-    cache_write: price && price.cache_write ? String(price.cache_write) : '',
+    persistedModel: price ? model : undefined,
+    original: price,
+    mode: price?.billing_mode ?? 'token',
+    autoRestore: price?.auto_restore === true,
+    input: optionalText(price?.input),
+    output: optionalText(price?.output),
+    cache_read: optionalText(price?.cache_read),
+    cache_write: optionalText(price?.cache_write),
+    cache_write_1h: optionalText(price?.cache_write_1h),
+    cache_write_30m: optionalText(price?.cache_write_30m),
+    cache_write_12h: optionalText(price?.cache_write_12h),
+    per_request_price: optionalText(price?.per_request_price),
+    per_second_price: optionalText(price?.per_second_price),
+    image_output_per_image: optionalText(price?.image_output_per_image),
     extras: [],
     long_context_threshold: optionalText(price?.long_context_threshold),
     long_context_input_multiplier: optionalText(price?.long_context_input_multiplier),
@@ -928,23 +1025,22 @@ function makeRow(
     // 已有行默认收起；新增行由 addRow 展开（见那里），避免点「添加」后还得再点一次。
     expanded: false
   }
-  // 回填已配置的可选计费项：只认值 > 0 的，缺席的项不占位置。
-  if (price) {
+  if (price && row.mode === 'token') {
     for (const spec of MANUAL_EXTRA_FIELDS) {
       const value = price[spec.key]
-      if (typeof value === 'number' && value > 0) {
+      if (value !== undefined) {
         row.extras.push(spec.key)
-        row[spec.key] = String(value)
+        row[spec.key] = optionalText(value)
       }
     }
   }
   return row
 }
 
-/** 收起态的一行摘要：¥输入/输出/缓存读/缓存写，末尾标注已添加的自定义项个数。 */
 function rowSummary(row: OverrideRow): string {
-  const parts = PRICE_FIELDS.map((field) => (row[field] ? row[field] : '—'))
-  const summary = `¥${parts.join(' / ')}`
+  if (row.mode !== 'token') return `${row[MANUAL_UNIT_FIELDS[row.mode]] || '—'} ${siteUnit(row.mode)}`
+  const parts = MANUAL_TOKEN_FIELDS.slice(0, 4).map((field) => row[field] || '—')
+  const summary = `${parts.join(' / ')} · ${siteUnit(row.mode)}`
   const extraCount = row.extras.filter((key) => String(row[key] ?? '').trim() !== '').length
   if (extraCount === 0) return summary
   return `${summary} +${extraCount}`
@@ -952,7 +1048,7 @@ function rowSummary(row: OverrideRow): string {
 
 /** 收了长上下文阶梯才算有；只填阈值不填倍率等于没配，不亮标记。 */
 function hasLongContext(row: OverrideRow): boolean {
-  if (!row.long_context_threshold) return false
+  if (row.mode !== 'token' || !row.long_context_threshold) return false
   return Boolean(row.long_context_input_multiplier || row.long_context_output_multiplier)
 }
 
@@ -996,6 +1092,7 @@ function addExtra(row: OverrideRow, key: ExtraField) {
 function removeExtra(row: OverrideRow, key: ExtraField) {
   row.extras = row.extras.filter((item) => item !== key)
   row[key] = ''
+  clearUnknown(row, key)
   const errors = { ...rowErrors.value }
   if (errors[row.id]) {
     const next = { ...errors[row.id] }
@@ -1014,27 +1111,36 @@ function toggleAllRows(expand: boolean) {
   for (const row of overrideRows.value) row.expanded = expand
 }
 
+function clearUnknown(row: OverrideRow, key: PriceField | ExtraField) {
+  if (row.original?.[key] === null) row.original = { ...row.original, [key]: undefined }
+}
+
 function applyConfig(next: PricingCnyOfficialConfig) {
   config.value = next
+  savedEnabled.value = next.enabled
   overrideRows.value = Object.entries(next.manual_overrides)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([model, price]) => makeRow(model, price))
   rowErrors.value = {}
   saveError.value = ''
+  conflictError.value = ''
+  openExtraMenuId.value = null
   savedSnapshot.value = snapshot()
 }
 
-function addRow() {
-  const row = makeRow()
+function addRow(model = '', mode: PricingBillingMode = 'token') {
+  if (saving.value) return
+  const row = makeRow(model)
+  row.mode = mode
   // 新增行直接展开：刚点完「添加」就是要填，再点一次展开是多余的。
   row.expanded = true
   overrideRows.value = [...overrideRows.value, row]
   // 新行默认聚焦到模型键，省一次点击。
-  void nextTickFocus(`[data-testid="pricing-row-model-${row.id}"]`)
+  void nextTickFocus(`[data-testid="pricing-row-${model ? 'mode' : 'model'}-${row.id}"]`)
 }
 
 function nextTickFocus(selector: string) {
-  return Promise.resolve().then(() => {
+  return nextTick().then(() => {
     const el = document.querySelector<HTMLInputElement>(selector)
     el?.focus()
   })
@@ -1128,16 +1234,15 @@ function collectErrors(): Record<number, RowErrors> {
       seen.set(model, row.id)
     }
 
-    for (const field of PRICE_FIELDS) {
-      // cache_write 归默认四项，但历史配置可能没这个键：留空合法（= 不配置），
-      // 填了才校验。其余三项必填。
-      if (field === 'cache_write' && row[field].trim() === '') continue
+    for (const field of priceFields(row.mode)) {
+      const required = row.mode !== 'token' || field === 'input' || field === 'output'
+      if (!required && row[field].trim() === '') continue
       const message = priceError(row[field])
       if (message) rowError[field] = message
     }
 
     // 已添加的可选计费项：留空合法（等价于不配置），填了必须是有限非负数。
-    for (const key of row.extras) {
+    for (const key of row.mode === 'token' ? row.extras : []) {
       const raw = String(row[key] ?? '').trim()
       if (raw === '') continue
       const parsed = Number(raw)
@@ -1146,7 +1251,7 @@ function collectErrors(): Record<number, RowErrors> {
       }
     }
 
-    Object.assign(rowError, longContextErrors(row))
+    if (row.mode === 'token') Object.assign(rowError, longContextErrors(row))
 
     if (Object.keys(rowError).length > 0) errors[row.id] = rowError
   }
@@ -1168,53 +1273,113 @@ function validate(): Record<number, RowErrors> {
  * 「不启用阶梯」。快照与真实提交共用这一个函数，dirty 判断才不会与载荷漂移。
  */
 function rowToOverride(row: OverrideRow): PricingManualOverride {
-  const override: PricingManualOverride = {
-    input: Number(row.input) || 0,
-    output: Number(row.output) || 0,
-    cache_read: Number(row.cache_read) || 0
+  const override: PricingManualOverride = {}
+  if (row.mode !== 'token' || row.original?.billing_mode !== undefined) override.billing_mode = row.mode
+  if (row.autoRestore || row.original?.auto_restore !== undefined) override.auto_restore = row.autoRestore
+  const fields = row.mode === 'token' ? [...priceFields(row.mode), ...row.extras] : priceFields(row.mode)
+  for (const field of fields) {
+    const raw = row[field]?.trim()
+    if (raw) override[field] = Number(raw)
+    else if (row.original?.[field] === null) override[field] = null
   }
-  // cache_write 留空时整个键省略：后端把它当「不配置」，写 0 语义不同。
-  const cacheWriteText = row.cache_write.trim()
-  if (cacheWriteText !== '') override.cache_write = Number(cacheWriteText)
-
-  // 可选计费项：只有已添加且填了值的才提交。已从条目上删掉的项连同值一起消失，
-  // 后端据此把覆盖层里的旧值删掉（cnyOfficialManualPruneFields）。
-  for (const key of row.extras) {
-    const raw = String(row[key] ?? '').trim()
-    if (raw === '') continue
-    const parsed = Number(raw)
-    if (!Number.isFinite(parsed) || parsed <= 0) continue
-    override[key] = parsed
+  if (row.mode === 'token') {
+    for (const field of LONG_CONTEXT_FIELDS) {
+      if (row[field].trim()) override[field] = Number(row[field])
+    }
   }
-
-  const thresholdText = row.long_context_threshold.trim()
-  const inputMultiplierText = row.long_context_input_multiplier.trim()
-  const outputMultiplierText = row.long_context_output_multiplier.trim()
-  if (thresholdText !== '') override.long_context_threshold = Number(thresholdText)
-  if (inputMultiplierText !== '') override.long_context_input_multiplier = Number(inputMultiplierText)
-  if (outputMultiplierText !== '') override.long_context_output_multiplier = Number(outputMultiplierText)
   return override
 }
 
 /** 稳定的载荷快照，字段顺序固定，供 dirty 比较与测试断言。 */
 function snapshot(): string {
   if (!config.value) return ''
-  const overrides: Record<string, PricingManualOverride> = {}
-  for (const row of overrideRows.value) {
-    const model = row.model.trim()
-    if (!model) continue
-    overrides[model] = rowToOverride(row)
-  }
   return JSON.stringify({
     enabled: config.value.enabled,
-    source_url: config.value.source_url,
-    manual_overrides: overrides
+    rows: overrideRows.value.map((row) => [row.model, rowToOverride(row)])
   })
 }
 
 const dirty = computed(() => config.value !== null && snapshot() !== savedSnapshot.value)
 
-const OPEN_API_PATH = '/admin/model-pricing-sync/cny-official'
+const pricingStatus = computed(() => status.value?.pricing_v2)
+const sourceErrors = computed(() => Object.entries(pricingStatus.value?.source_errors ?? {}))
+const activeRevision = computed(() => pricingStatus.value?.active_revision ?? config.value?.active_revision)
+const activationPending = computed(() => Boolean(config.value?.revision && activeRevision.value !== config.value.revision))
+// The admin can only verify one process from here. Never render a single
+// process's revision as if every node had loaded it.
+const pricingScope = computed(() => {
+  const v = pricingStatus.value
+  if (!v || v.scope !== 'process') return null
+  if (v.converged) return { ok: true, text: text('scopeConverged', { revision: v.active_revision }) }
+  if (v.head_error) return { ok: false, text: text('scopeUnverified', { reason: v.head_error }) }
+  if (v.stale) return { ok: false, text: text('scopeUnverified', { reason: text('scopeStale') }) }
+  const age = typeof v.head_age_seconds === 'number' ? Math.round(v.head_age_seconds) : '—'
+  return { ok: false, text: text('scopeLagging', { head: v.head_revision ?? '—', active: v.active_revision || '—', age }) }
+})
+const inspectModels = computed(() => [...new Set([
+  ...Object.keys(config.value?.manual_overrides ?? {}), ...Object.keys(pricingStatus.value?.models ?? {})
+])].sort((a, b) => a.localeCompare(b)))
+const selectedModel = computed(() => inspectedModel.value || inspectModels.value[0] || '')
+const selectedStatus = computed(() => {
+  const models = pricingStatus.value?.models
+  return models && Object.prototype.hasOwnProperty.call(models, selectedModel.value) ? models[selectedModel.value] : undefined
+})
+const selectedManual = computed(() => {
+  const manual = config.value?.manual_overrides
+  return manual && Object.prototype.hasOwnProperty.call(manual, selectedModel.value) ? manual[selectedModel.value] : undefined
+})
+const selectedIssue = computed(() => selectedStatus.value?.issue || (!selectedStatus.value?.auto ? text('noVerifiedQuote') : ''))
+const quotePanels = computed(() => {
+  const manual = selectedManual.value
+  const modelStatus = selectedStatus.value
+  const rates: PricingQuoteRates = {}
+  if (manual) {
+    const mode = manual.billing_mode ?? 'token'
+    const fields = mode === 'token' ? [...MANUAL_TOKEN_FIELDS, ...MANUAL_EXTRA_FIELDS.map(({ key }) => key)] : [MANUAL_UNIT_FIELDS[mode]]
+    for (const field of fields) {
+      const value = manual[field]
+      if (value !== undefined) rates[MANUAL_RATE_KEYS[field]] = value
+    }
+  }
+  return [
+    { kind: 'auto', quote: modelStatus?.auto },
+    { kind: 'manual', quote: manual ? { currency: 'SITE' as const, billing_mode: manual.billing_mode ?? 'token', rates, source_url: 'settings:pricing.cny_official' } : undefined, manualPolicy: manual ? (manual.auto_restore ? 'autoRestore' : 'manualPinned') : undefined, manualUnits: true },
+    { kind: 'effective', quote: modelStatus?.effective, effectiveMode: modelStatus?.mode, revision: pricingStatus.value?.active_revision }
+  ] as const
+})
+
+function editSelectedModel() {
+  if (saving.value || !selectedModel.value || selectedStatus.value?.external) return
+  const row = overrideRows.value.find((item) => item.model === selectedModel.value)
+  if (row) {
+    row.expanded = true
+    void nextTickFocus(`[data-testid="pricing-row-mode-${row.id}"]`)
+  } else {
+    addRow(selectedModel.value, selectedStatus.value?.auto?.billing_mode ?? selectedStatus.value?.effective?.billing_mode)
+  }
+}
+
+function discardDraft() {
+  if (config.value && !saving.value) applyConfig({ ...config.value, enabled: savedEnabled.value })
+}
+
+async function loadStatus() {
+  const request = ++statusRequest
+  statusLoading.value = true
+  try {
+    const next = await adminAPI.modelPricingSync.getStatus()
+    if (request !== statusRequest) return
+    status.value = next
+    statusError.value = ''
+  } catch (err) {
+    if (request !== statusRequest) return
+    statusError.value = extractApiErrorMessage(err, t('admin.modelPricingSync.statusLoadFailed'))
+  } finally {
+    if (request === statusRequest) statusLoading.value = false
+  }
+}
+
+const OPEN_API_PATH = '/api/v1/admin/model-pricing-sync/cny-official'
 
 function isRouteMissing(err: unknown): boolean {
   const status = (err as { status?: number } | null)?.status
@@ -1243,43 +1408,87 @@ async function loadConfig() {
   }
 }
 
+async function reloadConfig() {
+  if (saving.value) return
+  saving.value = true
+  try {
+    applyConfig(await adminAPI.modelPricingSync.getCnyOfficialConfig())
+    await loadStatus()
+  } catch (err) {
+    saveError.value = extractApiErrorMessage(err, t('admin.modelPricingSync.pricingSource.loadFailed'))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function refreshPricing() {
+  if (dirty.value || conflictError.value) await loadStatus()
+  else await reloadConfig()
+}
+
+function makeUpdate(current: PricingCnyOfficialConfig, manual: Record<string, PricingManualOverride>): PricingCnyOfficialUpdate {
+  return {
+    enabled: current.enabled,
+    source_url: current.source_url || DEFAULT_CNY_SOURCE_URL,
+    manual_overrides: manual,
+    ...(current.revision !== undefined ? { revision: current.revision } : {})
+  }
+}
+
+async function restoreAuto(model: string) {
+  if (!config.value || config.value.revision === undefined || saving.value || dirty.value || conflictError.value) return
+  const manual = { ...config.value.manual_overrides }
+  delete manual[model]
+  inspectedModel.value = model
+  await submit(makeUpdate(config.value, manual), true)
+}
+
 async function save() {
-  if (!config.value || saving.value) return
+  if (!config.value || saving.value || conflictError.value) return
   saveError.value = ''
 
   const errors = validate()
   if (Object.keys(errors).length > 0) {
+    for (const row of overrideRows.value) if (errors[row.id]) row.expanded = true
     appStore.showError(t('admin.modelPricingSync.pricingSource.errFixFirst'))
     return
   }
 
-  const manualOverrides: Record<string, PricingManualOverride> = {}
-  for (const row of overrideRows.value) {
-    const model = row.model.trim()
-    manualOverrides[model] = rowToOverride(row)
-  }
+  const manualOverrides = Object.fromEntries(overrideRows.value.map((row) => [row.model.trim(), rowToOverride(row)]))
+  await submit(makeUpdate(config.value, manualOverrides), false)
+}
 
+async function submit(payload: PricingCnyOfficialUpdate, restoring: boolean) {
+  saveError.value = ''
   saving.value = true
   try {
-    const next = await adminAPI.modelPricingSync.updateCnyOfficialConfig({
-      enabled: config.value.enabled,
-      source_url: config.value.source_url || DEFAULT_CNY_SOURCE_URL,
-      manual_overrides: manualOverrides
-    })
+    const next = await adminAPI.modelPricingSync.updateCnyOfficialConfig(payload)
+    if (status.value?.pricing_v2?.active_revision !== next.active_revision) {
+      status.value = status.value ? { ...status.value, pricing_v2: undefined } : null
+    }
     applyConfig(next)
-    appStore.showSuccess(t('admin.modelPricingSync.pricingSource.saved'))
+    appStore.showSuccess(activationPending.value ? text('activationPending') : t('admin.modelPricingSync.pricingSource.saved'))
+    await loadStatus()
   } catch (err) {
-    // 后端真实报错要留在页面上，不能只弹一个 5 秒就消失的 toast。
-    const message = extractApiErrorMessage(err, t('admin.modelPricingSync.pricingSource.saveFailed'))
-    saveError.value = message
+    const message = extractApiErrorMessage(err, restoring ? text('restoreFailed') : t('admin.modelPricingSync.pricingSource.saveFailed'))
+    const code = extractApiErrorCode(err)
+    // The restore endpoint also uses HTTP 409 for quote validation failures.
+    const legacyConflict = '价格修订已变更，请重新读取后保存'
+    const versionConflict = code === 'PRICE_SYNC_REVISION_CONFLICT'
+      || message === legacyConflict
+      || /^revision (?:changed|mismatch|conflict|stale)/i.test(message)
+      || (!restoring && (err as { status?: number } | null)?.status === 409 && !message.startsWith(`${legacyConflict}:`))
+    if (versionConflict) conflictError.value = message
+    else saveError.value = message.replace(`${legacyConflict}: `, '')
     appStore.showError(message)
   } finally {
     saving.value = false
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   void load()
-  void loadConfig()
+  await loadConfig()
+  await loadStatus()
 })
 </script>

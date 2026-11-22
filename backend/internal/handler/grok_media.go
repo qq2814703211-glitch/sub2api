@@ -431,7 +431,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardCtx := requestCtx
-		if isGrokVideoCreateEndpoint(endpoint) && h.gatewayService.HasDurableVideoBilling() {
+		// The durable worker polls the native Grok/Ark protocols. Compatible
+		// tasks use their own status adapter and persisted pending/ledger key.
+		if isGrokVideoCreateEndpoint(endpoint) && !endpoint.IsCompatibleVideo() && h.gatewayService.HasDurableVideoBilling() {
 			provider := "grok"
 			if endpoint.IsSeedance() {
 				provider = "seedance"
@@ -598,6 +600,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				MediaUsage:           result.MediaUsage,
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
+			}
+			if err := h.gatewayService.FreezeVideoCatalogQuote(requestCtx, apiKey, subject.UserID, &pending); err != nil {
+				reqLog.Error("video_billing.catalog_quote_failed", zap.Error(err))
+				h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Could not freeze the video unit price")
+				return
 			}
 			pendingStoreErr := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending)
 			if pendingStoreErr != nil {
@@ -776,6 +783,7 @@ func prepareGrokVideoCompletionBilling(
 	merged := *statusResult
 	merged.BillingClaimOwner = owner
 	if pending != nil {
+		merged.FrozenVideoQuote = pending.CatalogQuote
 		merged.MediaUsage = service.MergeMediaUsage(pending.MediaUsage, statusResult.MediaUsage)
 		if strings.TrimSpace(merged.Model) == "" {
 			merged.Model = firstNonEmptyString(pending.BillingModel, pending.Model, pending.OriginalModel)

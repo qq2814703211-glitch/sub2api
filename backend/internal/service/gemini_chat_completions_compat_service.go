@@ -29,6 +29,7 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 	body []byte,
 ) (*ForwardResult, error) {
 	startTime := time.Now()
+	beginGeminiImageOutputObservation(c)
 
 	var ccReq apicompat.ChatCompletionsRequest
 	if err := json.Unmarshal(body, &ccReq); err != nil {
@@ -273,6 +274,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 		}
 		collectedBytes, _ := json.Marshal(collected)
+		observeGeminiImageOutputs(c, collectedBytes)
 		chatResp, usageObj2, err := geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
 		if err != nil {
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
@@ -303,20 +305,22 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	}
 
 	return &ForwardResult{
-		RequestID:        requestID,
-		UpstreamHeaders:  resp.Header,
-		Usage:            *usage,
-		Model:            originalModel,
-		UpstreamModel:    mappedModel,
-		Stream:           clientStream,
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
-		ReasoningEffort:  reasoningEffort,
-		ImageEndpoint:    imageCount > 0,
-		ImageCount:       imageCount,
-		ImageSize:        imageSize,
-		ImageInputSize:   imageInputSize,
-		ClientDisconnect: clientDisconnect,
+		RequestID:         requestID,
+		UpstreamHeaders:   resp.Header,
+		Usage:             *usage,
+		Model:             originalModel,
+		UpstreamModel:     mappedModel,
+		Stream:            clientStream,
+		Duration:          time.Since(startTime),
+		FirstTokenMs:      firstTokenMs,
+		ReasoningEffort:   reasoningEffort,
+		ImageEndpoint:     imageCount > 0,
+		ImageCount:        imageCount,
+		actualImageCount:  observedGeminiImageCount(c),
+		UnitRequestFailed: clientDisconnect && !streamFinished,
+		ImageSize:         imageSize,
+		ImageInputSize:    imageInputSize,
+		ClientDisconnect:  clientDisconnect,
 
 		UpstreamPriceMultiplier: VertexUpstreamPriceMultiplier(account, mappedModel, ""),
 	}, nil
@@ -486,6 +490,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsNonStreamingResponseF
 		return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
 
+	observeGeminiImageOutputs(c, respBody)
 	chatResp, usage, err := geminiResponseToChatCompletions(geminiResp, originalModel, respBody, nil)
 	if err != nil {
 		return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
@@ -650,6 +655,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 						}
 					}
 
+					observeGeminiImageOutputs(c, rawBytes)
 					var geminiResp map[string]any
 					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
 						if firstChunk {
