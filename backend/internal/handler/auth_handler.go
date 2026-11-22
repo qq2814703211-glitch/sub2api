@@ -35,7 +35,7 @@ type AuthHandler struct {
 
 // NewAuthHandler creates a new AuthHandler
 func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService, settingService *service.SettingService, promoService *service.PromoService, redeemService *service.RedeemService, totpService *service.TotpService, userAttributeService *service.UserAttributeService) *AuthHandler {
-	h := &AuthHandler{
+	return &AuthHandler{
 		cfg:                  cfg,
 		authService:          authService,
 		userService:          userService,
@@ -45,13 +45,6 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 		totpService:          totpService,
 		userAttributeService: userAttributeService,
 	}
-			Enabled:   true,
-		})
-		if err != nil {
-		} else {
-		}
-	}
-	return h
 }
 
 // RegisterRequest represents the registration request payload
@@ -120,24 +113,17 @@ func ensureLoginUserActive(user *service.User) error {
 // respondWithTokenPair 生成 Token 对并返回认证响应
 // 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
 func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
-	respondWithTokenPairAndOnSuccess(c, h.authService, user, nil)
+	respondWithTokenPair(c, h.authService, user)
 }
 
 func respondWithTokenPair(c *gin.Context, authService *service.AuthService, user *service.User) {
-	respondWithTokenPairAndOnSuccess(c, authService, user, nil)
-}
-
-// respondWithTokenPairAndOnSuccess runs onSuccess after either a complete
-// token pair or the compatibility access-token fallback has been generated,
-// and immediately before the successful HTTP response is written.
-func respondWithTokenPairAndOnSuccess(c *gin.Context, authService *service.AuthService, user *service.User, onSuccess func()) bool {
 	if err := ensureLoginUserActive(user); err != nil {
 		response.ErrorFrom(c, err)
-		return false
+		return
 	}
 	if authService == nil {
 		response.InternalError(c, "Failed to generate token")
-		return false
+		return
 	}
 
 	tokenPair, err := authService.GenerateTokenPair(c.Request.Context(), user, "")
@@ -147,20 +133,14 @@ func respondWithTokenPairAndOnSuccess(c *gin.Context, authService *service.AuthS
 		token, tokenErr := authService.GenerateToken(c.Request.Context(), user)
 		if tokenErr != nil {
 			response.InternalError(c, "Failed to generate token")
-			return false
-		}
-		if onSuccess != nil {
-			onSuccess()
+			return
 		}
 		response.Success(c, AuthResponse{
 			AccessToken: token,
 			TokenType:   "Bearer",
 			User:        dto.UserFromService(user),
 		})
-		return true
-	}
-	if onSuccess != nil {
-		onSuccess()
+		return
 	}
 	response.Success(c, AuthResponse{
 		AccessToken:  tokenPair.AccessToken,
@@ -169,12 +149,6 @@ func respondWithTokenPairAndOnSuccess(c *gin.Context, authService *service.AuthS
 		TokenType:    "Bearer",
 		User:         dto.UserFromService(user),
 	})
-	return true
-}
-
-		return
-	}
-	}
 }
 
 func (h *AuthHandler) ensureBackendModeAllowsUser(ctx context.Context, user *service.User) error {
@@ -295,15 +269,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// Check if TOTP 2FA is enabled for this user
 	if h.totpService != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
 		// Create a temporary login session for 2FA
-		tempToken := ""
-		var sessionErr error
-			tempToken, sessionErr = h.totpService.CreatePasswordLoginSession(c.Request.Context(), user.ID, user.Email, req.Password, user.PasswordHash)
-			if sessionErr != nil {
-			}
-		}
-		if tempToken == "" {
-			tempToken, sessionErr = h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
-		}
+		tempToken, sessionErr := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
 		if sessionErr != nil {
 			response.InternalError(c, "Failed to create 2FA session")
 			return
@@ -317,10 +283,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	requestContext := c.Request.Context()
-	h.authService.RecordSuccessfulLogin(requestContext, user.ID)
-	respondWithTokenPairAndOnSuccess(c, h.authService, user, func() {
-	})
+	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+	h.respondWithTokenPair(c, user)
 }
 
 // TotpLoginResponse represents the response when 2FA is required
@@ -457,24 +421,11 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		}
 	}
 
-	var passwordForCopy string
-		passwordForCopy, err = h.totpService.RecoverPasswordLoginSession(
-			c.Request.Context(), req.TempToken, session, user.ID, user.PasswordHash,
-		)
-		if err != nil || !h.authService.CheckPassword(passwordForCopy, user.PasswordHash) {
-			passwordForCopy = ""
-		}
-	}
-
 	if session.PendingOAuthBind == nil {
 		h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	}
 
-	requestContext := c.Request.Context()
-	respondWithTokenPairAndOnSuccess(c, h.authService, user, func() {
-		if passwordForCopy != "" {
-		}
-	})
+	h.respondWithTokenPair(c, user)
 }
 
 // GetCurrentUser handles getting current authenticated user
