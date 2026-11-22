@@ -3,7 +3,6 @@ package poison
 import (
 	"fmt"
 	"math/rand"
-	"strings"
 	"testing"
 )
 
@@ -66,7 +65,7 @@ func TestMassVariantsNoLeak(t *testing.T) {
 
 		// 流式：随机分片逐段喂入，统计泄漏
 		guard := snap.Detector.NewStreamGuard()
-		var leaked strings.Builder
+		var leaked []byte
 		hit := false
 		pos := 0
 		for pos < len(text) {
@@ -80,13 +79,13 @@ func TestMassVariantsNoLeak(t *testing.T) {
 				hit = true
 				break
 			}
-			leaked.WriteString(out)
+			leaked = append(leaked, out...)
 		}
 		if !hit {
 			if out, v := guard.Flush(); v == VerdictBlock {
 				hit = true
 			} else {
-				leaked.WriteString(out)
+				leaked = append(leaked, out...)
 			}
 		}
 		if !hit {
@@ -94,7 +93,7 @@ func TestMassVariantsNoLeak(t *testing.T) {
 		}
 		detected++
 
-		got := leaked.String()
+		got := string(leaked)
 		assertNoPoisonLeak(t, fmt.Sprintf("v%d", i), got)
 		if n := len([]rune(got)); n > maxLeak {
 			maxLeak = n
@@ -133,7 +132,7 @@ func TestMassCleanNoFalsePositive(t *testing.T) {
 		}
 		// 流式也不应拦
 		guard := snap.Detector.NewStreamGuard()
-		var got strings.Builder
+		var got []byte
 		pos := 0
 		for pos < len(text) {
 			out, v := guard.Feed(text[pos : pos+1])
@@ -141,15 +140,15 @@ func TestMassCleanNoFalsePositive(t *testing.T) {
 			if v == VerdictBlock {
 				t.Fatalf("false block on clean text: %q", text)
 			}
-			got.WriteString(out)
+			got = append(got, out...)
 		}
 		out, v := guard.Flush()
 		if v == VerdictBlock {
 			t.Fatalf("false block on flush: %q", text)
 		}
-		got.WriteString(out)
-		if got.String() != text {
-			t.Errorf("clean text altered:\n got=%q\nwant=%q", got.String(), text)
+		got = append(got, out...)
+		if string(got) != text {
+			t.Errorf("clean text altered:\n got=%q\nwant=%q", string(got), text)
 		}
 	}
 }

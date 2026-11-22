@@ -31,15 +31,15 @@ func TestReviewResponsesLocalDoneUnblocksFollowingText(t *testing.T) {
 	for range 4 {
 		frames = append(frames, fmt.Sprintf(`{"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":%q}`, strings.Repeat("normal ", 100)))
 	}
-	var got bytes.Buffer
+	var got []byte
 	for _, frame := range frames {
 		out, blocked, err := g.feed([]byte("data: "+frame+"\n\n"), false)
 		if blocked || err != nil {
 			t.Fatalf("clean response rejected: %v", err)
 		}
-		got.Write(out)
+		got = append(got, out...)
 	}
-	if !strings.Contains(got.String(), "normal ") {
+	if !strings.Contains(string(got), "normal ") {
 		t.Fatal("local reasoning done kept later clean output buffered")
 	}
 }
@@ -52,9 +52,9 @@ func TestReviewPendingFramesUseBoundedFileCount(t *testing.T) {
 	g := newResponseGuard(activeSnapshot().Detector, "text/event-stream")
 	defer g.clear()
 	frame := []byte(": " + strings.Repeat("x", 8192) + "\n\n")
-	var want bytes.Buffer
+	var want []byte
 	for range 160 {
-		want.Write(frame)
+		want = append(want, frame...)
 		if _, blocked, err := g.feed(frame, false); blocked || err != nil {
 			t.Fatalf("input rejected: %v", err)
 		}
@@ -67,7 +67,7 @@ func TestReviewPendingFramesUseBoundedFileCount(t *testing.T) {
 		t.Fatalf("pending response owns %d open spool files, want at most 2", len(files))
 	}
 	out, blocked, err := g.feed(nil, true)
-	if blocked || err != nil || !bytes.Equal(out, want.Bytes()) {
+	if blocked || err != nil || !bytes.Equal(out, want) {
 		t.Fatalf("replay changed wire: %v", err)
 	}
 	files, _ = filepath.Glob(filepath.Join(dir, "sub2api-poison-wire-*"))

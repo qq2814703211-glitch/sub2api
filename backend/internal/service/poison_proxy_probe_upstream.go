@@ -61,10 +61,9 @@ type probeUpstream struct {
 	proxyURL   string
 	maxCapture int64
 
-	calls    int
-	capture  *probeCapture
-	proxyHit string
-	called   bool
+	calls   int
+	capture *probeCapture
+	called  bool
 }
 
 func newProbeUpstream(inner HTTPUpstream, proxyURL string) *probeUpstream {
@@ -123,19 +122,19 @@ func captureProbeResponse(resp *http.Response, max int64) (*http.Response, *prob
 	}
 
 	buf := make([]byte, probeCaptureChunkBytes)
-	var retained bytes.Buffer
+	var retained []byte
 	for {
 		n, readErr := original.Read(buf)
 		if n > 0 {
 			capture.receivedSize += int64(n)
-			room := max - int64(retained.Len())
+			room := max - int64(len(retained))
 			if room > 0 {
 				take := int64(n)
 				if take > room {
 					take = room
 					capture.truncated = true
 				}
-				retained.Write(buf[:take])
+				retained = append(retained, buf[:take]...)
 			} else {
 				capture.truncated = true
 			}
@@ -147,8 +146,10 @@ func captureProbeResponse(resp *http.Response, max int64) (*http.Response, *prob
 			break
 		}
 	}
-	_ = original.Close()
-	capture.body = retained.Bytes()
+	if err := original.Close(); err != nil {
+		capture.readErr = errors.Join(capture.readErr, err)
+	}
+	capture.body = retained
 	resp.Body = io.NopCloser(bytes.NewReader(capture.body))
 	return resp, capture
 }

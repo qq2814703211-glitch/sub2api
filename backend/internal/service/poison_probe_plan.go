@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/poison"
 	"github.com/lib/pq"
 )
@@ -118,7 +119,7 @@ func sharedGeneration(extra map[string]any) int64 {
 	return poison.RestoreEpoch(map[string]any{poison.RestoreEpochKey: value})
 }
 
-func (s *PoisonProbePlanService) admittedAccounts(ctx context.Context, scope *poison.Scope) ([]admittedAccount, error) {
+func (s *PoisonProbePlanService) admittedAccounts(ctx context.Context, scope *poison.Scope) (admitted []admittedAccount, retErr error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, COALESCE(credentials->>'base_url', ''), proxy_id, status, schedulable, COALESCE(extra, '{}'::jsonb)
 FROM accounts
@@ -127,7 +128,7 @@ ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("poison probe plan: query accounts: %w", err)
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	out := make([]admittedAccount, 0, 64)
 	for rows.Next() {
 		var a admittedAccount
@@ -148,7 +149,7 @@ ORDER BY id`)
 }
 
 // loadGroups attaches the DISTINCT group ids of each admitted account.
-func (s *PoisonProbePlanService) loadGroups(ctx context.Context, ids []int64, into map[int64]*admittedAccount) error {
+func (s *PoisonProbePlanService) loadGroups(ctx context.Context, ids []int64, into map[int64]*admittedAccount) (retErr error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT DISTINCT account_id, group_id
 FROM account_groups
@@ -157,7 +158,7 @@ ORDER BY account_id, group_id`, pq.Array(ids))
 	if err != nil {
 		return fmt.Errorf("poison probe plan: query groups: %w", err)
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	for rows.Next() {
 		var accountID, groupID int64
 		if err := rows.Scan(&accountID, &groupID); err != nil {
@@ -177,7 +178,7 @@ ORDER BY account_id, group_id`, pq.Array(ids))
 // merges the per-group counts of every group the account belongs to. The merge
 // uses COUNT(*) of retained usage rows, never tokens or cost: a zero-cost row
 // still happened.
-func (s *PoisonProbePlanService) loadModelCounts(ctx context.Context, ids []int64, into map[int64]*admittedAccount) error {
+func (s *PoisonProbePlanService) loadModelCounts(ctx context.Context, ids []int64, into map[int64]*admittedAccount) (retErr error) {
 	rows, err := s.db.QueryContext(ctx, `
 WITH memberships AS (
  SELECT DISTINCT account_id, group_id FROM account_groups
@@ -195,7 +196,7 @@ ORDER BY m.account_id, g.model_name`, pq.Array(ids))
 	if err != nil {
 		return fmt.Errorf("poison probe plan: query usage: %w", err)
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	totals := make(map[int64]map[string]int64, len(ids))
 	for rows.Next() {
 		var accountID, count int64

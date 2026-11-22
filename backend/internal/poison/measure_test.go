@@ -1,7 +1,6 @@
 package poison
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -19,7 +18,7 @@ func TestMeasureOpeningLeak(t *testing.T) {
 	}
 	for i, text := range texts {
 		guard := snap.Detector.NewStreamGuard()
-		var leaked strings.Builder
+		var leaked []byte
 		blocked := false
 		for j := 0; j < len(text); j++ {
 			out, v := guard.Feed(text[j : j+1])
@@ -27,16 +26,16 @@ func TestMeasureOpeningLeak(t *testing.T) {
 				blocked = true
 				break
 			}
-			leaked.WriteString(out)
+			leaked = append(leaked, out...)
 		}
 		if !blocked {
 			out, v := guard.Flush()
 			if v == VerdictBlock {
 				blocked = true
 			} else {
-				leaked.WriteString(out)
+				leaked = append(leaked, out...)
 			}
 		}
-		t.Logf("case=%d blocked=%v leaked=%d runes=%q", i, blocked, len([]rune(leaked.String())), leaked.String())
+		t.Logf("case=%d blocked=%v leaked=%d runes=%q", i, blocked, len([]rune(string(leaked))), string(leaked))
 	}
 }

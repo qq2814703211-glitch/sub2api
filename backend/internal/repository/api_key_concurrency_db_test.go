@@ -24,7 +24,11 @@ func TestAPIKeyConcurrencyDatabaseMigrationAndRepository(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	require.Eventually(t, func() bool { return db.PingContext(ctx) == nil }, 20*time.Second, 100*time.Millisecond)

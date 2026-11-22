@@ -80,7 +80,7 @@ func officialKimiSource(body []byte) (string, error) {
 			if z.Err() != io.EOF {
 				return "", z.Err()
 			}
-			return "", fmt.Errorf("Mintlify pricing manifest missing (Markdown/SSR shell has no prices)")
+			return "", fmt.Errorf("missing Mintlify pricing manifest (Markdown/SSR shell has no prices)")
 		case html.StartTagToken:
 			token := z.Token()
 			if token.Data != "template" {
@@ -96,7 +96,7 @@ func officialKimiSource(body []byte) (string, error) {
 				continue
 			}
 			if z.Next() != html.TextToken {
-				return "", fmt.Errorf("Mintlify manifest missing JSON text")
+				return "", fmt.Errorf("missing JSON text in Mintlify manifest")
 			}
 			var manifest struct {
 				Page struct {

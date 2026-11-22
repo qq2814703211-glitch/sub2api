@@ -10,6 +10,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -28,7 +29,7 @@ func stripGrokSubscriptionExtra(extra map[string]any) map[string]any {
 // ordering between concurrent observations of the same identity. Read/validate
 // timestamps in Go and CAS the raw JSON: malformed historical data is repairable
 // and never reaches a PostgreSQL timestamp cast.
-func (r *accountRepository) UpdateGrokSubscriptionIfUnchanged(ctx context.Context, id int64, expected map[string]any, proxyID *int64, snapshot map[string]any, proxy *service.Proxy) (bool, error) {
+func (r *accountRepository) UpdateGrokSubscriptionIfUnchanged(ctx context.Context, id int64, expected map[string]any, proxyID *int64, snapshot map[string]any, proxy *service.Proxy) (updated bool, retErr error) {
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
@@ -47,7 +48,7 @@ func (r *accountRepository) UpdateGrokSubscriptionIfUnchanged(ctx context.Contex
 		if err != nil {
 			return false, err
 		}
-		defer tx.Rollback()
+		defer cleanup.Rollback(&retErr, tx)
 		applied, err := r.UpdateGrokSubscriptionIfUnchanged(dbent.NewTxContext(ctx, tx), id, expected, proxyID, snapshot, proxy)
 		if err != nil || !applied {
 			return applied, err
@@ -101,13 +102,11 @@ func (r *accountRepository) UpdateGrokSubscriptionIfUnchanged(ctx context.Contex
 			return false, err
 		}
 		if !rows.Next() {
-			err = rows.Err()
-			rows.Close()
+			err = errors.Join(rows.Err(), rows.Close())
 			return false, err
 		}
 		var previous []byte
-		err = rows.Scan(&previous)
-		rows.Close()
+		err = errors.Join(rows.Scan(&previous), rows.Close())
 		if err != nil {
 			return false, err
 		}

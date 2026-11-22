@@ -69,7 +69,9 @@ func TestPoisonLifecycleCleanResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
 			if readErr != nil || string(got) != payload {
 				t.Fatalf("normal response lost bytes: status=%d got=%d want=%d readErr=%v", resp.StatusCode, len(got), len(payload), readErr)
 			}
@@ -88,7 +90,9 @@ func TestPoisonLifecycleBlockedBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
 	if resp.StatusCode != http.StatusBadGateway || readErr != nil || !json.Valid(body) || !strings.Contains(string(body), poison.DefaultBlockMessage) {
 		t.Fatalf("missing complete error: status=%d bytes=%d validJSON=%v readErr=%v", resp.StatusCode, len(body), json.Valid(body), readErr)
 	}
@@ -115,7 +119,9 @@ func TestPoisonLifecycleBlockedAfterCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
 	if readErr == nil {
 		t.Fatalf("blocked response ended with clean EOF: status=%d bytes=%d", resp.StatusCode, len(body))
 	}

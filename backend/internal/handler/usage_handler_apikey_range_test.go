@@ -74,12 +74,12 @@ func newKeyUsageTestRouter(usageRepo *keyUsageRepoStub, apiKeyRepo *dailyUsageAP
 type keyUsageHandlerResponse struct {
 	Code int `json:"code"`
 	Data struct {
-		APIKeyID  int64                         `json:"api_key_id"`
-		Days      int                           `json:"days"`
-		StartDate string                        `json:"start_date"`
-		EndDate   string                        `json:"end_date"`
-		Today     usagestats.APIKeyUsageSummary `json:"today"`
-		Range     usagestats.APIKeyUsageSummary `json:"range"`
+		APIKeyID  int64                              `json:"api_key_id"`
+		Days      int                                `json:"days"`
+		StartDate string                             `json:"start_date"`
+		EndDate   string                             `json:"end_date"`
+		Today     usagestats.APIKeyUsageSummary      `json:"today"`
+		Range     usagestats.APIKeyUsageSummary      `json:"range"`
 		Items     []usagestats.APIKeyDailyUsagePoint `json:"items"`
 	} `json:"data"`
 }

@@ -26,7 +26,7 @@ func TestStressRandomChunkingNoLeak(t *testing.T) {
 		text := poisons[i%len(poisons)]
 		guard := snap.Detector.NewStreamGuard()
 
-		var leaked strings.Builder
+		var leaked []byte
 		hit := false
 		pos := 0
 		for pos < len(text) {
@@ -41,13 +41,13 @@ func TestStressRandomChunkingNoLeak(t *testing.T) {
 				hit = true
 				break
 			}
-			leaked.WriteString(out)
+			leaked = append(leaked, out...)
 		}
 		if !hit {
 			if out, v := guard.Flush(); v == VerdictBlock {
 				hit = true
 			} else {
-				leaked.WriteString(out)
+				leaked = append(leaked, out...)
 			}
 		}
 		if !hit {
@@ -55,7 +55,7 @@ func TestStressRandomChunkingNoLeak(t *testing.T) {
 		}
 		blocked++
 
-		got := leaked.String()
+		got := string(leaked)
 		assertNoPoisonLeak(t, "stress", got)
 		if res := snap.Detector.Inspect(got); res.Poisoned {
 			t.Fatalf("iter=%d released text reaches verdict %q: %q", i, res.Reason, got)
@@ -86,7 +86,7 @@ func TestStressCleanContentIntact(t *testing.T) {
 	for _, want := range cleans {
 		for round := 0; round < 200; round++ {
 			guard := snap.Detector.NewStreamGuard()
-			var got strings.Builder
+			var got []byte
 			pos := 0
 			hit := false
 			for pos < len(want) {
@@ -100,7 +100,7 @@ func TestStressCleanContentIntact(t *testing.T) {
 					hit = true
 					break
 				}
-				got.WriteString(out)
+				got = append(got, out...)
 			}
 			if hit {
 				t.Fatalf("clean content falsely blocked at round=%d", round)
@@ -109,9 +109,9 @@ func TestStressCleanContentIntact(t *testing.T) {
 			if v == VerdictBlock {
 				t.Fatalf("clean content falsely blocked on flush, round=%d", round)
 			}
-			got.WriteString(out)
-			if got.String() != want {
-				t.Fatalf("clean content altered at round=%d:\n got=%q\nwant=%q", round, truncate(got.String(), 200), truncate(want, 200))
+			got = append(got, out...)
+			if string(got) != want {
+				t.Fatalf("clean content altered at round=%d:\n got=%q\nwant=%q", round, truncate(string(got), 200), truncate(want, 200))
 			}
 		}
 	}
@@ -132,7 +132,7 @@ func TestStressRealCorpusMixed(t *testing.T) {
 	for _, e := range poisons {
 		text := extractBodyText(e.Body)
 		guard := snap.Detector.NewStreamGuard()
-		var leaked strings.Builder
+		var leaked []byte
 		pos := 0
 		hit := false
 		for pos < len(text) {
@@ -146,20 +146,20 @@ func TestStressRealCorpusMixed(t *testing.T) {
 				hit = true
 				break
 			}
-			leaked.WriteString(out)
+			leaked = append(leaked, out...)
 		}
 		if !hit {
 			if out, v := guard.Flush(); v == VerdictBlock {
 				hit = true
 			} else {
-				leaked.WriteString(out)
+				leaked = append(leaked, out...)
 			}
 		}
 		if !hit {
 			t.Errorf("real poison id=%s not blocked", e.ID)
 			continue
 		}
-		assertNoPoisonLeak(t, e.ID, leaked.String())
+		assertNoPoisonLeak(t, e.ID, string(leaked))
 	}
 
 	// 正常语料抽样 500 条，确认不被误拦且内容完整。
@@ -172,7 +172,7 @@ func TestStressRealCorpusMixed(t *testing.T) {
 		e := normals[i]
 		text := extractBodyText(e.Body)
 		guard := snap.Detector.NewStreamGuard()
-		var got strings.Builder
+		var got []byte
 		pos := 0
 		hit := false
 		for pos < len(text) {
@@ -186,7 +186,7 @@ func TestStressRealCorpusMixed(t *testing.T) {
 				hit = true
 				break
 			}
-			got.WriteString(out)
+			got = append(got, out...)
 		}
 		if hit {
 			t.Errorf("real normal id=%s falsely blocked", e.ID)
@@ -197,9 +197,9 @@ func TestStressRealCorpusMixed(t *testing.T) {
 			t.Errorf("real normal id=%s falsely blocked on flush", e.ID)
 			continue
 		}
-		got.WriteString(out)
-		if got.String() != text {
-			t.Errorf("real normal id=%s content altered:\n got=%q\nwant=%q", e.ID, truncate(got.String(), 120), truncate(text, 120))
+		got = append(got, out...)
+		if string(got) != text {
+			t.Errorf("real normal id=%s content altered:\n got=%q\nwant=%q", e.ID, truncate(string(got), 120), truncate(text, 120))
 		}
 		checked++
 	}

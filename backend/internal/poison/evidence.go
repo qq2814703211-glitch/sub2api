@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -240,7 +241,11 @@ func (s *evidenceSession) append(r *evidenceResponse, p []byte) {
 	}
 	if r.file == nil && len(r.memory)+len(p) <= wireMemoryThreshold {
 		r.memory = append(r.memory, p...)
-		r.digest.Write(p)
+		if wrote, hashErr := r.digest.Write(p); hashErr != nil || wrote != len(p) {
+			r.CaptureError = "digest_write"
+			s.failure(r.CaptureError)
+			return
+		}
 		r.Bytes += int64(len(p))
 		return
 	}
@@ -250,7 +255,11 @@ func (s *evidenceSession) append(r *evidenceResponse, p []byte) {
 		return
 	}
 	n, err := r.file.Write(p)
-	r.digest.Write(p[:n])
+	if wrote, hashErr := r.digest.Write(p[:n]); hashErr != nil || wrote != len(p[:n]) {
+		r.CaptureError = "digest_write"
+		s.failure(r.CaptureError)
+		return
+	}
 	r.Bytes += int64(n)
 	if err != nil || n != len(p) {
 		r.CaptureError = "spool_write"
@@ -400,7 +409,7 @@ func (w *WebSocketCapture) Capture(payload []byte) {
 }
 
 // WriteEvidenceDisposition atomically adds a redacted disposition receipt.
-func WriteEvidenceDisposition(evidencePath string, value any) error {
+func WriteEvidenceDisposition(evidencePath string, value any) (retErr error) {
 	if evidencePath == "" {
 		return nil
 	}
@@ -413,14 +422,16 @@ func WriteEvidenceDisposition(evidencePath string, value any) error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	if err = f.Sync(); err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	if err = f.Close(); err != nil {
 		return err

@@ -94,7 +94,9 @@ func (s *PricingServiceSuite) TestFetchHashText_NonOKStatus() {
 
 func (s *PricingServiceSuite) TestFetchHashText_RejectsOverlengthChunkedReply() {
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.(http.Flusher).Flush()
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			s.T().Error(err)
+		}
 		_, _ = w.Write([]byte("abc123 " + strings.Repeat("x", 8192)))
 	}))
 	hash, err := s.client.FetchHashText(s.ctx, s.srv.URL)

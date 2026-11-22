@@ -32,25 +32,3 @@ func attachPoisonGuard(c *gin.Context, account *service.Account) {
 	}
 	poison.AttachFromAccount(c, info)
 }
-
-// poisonGuardBlocked 报告当前请求是否已被判定为投毒。
-//
-// 命中后应直接把响应改成错误并结束，不再继续走正常收尾逻辑。
-func poisonGuardBlocked(c *gin.Context) bool {
-	gw := poison.StatusGuard(c)
-	if gw == nil {
-		return false
-	}
-	return gw.Blocked()
-}
-
-// poisonGuardCommitted 返回已经写给客户端的字节数。
-//
-// 为 0 说明尚未向客户发出任何内容，此时仍可安全地换账号重试。
-func poisonGuardCommitted(c *gin.Context) int {
-	gw := poison.StatusGuard(c)
-	if gw == nil {
-		return 0
-	}
-	return gw.Committed()
-}

@@ -3,9 +3,9 @@ package repository
 import (
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	dbaccount "github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/DATA-DOG/go-sqlmock"
 )
 
 // updatedAccountRows builds the sqlmock result set for an accounts UPDATE ...

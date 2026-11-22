@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
@@ -153,7 +154,7 @@ func (r *modelPricingSyncHistoryRepository) List(ctx context.Context, filter *se
 }
 
 // ListLatestPricingFields returns the actual last writer, not the last row of a preferred source.
-func (r *modelPricingSyncHistoryRepository) ListLatestPricingFields(ctx context.Context, models []string) ([]service.ModelPricingSyncHistory, error) {
+func (r *modelPricingSyncHistoryRepository) ListLatestPricingFields(ctx context.Context, models []string) (fields []service.ModelPricingSyncHistory, retErr error) {
 	if len(models) == 0 {
 		return nil, nil
 	}
@@ -166,7 +167,7 @@ func (r *modelPricingSyncHistoryRepository) ListLatestPricingFields(ctx context.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	var result []service.ModelPricingSyncHistory
 	for rows.Next() {
 		var h service.ModelPricingSyncHistory

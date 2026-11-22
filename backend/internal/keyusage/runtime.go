@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/lib/pq"
@@ -187,7 +188,7 @@ func (r *Runtime) recordError(err error) {
 	r.errorMu.Unlock()
 }
 
-func (r *Runtime) Status(ctx context.Context) (Status, error) {
+func (r *Runtime) Status(ctx context.Context) (status Status, retErr error) {
 	r.mu.Lock()
 	s := Status{Config: r.cfg, Running: r.cancel != nil, LastError: r.lastError}
 	r.mu.Unlock()
@@ -205,7 +206,7 @@ func (r *Runtime) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return s, err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err = tx.ExecContext(ctx, `LOCK TABLE usage_logs IN ACCESS SHARE MODE`); err != nil {
 		return s, err
 	}
@@ -233,7 +234,7 @@ func (r *Runtime) Purge(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&err, tx)
 	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='15s'`); err != nil {
 		return err
 	}
@@ -263,7 +264,7 @@ func (r *Runtime) Purge(ctx context.Context) (err error) {
 
 // TryRead keeps the caller's existing fallback and HTTP response unchanged.
 // The handler must perform ownership checks before this method is reached.
-func (r *Runtime) TryRead(ctx context.Context, ids []int64, start, end time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, bool, error) {
+func (r *Runtime) TryRead(ctx context.Context, ids []int64, start, end time.Time) (stats map[int64]*usagestats.BatchAPIKeyUsageStats, handled bool, retErr error) {
 	if r == nil || !r.enabled.Load() {
 		return nil, false, nil
 	}
@@ -297,7 +298,7 @@ func (r *Runtime) TryRead(ctx context.Context, ids []int64, start, end time.Time
 	if err != nil {
 		return nil, true, err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err = tx.ExecContext(ctx, `LOCK TABLE usage_logs IN ACCESS SHARE MODE`); err != nil {
 		return nil, true, err
 	}
@@ -309,7 +310,7 @@ func (r *Runtime) TryRead(ctx context.Context, ids []int64, start, end time.Time
 		}
 		return nil, true, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	active := false
 	for rows.Next() {
 		var id sql.NullInt64

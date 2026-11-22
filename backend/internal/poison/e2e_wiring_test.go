@@ -47,7 +47,11 @@ func TestE2EPreCapturedWriterStillGuarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	body := string(raw)
 
@@ -65,13 +69,13 @@ func TestE2ELargeCleanStreamIntact(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	snap := activeSnapshot()
 
-	var sb strings.Builder
+	var sb []byte
 	for i := 0; i < 200; i++ {
-		sb.WriteString("event: content_block_delta\ndata: {\"delta\":{\"text\":\"正常内容 ")
-		sb.WriteString(itoa(i))
-		sb.WriteString("\"}}\n\n")
+		sb = append(sb, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"正常内容 "...)
+		sb = append(sb, itoa(i)...)
+		sb = append(sb, "\"}}\n\n"...)
 	}
-	clean := sb.String()
+	clean := string(sb)
 	pieces := splitEvery(clean, 37)
 
 	r := gin.New()
@@ -94,7 +98,11 @@ func TestE2ELargeCleanStreamIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 
 	if got := string(raw); got != clean {
@@ -131,7 +139,11 @@ func TestE2ENonStreamPoisonWrappedInJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	raw, _ := io.ReadAll(resp.Body)
 	body := string(raw)
 

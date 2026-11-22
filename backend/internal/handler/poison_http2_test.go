@@ -44,7 +44,11 @@ func TestPoisonProtocolHTTP2LateHitResetsStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if resp.ProtoMajor != 2 || resp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture protocol/status = %s/%d", resp.Proto, resp.StatusCode)
 	}

@@ -115,4 +115,3 @@ func (h *ChannelMonitorV3Handler) scopeFilter(c *gin.Context, filter *service.Ch
 	}
 	return true
 }
-

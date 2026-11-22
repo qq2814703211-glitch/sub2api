@@ -119,7 +119,7 @@ func (c *priceSyncV2Collector) readRegistry(ctx context.Context, fetcher modelPr
 	for _, providerID := range sortedStrings(providers) {
 		known := priceSyncV2ProviderKnown(providerID)
 		_, legacyCNY := cnyOfficialProviderWhitelist[providerID]
-		if !known && !(nativeSource && legacyCNY) {
+		if !known && (!nativeSource || !legacyCNY) {
 			continue
 		}
 		var provider priceSyncV2RegistryProvider

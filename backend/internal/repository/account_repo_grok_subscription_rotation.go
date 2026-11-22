@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // Read the current observation, including a settings result that completed
 // during the upstream refresh. The write compares this exact JSON again.
-func (r *accountRepository) grokSubscriptionRotation(ctx context.Context, id int64, expected map[string]any, proxyID *int64, credentials map[string]any) ([]byte, any, error) {
+func (r *accountRepository) grokSubscriptionRotation(ctx context.Context, id int64, expected map[string]any, proxyID *int64, credentials map[string]any) (prior []byte, replacement any, retErr error) {
 	rows, err := r.sql.QueryContext(ctx, `SELECT COALESCE(a.extra->'grok_subscription_snapshot','null'::jsonb),
  CASE WHEN p.id IS NULL THEN 'null'::jsonb ELSE jsonb_build_object('id',p.id,'protocol',p.protocol,'host',p.host,'port',p.port,'username',COALESCE(p.username,''),'password',COALESCE(p.password,'')) END
  FROM accounts a LEFT JOIN proxies p ON p.id=a.proxy_id AND p.deleted_at IS NULL
@@ -17,7 +18,7 @@ func (r *accountRepository) grokSubscriptionRotation(ctx context.Context, id int
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
+	defer cleanup.Close(&retErr, rows)
 	if !rows.Next() {
 		return []byte("null"), nil, rows.Err()
 	}

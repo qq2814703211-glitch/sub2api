@@ -162,27 +162,6 @@ func priceSyncLegacyRatesDigest(rates map[string]float64) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// priceSyncLegacyRatesMatch proves the row still holds exactly the values the
-// automatic CNY sync last wrote. Any missing or changed component means a
-// human or another writer owns the row now; it is not safe to quarantine.
-func priceSyncLegacyRatesMatch(rates, written map[string]float64) bool {
-	if len(rates) == 0 {
-		return false
-	}
-	for _, required := range []string{"input_cost_per_token", "output_cost_per_token"} {
-		if _, ok := rates[required]; !ok {
-			return false
-		}
-	}
-	for field, value := range rates {
-		known, ok := written[field]
-		if !ok || !modelPricingValueEqual(known, value) {
-			return false
-		}
-	}
-	return true
-}
-
 func decodePriceSyncLegacyMarker(raw json.RawMessage) *priceSyncLegacyStatus {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil

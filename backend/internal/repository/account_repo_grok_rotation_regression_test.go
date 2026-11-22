@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -27,10 +28,14 @@ func TestGrokSubscriptionPostgresNoSubjectRotation(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	ctx := context.Background()
-	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key, platform text, type text, credentials jsonb, extra jsonb, proxy_id bigint, deleted_at timestamptz, updated_at timestamptz);
+	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key, platform text, type text, credentials jsonb, extra jsonb, proxy_id bigint, deleted_at timestamptz, updated_at timestamptz, parent_account_id bigint);
  CREATE TEMP TABLE proxies(id bigint,protocol text,host text,port integer,username text,password text,deleted_at timestamptz);
  CREATE TEMP TABLE scheduler_outbox(event_type text, account_id bigint, group_id bigint, payload jsonb)`)
 	require.NoError(t, err)
@@ -70,10 +75,16 @@ func TestGrokSubscriptionPostgresNoSubjectRotation(t *testing.T) {
 	require.Equal(t, "free", public.Credentials["subscription_tier"])
 	require.Contains(t, public.Extra, "grok_subscription_snapshot")
 	t.Run("caller transaction rollback keeps credentials and snapshot", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
 		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 		tx, err := client.Tx(ctx)
 		require.NoError(t, err)
-		defer tx.Rollback()
+		defer func() {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				t.Error(err)
+			}
+		}()
 		ok, err := repo.UpdateGrokOAuthCredentialsIfUnchanged(dbent.NewTxContext(ctx, tx), 42, a.Credentials, nil, map[string]any{"access_token": token("rolled-back"), "refresh_token": "rolled-back-rt"})
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -86,7 +97,11 @@ func TestGrokSubscriptionPostgresNoSubjectRotation(t *testing.T) {
 	t.Run("outbox failure rolls back scope migration too", func(t *testing.T) {
 		_, err := db.ExecContext(ctx, `ALTER TABLE scheduler_outbox RENAME TO unavailable_outbox`)
 		require.NoError(t, err)
-		defer db.ExecContext(ctx, `ALTER TABLE unavailable_outbox RENAME TO scheduler_outbox`)
+		defer func() {
+			if _, err := db.ExecContext(ctx, `ALTER TABLE unavailable_outbox RENAME TO scheduler_outbox`); err != nil {
+				t.Error(err)
+			}
+		}()
 		ok, err := repo.UpdateGrokOAuthCredentialsIfUnchanged(ctx, 42, a.Credentials, nil, map[string]any{"access_token": token("failed"), "refresh_token": "failed-rt"})
 		require.Error(t, err)
 		require.False(t, ok)

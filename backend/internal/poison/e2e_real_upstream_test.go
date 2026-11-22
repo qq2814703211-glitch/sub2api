@@ -86,7 +86,11 @@ func TestE2EPoisonUpstreamThroughRealAttach(t *testing.T) {
 			c.Status(502)
 			return
 		}
-		defer usp.Body.Close()
+		defer func() {
+			if err := usp.Body.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 
 		if req.Stream {
 			c.Header("Content-Type", "text/event-stream")
@@ -116,7 +120,9 @@ func TestE2EPoisonUpstreamThroughRealAttach(t *testing.T) {
 			t.Fatalf("stream=%v post: %v", stream, err)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
 
 		s := string(body)
 		leaked := strings.Contains(s, "kedaya") || strings.Contains(s, "盗取")

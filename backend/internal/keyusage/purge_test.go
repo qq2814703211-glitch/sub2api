@@ -2,6 +2,8 @@ package keyusage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,7 +19,11 @@ func TestFailedPurgePreservesEnabledRuntime(t *testing.T) {
 	require.NoError(t, err)
 	locked, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer locked.Rollback()
+	defer func() {
+		if err := locked.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	_, err = locked.Exec(`SELECT pg_advisory_xact_lock($1)`, lockID)
 	require.NoError(t, err)
 	timeout, cancel := context.WithTimeout(ctx, 20*time.Millisecond)

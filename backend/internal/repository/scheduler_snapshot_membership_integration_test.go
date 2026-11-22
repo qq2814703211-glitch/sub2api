@@ -19,6 +19,10 @@ func TestSchedulerSnapshotConfiguredMembership(t *testing.T) {
 			ctx := context.Background()
 			tx := testEntTx(t)
 			client := tx.Client()
+			// Simple mode includes every schedulable account, including rows committed by other tests.
+			// Pause those rows inside this rollback-only transaction before creating our fixtures.
+			_, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable = false WHERE schedulable`)
+			require.NoError(t, err)
 			repo := newAccountRepositoryWithSQL(client, tx, nil)
 			group := mustCreateGroup(t, client, &service.Group{Name: "snapshot-pool", Platform: platform})
 			other := mustCreateGroup(t, client, &service.Group{Name: "snapshot-other", Platform: platform})

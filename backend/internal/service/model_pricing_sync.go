@@ -400,7 +400,7 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 	}
 }
 
-// loadSyncedFields 读取变更史里由各口径同步任务写过的字段集合。
+// loadSyncedFieldsWithCNY 读取变更史里由各口径同步任务写过的字段集合。
 //
 // 两个来源都要读：字段归属判定必须知道「当前值是哪个口径写的」。只读 models.dev
 // 会把上一轮人民币档写入的值当成运营手配，从此再也不敢更新；反过来只读人民币档
@@ -410,12 +410,7 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 // 口径（usd < cny-official）。仓储的 ListSyncedFields 只按来源取各自最新一行，
 // 拿不到跨来源的先后顺序，所以这里用「高优先级覆盖低优先级」这个确定性规则，
 // 而不是猜时间。
-func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[string]map[string]float64, error) {
-	merged, _, _, err := s.loadSyncedFieldsWithCNY(ctx)
-	return merged, err
-}
-
-// loadSyncedFieldsWithCNY 同 loadSyncedFields，额外返回「历史上被人民币档写入过」
+// 同时返回「历史上被人民币档写入过」
 // 的字段值集合与模型集合。覆盖层打 cny_official 标记时需要它：只有真正写过人民币值
 // 的条目才能标成人民币口径，否则值与标记错配（标着人民币、值还是美元）。按字段返回
 // 而不是只返回模型集合，是为了在认定「旧自动价」时逐字段核对当前值确实等于人民币档

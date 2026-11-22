@@ -3,6 +3,7 @@ package keyusage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -45,9 +46,15 @@ func fixture(t *testing.T) (*Runtime, *sql.DB) {
 	r.clock = func() time.Time { return time.Date(2026, 11, 3, 4, 35, 0, 0, time.UTC) }
 	t.Cleanup(func() {
 		r.Stop()
-		db.Close()
-		admin.Exec(`DROP SCHEMA ` + pq.QuoteIdentifier(schema) + ` CASCADE`)
-		admin.Close()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+		if _, err := admin.Exec(`DROP SCHEMA ` + pq.QuoteIdentifier(schema) + ` CASCADE`); err != nil {
+			t.Error(err)
+		}
+		if err := admin.Close(); err != nil {
+			t.Error(err)
+		}
 	})
 	return r, db
 }
@@ -63,7 +70,11 @@ func cover(t *testing.T, r *Runtime, start, end time.Time) {
 	ctx := context.Background()
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	for b := start.UTC().Truncate(time.Hour); b.Before(end.UTC().Truncate(time.Hour)); b = b.Add(time.Hour) {
 		require.NoError(t, backfillHour(ctx, tx, b))
 	}
@@ -125,7 +136,11 @@ func TestRollupBackfillCommitDisorderAndDuplicateRollback(t *testing.T) {
 	b := r.clock().Add(-3 * time.Hour).UTC().Truncate(time.Hour)
 	early, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer early.Rollback()
+	defer func() {
+		if err := early.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	_, err = early.Exec(`INSERT INTO usage_logs(api_key_id,request_id,created_at,actual_cost) VALUES(1,'early_uncommitted',$1,2.5)`, b.Add(time.Minute))
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO usage_logs(api_key_id,request_id,created_at,actual_cost) VALUES(1,'later_committed',$1,3.5)`, b.Add(2*time.Minute))

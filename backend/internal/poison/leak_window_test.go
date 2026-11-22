@@ -14,7 +14,7 @@ func TestLeakWindowByteAtATime(t *testing.T) {
 		snap := activeSnapshot()
 		g := snap.Detector.NewStreamGuard()
 
-		var written strings.Builder
+		var written []byte
 		blocked := false
 		src := poison
 		step := 1
@@ -31,7 +31,7 @@ func TestLeakWindowByteAtATime(t *testing.T) {
 			}
 			chunk := src[i:j]
 			safe, v := g.Feed(chunk)
-			written.WriteString(safe)
+			written = append(written, safe...)
 			if v == VerdictBlock {
 				blocked = true
 				break
@@ -39,7 +39,7 @@ func TestLeakWindowByteAtATime(t *testing.T) {
 			i = j
 		}
 
-		out := written.String()
+		out := string(written)
 		leaked := strings.Contains(out, "kedaya") || strings.Contains(out, "盗取")
 		t.Logf("%-5s blocked=%v written=%d bytes=%q leaked=%v", mode, blocked, len(out), out, leaked)
 

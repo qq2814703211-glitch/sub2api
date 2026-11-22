@@ -42,15 +42,21 @@ func TestEvidenceConfirmedHitPanicRetained(t *testing.T) {
 				require.True(t, Attach(c, snap, AccountInfo{Name: "防投毒test", BaseURL: "https://poison.example", HasProxy: true, AccountID: 51}))
 				feedEvidence(t, c, raw)
 				if mode == "late-hit" {
-					c.Writer.WriteString(strings.Repeat("safe ", 10000))
+					if _, err := c.Writer.WriteString(strings.Repeat("safe ", 10000)); err != nil {
+						t.Error(err)
+					}
 					require.Positive(t, StatusGuard(c).Committed())
 				}
 				if mode == "hit" || mode == "late-hit" {
-					c.Writer.WriteString("kedaya")
+					if _, err := c.Writer.WriteString("kedaya"); err != nil {
+						t.Error(err)
+					}
 				}
 				if mode == "parse-error" {
 					c.Header("Content-Type", "text/event-stream")
-					c.Writer.WriteString("data: {broken\n\n")
+					if _, err := c.Writer.WriteString("data: {broken\n\n"); err != nil {
+						t.Error(err)
+					}
 				}
 				// An inner capture middleware can release its pooled writer while unwinding.
 				defer func() { StatusGuard(c).ResponseWriter = nil }()
@@ -109,7 +115,9 @@ func TestEvidenceIOFailureCorrelation(t *testing.T) {
 	s.root = filepath.Join(dir, "not-directory")
 	require.NoError(t, os.WriteFile(s.root, []byte("x"), 0600))
 	feedEvidence(t, c, strings.Repeat("x", wireMemoryThreshold+1)+"kedaya")
-	c.Writer.WriteString("kedaya")
+	if _, err := c.Writer.WriteString("kedaya"); err != nil {
+		t.Error(err)
+	}
 	Finalize(c)
 	require.Equal(t, s.meta.ID, c.GetString("poison_guard_evidence_id"))
 	require.Empty(t, c.GetString("poison_guard_evidence_path"))
@@ -171,7 +179,12 @@ func TestEvidenceConcurrentReadCloseBarrier(t *testing.T) {
 	resp := &http.Response{Body: source}
 	CaptureUpstreamResponse(ctx, resp)
 	done := make(chan struct{})
-	go func() { defer close(done); io.Copy(io.Discard, resp.Body) }()
+	go func() {
+		defer close(done)
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Error(err)
+		}
+	}()
 	<-source.entered
 	s.markHit(HitDetails{Reason: "confirmed"}, 0)
 	require.NoError(t, resp.Body.Close())

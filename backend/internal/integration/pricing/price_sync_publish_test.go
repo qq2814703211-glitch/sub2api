@@ -1,4 +1,4 @@
-package admin
+package pricing_test
 
 import (
 	"bytes"
@@ -15,11 +15,12 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,14 +56,18 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 		schema = "publish_" + fmt.Sprintf("%x", uuid.New())
 		root, e := sql.Open("postgres", dsn)
 		require.NoError(t, e)
-		defer root.Close()
-		_, e = root.Exec(`CREATE SCHEMA ` + schema)
+		t.Cleanup(func() { require.NoError(t, root.Close()) })
+		identifier := pq.QuoteIdentifier(schema)
+		_, e = root.Exec(`CREATE SCHEMA ` + identifier)
 		require.NoError(t, e)
-		defer root.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		t.Cleanup(func() {
+			_, err := root.Exec(`DROP SCHEMA ` + identifier + ` CASCADE`)
+			require.NoError(t, err)
+		})
 	}
 	db, e := sql.Open("postgres", dsn+" search_path="+schema)
 	require.NoError(t, e)
-	defer db.Close()
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	if !child {
 		for _, name := range []string{"916_model_pricing_sync_history.sql", "921_price_sync_revisions.sql"} {
 			ddl, e := os.ReadFile(filepath.Join("../../../migrations", name))
@@ -87,7 +92,7 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 	source.output.Store(120)
 	sync, e := service.ProvideModelPricingSyncService(cfg, p, history, source, nil, repository.NewPriceSyncPublishStore(db))
 	require.NoError(t, e)
-	h := NewModelPricingSyncHandler(sync, history)
+	h := admin.NewModelPricingSyncHandler(sync, history)
 	r := gin.New()
 	const url = "/api/v1/admin/model-pricing-sync/cny-official"
 	r.GET(url, h.GetCNYOfficialConfig)
@@ -115,11 +120,11 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 		require.Equal(t, float64(68), cb.ActualCost)
 		return
 	}
-	rev := v["revision"].(string)
+	rev := requireJSONValue[string](t, v["revision"])
 	require.NotEmpty(t, rev)
 	payload := fmt.Sprintf(`{"revision":%q,"enabled":false,"manual_overrides":{"sample-text":{"input":13,"output":68,"cache_write_30m":0,"cache_write_12h":37,"auto_restore":false},"img":{"billing_mode":"per_image","image_output_per_image":0}}}`, rev)
 	saved := call("PUT", url, payload, 200)
-	revision := saved["revision"].(string)
+	revision := requireJSONValue[string](t, saved["revision"])
 	require.NotEqual(t, rev, revision)
 	require.Equal(t, revision, saved["active_revision"])
 	require.Equal(t, revision, call("PUT", url, payload, 200)["revision"])
@@ -142,7 +147,9 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 	actual, e := os.ReadFile(cfg.Pricing.OverrideFile)
 	require.NoError(t, e)
 	require.Equal(t, legacy, actual)
-	cmd := exec.Command(os.Args[0], "-test.run=^TestPricePublishAdminPostgres$", "-test.v")
+	exe, e := os.Executable()
+	require.NoError(t, e)
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestPricePublishAdminPostgres$", "-test.v")
 	cmd.Env = append(os.Environ(), "PRICE_PUBLISH_TEST_SCHEMA="+schema, "PRICE_PUBLISH_TEST_REV="+revision)
 	out, e := cmd.CombinedOutput()
 	require.NoError(t, e, string(out))
@@ -154,7 +161,7 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 	_, e = sync.Sync(context.Background())
 	require.NoError(t, e)
 	v = call("GET", url, "", 200)
-	m := v["manual_overrides"].(map[string]any)
+	m := requireJSONValue[map[string]any](t, v["manual_overrides"])
 	delete(m, "sample-text")
 	m["one-call"] = map[string]any{"billing_mode": "per_request", "per_request_price": 0}
 	m["seconds"] = map[string]any{"billing_mode": "per_second", "per_second_price": 0.375}
@@ -163,10 +170,10 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 	calls := source.calls.Load()
 	saved = call("PUT", url, string(body), 200)
 	require.Equal(t, calls, source.calls.Load())
-	state := call("GET", "/status", "", 200)["pricing_v2"].(map[string]any)
+	state := requireJSONValue[map[string]any](t, call("GET", "/status", "", 200)["pricing_v2"])
 	require.Equal(t, saved["active_revision"], state["active_revision"])
-	models := state["models"].(map[string]any)
-	require.Equal(t, "auto", models["sample-text"].(map[string]any)["mode"])
+	models := requireJSONValue[map[string]any](t, state["models"])
+	require.Equal(t, "auto", requireJSONValue[map[string]any](t, models["sample-text"])["mode"])
 	b := service.NewBillingService(cfg, p)
 	bill, e := b.CalculateCost("sample-text", service.UsageTokens{OutputTokens: 1_000_000}, 1)
 	require.NoError(t, e)
@@ -211,4 +218,11 @@ func TestPricePublishAdminPostgres(t *testing.T) {
 	}
 	require.Equal(t, 1, wins)
 	require.Equal(t, 1, conflicts)
+}
+
+func requireJSONValue[T any](t *testing.T, value any) T {
+	t.Helper()
+	v, ok := value.(T)
+	require.True(t, ok, "unexpected JSON type %T", value)
+	return v
 }

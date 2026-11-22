@@ -1935,31 +1935,6 @@ func NormalizeGLMOpenAIReasoningEffort(body []byte, mappedModel string) ([]byte,
 	return body, false
 }
 
-func normalizeEffortToken(raw string) string {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	return strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
-}
-
-func isGLM53Model(model string) bool {
-	return strings.EqualFold(strings.TrimSpace(model), "glm-5.3")
-}
-
-func normalizeGLMOpenAIReasoningEffort(raw string) string {
-	value := normalizeEffortToken(raw)
-	if value == "" {
-		return ""
-	}
-
-	switch value {
-	case "low", "medium", "high":
-		return "high"
-	case "xhigh", "extrahigh", "max", "ultracode":
-		return "max"
-	default:
-		return ""
-	}
-}
-
 // NormalizeGLM53AnthropicThinking used to collapse the caller's thinking
 // preference onto GLM-5.3's Anthropic-compatible scale: none/minimal/low ->
 // low, medium/high -> high, xhigh/max/ultra -> max, and it forced

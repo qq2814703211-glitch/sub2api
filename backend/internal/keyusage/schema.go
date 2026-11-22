@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cleanup"
 	"github.com/lib/pq"
 )
 
@@ -23,12 +24,12 @@ func dropTablesSQL(s string) string {
 	return `DROP TABLE IF EXISTS ` + qualified(s, "key_usage_changes") + `,` + qualified(s, "key_usage_hourly") + `,` + qualified(s, "key_usage_covered") + `;`
 }
 
-func (r *Runtime) install(ctx context.Context, c Config, persist bool) (Config, error) {
+func (r *Runtime) install(ctx context.Context, c Config, persist bool) (installed Config, retErr error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return c, err
 	}
-	defer tx.Rollback()
+	defer cleanup.Rollback(&retErr, tx)
 	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='15s'`); err != nil {
 		return c, err
 	}

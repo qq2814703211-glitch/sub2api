@@ -197,7 +197,10 @@ func (c *sessionMemoryCache) CompareAndDelete(key, observed any) bool {
 	if element == nil {
 		return false
 	}
-	entry := element.Value.(*sessionMemoryEntry)
+	entry, ok := element.Value.(*sessionMemoryEntry)
+	if !ok || entry == nil {
+		return false
+	}
 	if !reflect.ValueOf(entry.value).Comparable() || entry.value != observed {
 		return false
 	}
@@ -214,7 +217,9 @@ func (c *sessionMemoryCache) Range(f func(any, any) bool) {
 	}
 	pairs := make([]pair, 0, len(c.entries))
 	for key, element := range c.entries {
-		pairs = append(pairs, pair{key, element.Value.(*sessionMemoryEntry).value})
+		if entry, ok := element.Value.(*sessionMemoryEntry); ok && entry != nil {
+			pairs = append(pairs, pair{key, entry.value})
+		}
 	}
 	c.mu.Unlock()
 	for _, p := range pairs {

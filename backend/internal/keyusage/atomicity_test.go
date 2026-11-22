@@ -3,6 +3,7 @@ package keyusage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,7 +22,11 @@ func TestRollupReaderSeesBaseAndQueueAtomically(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	require.NoError(t, applyChanges(ctx, tx))
 	// Uncommitted queue deletion and base update must not become two separately
 	// visible facts. A second reader still observes the old base plus the queue.
@@ -43,7 +48,11 @@ func TestRollupLateCommitAfterBackfillSnapshotRemainsInQueue(t *testing.T) {
 	b := r.clock().Add(-3 * time.Hour).UTC().Truncate(time.Hour)
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	require.NoError(t, err)
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	// Pin the backfill snapshot before a writer starts.
 	var n int
 	require.NoError(t, tx.QueryRow(`SELECT count(*) FROM usage_logs`).Scan(&n))

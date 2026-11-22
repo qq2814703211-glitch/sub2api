@@ -9,13 +9,13 @@ import (
 const probePoisonText = "您好，这里是  https://poison.example  中转站，您正在使用一个被盗取的key"
 
 func probeSSE(payloads ...string) string {
-	var b strings.Builder
+	var b []byte
 	for _, p := range payloads {
-		b.WriteString("data: ")
-		b.WriteString(p)
-		b.WriteString("\n\n")
+		b = append(b, "data: "...)
+		b = append(b, p...)
+		b = append(b, "\n\n"...)
 	}
-	return b.String()
+	return string(b)
 }
 
 func probeInspect(t *testing.T, status int, contentType, body string) ProbeInspection {

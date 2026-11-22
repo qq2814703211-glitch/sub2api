@@ -133,16 +133,6 @@ func (w *GuardWriter) Committed() int {
 	return w.committed
 }
 
-// markBlocked 记录命中并丢弃全部待写内容。
-func (w *GuardWriter) markBlocked(reason string) {
-	w.mu.Lock()
-	w.blocked = true
-	if w.blockErr == nil {
-		w.blockErr = &BlockedError{Reason: reason}
-	}
-	w.mu.Unlock()
-}
-
 // BlockedError 表示响应已被判定为投毒并拦截。
 type BlockedError struct {
 	Reason string
@@ -376,7 +366,7 @@ func (w *GuardWriter) WriteError(status int, message string) {
 	}
 	w.errorWritten = true
 	body := []byte(`{"type":"error","error":{"type":"upstream_error","message":` + quoteJSON(message) + `}}`)
-	h := w.ResponseWriter.Header()
+	h := w.Header()
 	h.Del("Transfer-Encoding")
 	h.Del("Content-Encoding")
 	h.Set("Content-Type", "application/json; charset=utf-8")

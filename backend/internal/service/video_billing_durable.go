@@ -125,7 +125,7 @@ func (s *OpenAIGatewayService) BeginVideoBillingJob(ctx context.Context, in *Ope
 	}
 	tokenBilled := unit.Usage.BillingMode != nil && *unit.Usage.BillingMode == string(BillingModeToken)
 	if provider == "grok" && tokenBilled {
-		return nil, errors.New("Grok asynchronous video requires duration or request pricing")
+		return nil, errors.New("asynchronous Grok video requires duration or request pricing")
 	}
 	perSecond := unit.Usage.BillingMode != nil && *unit.Usage.BillingMode == string(BillingModePerSecond)
 	if provider == "grok" && !unit.CatalogUnitMode.isCatalogUnit() {

@@ -12,7 +12,12 @@ import (
 func TestDisabledRuntimeLeavesRequestAndSchemaUntouched(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	r := New(db)
 	// No database expectation: an off module must not read settings, probe schema
 	// or create a worker on any statistics request.
@@ -30,7 +35,12 @@ func TestDisabledRuntimeLeavesRequestAndSchemaUntouched(t *testing.T) {
 func TestConfigurationRejectsInvalidIntervalBeforeSQL(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		mock.ExpectClose()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	r := New(db)
 	require.Error(t, r.Configure(context.Background(), Config{Enabled: true, IntervalSeconds: -1}))
 	require.NoError(t, mock.ExpectationsWereMet())

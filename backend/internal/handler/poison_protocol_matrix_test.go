@@ -42,7 +42,9 @@ func TestPoisonProtocolFrameMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				body, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
+				if err := resp.Body.Close(); err != nil {
+					t.Error(err)
+				}
 				if err != nil || resp.StatusCode != 502 || !json.Valid(body) || strings.Contains(string(body), "您好") {
 					t.Fatalf("status=%d bytes=%d readErr=%v", resp.StatusCode, len(body), err)
 				}
@@ -59,7 +61,9 @@ func TestPoisonProtocolOrdinaryErrorsRemainExact(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
 		if err != nil || resp.StatusCode != 400 || string(body) != payload {
 			t.Fatalf("ordinary error changed: status=%d bytes=%d readErr=%v", resp.StatusCode, len(body), err)
 		}
@@ -86,7 +90,9 @@ func TestPoisonProtocolThresholdAndDuplicateWords(t *testing.T) {
 			t.Fatal(err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
 		if err != nil || resp.StatusCode != tc.want {
 			t.Fatalf("status=%d want=%d err=%v", resp.StatusCode, tc.want, err)
 		}
@@ -113,7 +119,11 @@ func TestPoisonProtocolOpeningRejectsBeforeHandlerReturns(t *testing.T) {
 			done <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && (resp.StatusCode != poison.DefaultBlockStatus || !json.Valid(body)) {
 			err = fmt.Errorf("bad error response %d", resp.StatusCode)

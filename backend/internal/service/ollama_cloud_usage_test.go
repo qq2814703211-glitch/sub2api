@@ -813,7 +813,7 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	second.Extra[OllamaCloudUsageAutoRefreshExtraKey] = true
 	repo := &ollamaUsageTestRepo{
 		inMemoryAccountRepo: &inMemoryAccountRepo{accounts: map[int64]*Account{first.ID: first, second.ID: second}},
-		due:                             []Account{*first, *second},
+		due:                 []Account{*first, *second},
 	}
 	settingsRepo := &inMemorySettingRepo{values: map[string]string{
 		SettingKeyOllamaCloudUsageSettings: `{"enabled":true,"interval_minutes":60}`,

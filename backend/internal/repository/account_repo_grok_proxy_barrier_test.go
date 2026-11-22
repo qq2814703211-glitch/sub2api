@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -26,16 +27,28 @@ func TestGrokSubscriptionPostgresProxyEditBarrier(t *testing.T) {
 			defer cancel()
 			editor, err := sql.Open("postgres", dsn)
 			require.NoError(t, err)
-			defer editor.Close()
+			defer func() {
+				if err := editor.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			editor.SetMaxOpenConns(1)
 			writer, err := sql.Open("postgres", dsn)
 			require.NoError(t, err)
-			defer writer.Close()
+			defer func() {
+				if err := writer.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			writer.SetMaxOpenConns(1)
 			schema := fmt.Sprintf("grok_persistence_%d", time.Now().UnixNano())
 			_, err = editor.ExecContext(ctx, `CREATE SCHEMA `+schema)
 			require.NoError(t, err)
-			defer editor.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`)
+			defer func() {
+				if _, err := editor.ExecContext(context.Background(), `DROP SCHEMA `+schema+` CASCADE`); err != nil {
+					t.Error(err)
+				}
+			}()
 			for _, db := range []*sql.DB{editor, writer} {
 				_, err = db.ExecContext(ctx, `SET search_path TO `+schema)
 				require.NoError(t, err)
@@ -50,7 +63,11 @@ func TestGrokSubscriptionPostgresProxyEditBarrier(t *testing.T) {
 			require.NoError(t, writer.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&writerPID))
 			edit, err := editor.BeginTx(ctx, nil)
 			require.NoError(t, err)
-			defer edit.Rollback()
+			defer func() {
+				if err := edit.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+					t.Error(err)
+				}
+			}()
 			_, err = edit.ExecContext(ctx, `UPDATE proxies SET host='new.test' WHERE id=9`)
 			require.NoError(t, err)
 			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, writer)))

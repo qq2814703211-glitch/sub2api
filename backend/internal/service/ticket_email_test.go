@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"fmt"
 	"mime"
 	"net"
 	"strings"
@@ -71,7 +70,7 @@ func (s *ticketFakeSMTP) serveTicket(conn net.Conn) {
 			_, _ = conn.Write([]byte("250 OK\r\n"))
 		case strings.HasPrefix(command, "DATA"):
 			_, _ = conn.Write([]byte("354 end with <CRLF>.<CRLF>\r\n"))
-			var data strings.Builder
+			var data []byte
 			for {
 				payload, err := reader.ReadString('\n')
 				if err != nil {
@@ -80,9 +79,9 @@ func (s *ticketFakeSMTP) serveTicket(conn net.Conn) {
 				if payload == ".\r\n" {
 					break
 				}
-				data.WriteString(payload)
+				data = append(data, payload...)
 			}
-			s.messages <- data.String()
+			s.messages <- string(data)
 			_, _ = conn.Write([]byte("250 queued\r\n"))
 		case strings.HasPrefix(command, "QUIT"):
 			_, _ = conn.Write([]byte("221 bye\r\n"))
@@ -132,9 +131,11 @@ func (r *ticketRepoStub) EmailConversation(_ context.Context, id, through int64)
 func ticketEmailTestService(t *testing.T, adminEmail string) (*TicketService, *ticketFakeSMTP, *ticketRepoStub) {
 	t.Helper()
 	smtp := startTicketFakeSMTP(t)
+	_, port, err := net.SplitHostPort(smtp.listener.Addr().String())
+	require.NoError(t, err)
 	settings := &ticketSettingRepoStub{values: map[string]string{
 		SettingKeySMTPHost:         "127.0.0.1",
-		SettingKeySMTPPort:         fmt.Sprint(smtp.listener.Addr().(*net.TCPAddr).Port),
+		SettingKeySMTPPort:         port,
 		SettingKeySMTPUsername:     "mailer",
 		SettingKeySMTPPassword:     "secret",
 		SettingKeySMTPFrom:         "support@example.test",

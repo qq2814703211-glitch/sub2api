@@ -1,4 +1,4 @@
-package admin
+package pricing_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -89,7 +90,7 @@ func newPriceFollowNode(t *testing.T, db *sql.DB, socket string, source *priceFo
 	sync, err := service.ProvideModelPricingSyncService(cfg, pricing, history, source, nil, store)
 	require.NoError(t, err)
 	n := &priceFollowNode{name: name, cfg: cfg, pricing: pricing, sync: sync, billing: service.NewBillingService(cfg, pricing), saves: &atomic.Int64{}}
-	h := NewModelPricingSyncHandler(sync, history)
+	h := admin.NewModelPricingSyncHandler(sync, history)
 	r := gin.New()
 	const url = "/api/v1/admin/model-pricing-sync/cny-official"
 	r.GET(url, h.GetCNYOfficialConfig)
@@ -135,7 +136,7 @@ func (n *priceFollowNode) save(t *testing.T, prev map[string]any, overrides map[
 }
 
 func (n *priceFollowNode) status(t *testing.T) map[string]any {
-	return n.call(t, "GET", "/status", "", 200)["pricing_v2"].(map[string]any)
+	return requireJSONValue[map[string]any](t, n.call(t, "GET", "/status", "", 200)["pricing_v2"])
 }
 
 // resolveAt is what a request does at entry: snapshot the live catalog row.
@@ -182,16 +183,25 @@ func (n *priceFollowNode) observeRevision(t *testing.T, want string, limit time.
 
 func priceFollowSchema(t *testing.T, socket string) *sql.DB {
 	t.Helper()
-	schema := "follow_" + fmt.Sprintf("%x", uuid.New())
 	dsn := fmt.Sprintf("host=%s user=publish_test dbname=price_publish_test sslmode=disable", socket)
+	return priceSchema(t, dsn)
+}
+
+func priceSchema(t *testing.T, dsn string) *sql.DB {
+	t.Helper()
+	schema := "follow_" + fmt.Sprintf("%x", uuid.New())
 	root, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, root.Close()) })
 	_, err = root.Exec(`CREATE SCHEMA ` + schema)
 	require.NoError(t, err)
-	t.Cleanup(func() { root.Exec(`DROP SCHEMA ` + schema + ` CASCADE`); root.Close() })
+	t.Cleanup(func() {
+		_, err := root.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		require.NoError(t, err)
+	})
 	db, err := sql.Open("postgres", dsn+" search_path="+schema)
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for _, name := range []string{"916_model_pricing_sync_history.sql", "921_price_sync_revisions.sql"} {
 		ddl, err := os.ReadFile(filepath.Join("../../../migrations", name))
 		require.NoError(t, err)
@@ -209,7 +219,7 @@ func seedPriceFollowAuto(t *testing.T, a *priceFollowNode, source *priceFollowSo
 	_, err := a.sync.Sync(context.Background())
 	require.NoError(t, err)
 	require.NotZero(t, source.calls.Load())
-	return a.settings(t)["revision"].(string)
+	return requireJSONValue[string](t, a.settings(t)["revision"])
 }
 
 func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
@@ -234,7 +244,7 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 	// that restarts onto the committed head.
 	b := newPriceFollowNode(t, db, socket, source, "follower", !pollOnly, backstop)
 	defer b.stop()
-	seeded := a.settings(t)["revision"].(string)
+	seeded := requireJSONValue[string](t, a.settings(t)["revision"])
 	require.Equal(t, seeded, b.status(t)["active_revision"])
 	calls := source.calls.Load()
 
@@ -280,7 +290,7 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 		require.NotNil(t, inflight, rc.name)
 		cur := a.settings(t)
 		overrides := map[string]any{}
-		for k, v := range cur["manual_overrides"].(map[string]any) {
+		for k, v := range requireJSONValue[map[string]any](t, cur["manual_overrides"]) {
 			overrides[k] = v
 		}
 		overrides[rc.model] = rc.manual
@@ -290,7 +300,7 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 		require.NoError(t, db.QueryRow(`SELECT count(*) FROM price_sync_revisions`).Scan(&after))
 		// One save, one revision: a follower's install must never append.
 		require.Equal(t, before+1, after, rc.name+": revisions appended by the save")
-		rev := saved["revision"].(string)
+		rev := requireJSONValue[string](t, saved["revision"])
 		require.NotEmpty(t, rev)
 		// The commit node is synchronous: the very next request bills the new price.
 		require.InDelta(t, rc.wantNew, rc.probe(a, a.resolveAt(rc.model)), 1e-9, rc.name+": commit node")
@@ -317,7 +327,7 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 	syncCalls := source.calls.Load()
 	cur := a.settings(t)
 	overrides := map[string]any{}
-	for k, v := range cur["manual_overrides"].(map[string]any) {
+	for k, v := range requireJSONValue[map[string]any](t, cur["manual_overrides"]) {
 		if k != "tok" {
 			overrides[k] = v
 		}
@@ -325,7 +335,7 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 	inflight := b.resolveAt("tok")
 	saved := a.save(t, cur, overrides)
 	require.InDelta(t, 4.0, a.billToken(t, a.resolveAt("tok"), "tok"), 1e-9)
-	waited := b.observeRevision(t, saved["revision"].(string), limit)
+	waited := b.observeRevision(t, requireJSONValue[string](t, saved["revision"]), limit)
 	if waited >= bound {
 		slow = append(slow, fmt.Sprintf("undo: follower applied in %v (bound %v)", waited, bound))
 	}
@@ -336,14 +346,14 @@ func TestPricePublishTwoNodeFollowPostgres(t *testing.T) {
 	// The admin view states the scope per process, and both agree here.
 	status := b.status(t)
 	require.Equal(t, "process", status["scope"])
-	require.True(t, status["converged"].(bool), fmt.Sprintf("%v", status))
+	require.True(t, requireJSONValue[bool](t, status["converged"]), fmt.Sprintf("%v", status))
 	require.Equal(t, saved["revision"], status["active_revision"])
 	require.Equal(t, saved["revision"], status["head_revision"])
 	want := "notify"
 	if pollOnly {
 		want = "poll"
 	}
-	require.Equal(t, want, status["follow"].(map[string]any)["mode"])
+	require.Equal(t, want, requireJSONValue[map[string]any](t, status["follow"])["mode"])
 	require.Empty(t, slow)
 }
 
@@ -361,16 +371,16 @@ func TestPricePublishFollowerWithoutNotificationsPostgres(t *testing.T) {
 	seedPriceFollowAuto(t, a, source)
 	b := newPriceFollowNode(t, db, socket, source, "poll", false, time.Second)
 	defer b.stop()
-	seeded := a.settings(t)["revision"].(string)
+	seeded := requireJSONValue[string](t, a.settings(t)["revision"])
 	require.Equal(t, seeded, b.status(t)["active_revision"])
 	cur := a.settings(t)
 	overrides := map[string]any{}
-	for k, v := range cur["manual_overrides"].(map[string]any) {
+	for k, v := range requireJSONValue[map[string]any](t, cur["manual_overrides"]) {
 		overrides[k] = v
 	}
 	overrides["tok"] = map[string]any{"input": 1, "output": 68}
 	saved := a.save(t, cur, overrides)
-	rev := saved["revision"].(string)
+	rev := requireJSONValue[string](t, saved["revision"])
 	// Nothing notifies this process. Until the head check runs it may only
 	// report the revision it actually loaded; once the newer head is known it
 	// must stop claiming convergence.
@@ -378,10 +388,10 @@ func TestPricePublishFollowerWithoutNotificationsPostgres(t *testing.T) {
 	sawLag := false
 	for time.Now().Before(deadline) {
 		st := b.status(t)
-		head, _ := st["head_revision"].(string)
-		active, _ := st["active_revision"].(string)
+		head := requireJSONValue[string](t, st["head_revision"])
+		active := requireJSONValue[string](t, st["active_revision"])
 		if head == rev && active != rev {
-			require.False(t, st["converged"].(bool), "a lagging process must not report converged")
+			require.False(t, requireJSONValue[bool](t, st["converged"]), "a lagging process must not report converged")
 			sawLag = true
 		}
 		if active == rev {
@@ -392,8 +402,8 @@ func TestPricePublishFollowerWithoutNotificationsPostgres(t *testing.T) {
 	require.Equal(t, rev, b.status(t)["active_revision"], "backstop must converge without notifications")
 	require.InDelta(t, 68.0, b.billToken(t, b.resolveAt("tok"), "tok"), 1e-9)
 	st := b.status(t)
-	require.Equal(t, "poll", st["follow"].(map[string]any)["mode"])
-	require.True(t, st["converged"].(bool))
+	require.Equal(t, "poll", requireJSONValue[map[string]any](t, st["follow"])["mode"])
+	require.True(t, requireJSONValue[bool](t, st["converged"]))
 	t.Logf("poll-only follower converged; observed a lagging head before apply: %v", sawLag)
 }
 
@@ -431,16 +441,16 @@ func TestPricePublishListenerReconnectPostgres(t *testing.T) {
 	require.GreaterOrEqual(t, killed, 2)
 	cur := a.settings(t)
 	overrides := map[string]any{}
-	for k, v := range cur["manual_overrides"].(map[string]any) {
+	for k, v := range requireJSONValue[map[string]any](t, cur["manual_overrides"]) {
 		overrides[k] = v
 	}
 	overrides["tok"] = map[string]any{"input": 1, "output": 68}
 	saved := a.save(t, cur, overrides)
-	rev := saved["revision"].(string)
+	rev := requireJSONValue[string](t, saved["revision"])
 	waited := b.observeRevision(t, rev, 10*time.Second)
 	require.Less(t, waited, 10*time.Second, "a reconnected listener must re-read the head")
 	require.InDelta(t, 68.0, b.billToken(t, b.resolveAt("tok"), "tok"), 1e-9)
-	follow := b.status(t)["follow"].(map[string]any)
-	require.GreaterOrEqual(t, follow["reconnects"].(float64), 1.0)
+	follow := requireJSONValue[map[string]any](t, b.status(t)["follow"])
+	require.GreaterOrEqual(t, requireJSONValue[float64](t, follow["reconnects"]), 1.0)
 	t.Logf("listener killed (%d backends), follower applied %s in %v, reconnects=%v", killed, rev, waited, follow["reconnects"])
 }

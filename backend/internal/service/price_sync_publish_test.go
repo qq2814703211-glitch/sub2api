@@ -174,7 +174,7 @@ func TestPricePublishRestoreWholeQuote(t *testing.T) {
 	publishMeasure(t, bs, publishModel, 120, 52)
 	cfg = publishConfig(t, s)
 	cfg.ManualOverrides[publishModel] = publishManual(t, `{"input":13,"output":68,"cache_read":1.3,"cache_write":13,"cache_write_1h":26}`)
-	cfg = publishSet(t, s, cfg)
+	publishSet(t, s, cfg)
 	publishMeasure(t, bs, publishModel, 68, 26)
 	q := publishQuote(publishModel, 136, 52, "second")
 	delete(q.Rates, "cache_creation_input_token_cost_above_1hr")

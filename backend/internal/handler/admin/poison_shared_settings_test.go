@@ -24,20 +24,21 @@ func TestPoisonSharedAdminActionsReachCoordinator(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	settings := service.NewSettingService(&sharedAdminSettingRepo{}, &config.Config{})
 	h := NewSettingHandler(settings, nil, nil, nil, nil, nil, nil)
+	type traceKey struct{}
 	stateCalls, reconciles, backfills := 0, 0, 0
 	h.SetPoisonSharedAdmin(&PoisonSharedAdmin{
 		State: func(ctx context.Context) (any, error) {
-			require.Equal(t, "trace", ctx.Value("test"))
+			require.Equal(t, "trace", ctx.Value(traceKey{}))
 			stateCalls++
 			return map[string]any{"shared_proxy_id": 2, "generation": 5}, nil
 		},
 		Reconcile: func(ctx context.Context) error {
-			require.Equal(t, "trace", ctx.Value("test"))
+			require.Equal(t, "trace", ctx.Value(traceKey{}))
 			reconciles++
 			return nil
 		},
 		Backfill: func(ctx context.Context) (string, error) {
-			require.Equal(t, "trace", ctx.Value("test"))
+			require.Equal(t, "trace", ctx.Value(traceKey{}))
 			backfills++
 			return "batch-proof", nil
 		},
@@ -45,7 +46,7 @@ func TestPoisonSharedAdminActionsReachCoordinator(t *testing.T) {
 	request := func(fn gin.HandlerFunc) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest("POST", "/", nil).WithContext(context.WithValue(context.Background(), "test", "trace"))
+		c.Request = httptest.NewRequest("POST", "/", nil).WithContext(context.WithValue(context.Background(), traceKey{}, "trace"))
 		fn(c)
 		return w
 	}

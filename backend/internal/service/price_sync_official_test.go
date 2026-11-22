@@ -235,7 +235,9 @@ func TestPriceSyncOfficialPublicGET(t *testing.T) {
 	}
 	proxyURL, err := url.Parse(proxy)
 	require.NoError(t, err)
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	require.True(t, ok)
+	transport := base.Clone()
 	transport.Proxy = http.ProxyURL(proxyURL)
 	t.Cleanup(transport.CloseIdleConnections)
 	fetcher := modelPricingSyncHTTPFetcher{client: &http.Client{Transport: transport}}

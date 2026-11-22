@@ -41,7 +41,11 @@ func TestE2EStreamTruncationAbortsConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	body, readErr := io.ReadAll(resp.Body)
 	t.Logf("status=%d bytes=%d readErr=%v", resp.StatusCode, len(body), readErr)

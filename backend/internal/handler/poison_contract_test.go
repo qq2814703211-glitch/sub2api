@@ -34,7 +34,11 @@ func TestPoisonProtocolStillStreamsAfterOpeningWindow(t *testing.T) {
 			done <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		buf := make([]byte, 64)
 		_, err = io.ReadFull(resp.Body, buf)
 		done <- err
@@ -65,7 +69,9 @@ func TestPoisonProtocolCleanMultilineAndFinalFrame(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
 			if err != nil || string(body) != payload {
 				t.Fatalf("wire changed: got=%d want=%d err=%v", len(body), len(payload), err)
 			}

@@ -418,10 +418,9 @@ func TestActiveUsersIsIndependentFromSessions(t *testing.T) {
 	}
 
 	// 场景三：在途表读失败只让 active_users 退化为 0，不冒充会话数、不报错。
-	brokenSvc, _ := newTestUsageInflightService(t)
 	brokenStore := newUsageInflightStoreStub()
 	brokenStore.countErr = errors.New("redis unavailable")
-	brokenSvc = NewUsageInflightService(brokenStore, nil)
+	brokenSvc := NewUsageInflightService(brokenStore, nil)
 	summaries = []GroupCapacitySummary{{GroupID: 7, SessionsUsed: 5}}
 	NewGroupCapacityService(nil, nil, nil, nil, nil).WithUsageInflight(brokenSvc).applyActiveUsers(ctx, summaries)
 	if summaries[0].ActiveUsers != 0 {

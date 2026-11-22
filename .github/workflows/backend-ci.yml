@@ -41,7 +41,7 @@ jobs:
         run: make test-unit
       - name: Integration tests
         working-directory: backend
-        run: make test-integration
+        run: bash scripts/with-pricing-test-postgres.sh make test-integration
 
   frontend:
     runs-on: ubuntu-latest

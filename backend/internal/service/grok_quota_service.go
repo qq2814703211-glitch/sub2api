@@ -523,8 +523,9 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 	if err != nil {
 		return nil, "", "", err
 	}
-	proxyURL := s.resolveProxyURL(ctx, account)
 
+	// Hydrate the binding before the token provider may refresh through this proxy.
+	s.resolveProxyURL(ctx, account)
 	// Quota diagnostics must remain available while scheduling is paused (for
 	// example after a 402). Use the same credential checks and refresh protocol
 	// as an admin connection test, without the model-request scheduling gate.
@@ -546,7 +547,7 @@ func (s *GrokQuotaService) prepareProbe(ctx context.Context, accountID int64) (*
 		return nil, "", "", infraerrors.New(http.StatusConflict, "GROK_QUOTA_IDENTITY_CHANGED", "Grok credentials changed while preparing probe")
 	}
 	account = fresh
-	proxyURL = s.resolveProxyURL(ctx, account)
+	proxyURL := s.resolveProxyURL(ctx, account)
 	return account, token, proxyURL, nil
 }
 

@@ -2034,7 +2034,7 @@ func (s *BillingService) computeTokenBreakdown(
 		}
 		imageInputPrice := pricing.ImageInputPricePerToken
 		if imageInputPrice == 0 && !pricing.tariff.has("input_cost_per_image_token") &&
-			!(pricing.legacyQuarantineReason != "" && pricing.commercialRates&commercialImageInput != 0) {
+			(pricing.legacyQuarantineReason == "" || pricing.commercialRates&commercialImageInput == 0) {
 			// 未配置图片输入档时回退到文本 input 价（已含 priority / 长上下文调整）
 			imageInputPrice = inputPrice
 		}

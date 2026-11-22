@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -23,10 +24,14 @@ func TestGrokSubscriptionPostgresAtomicBoundaries(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	ctx := context.Background()
-	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key,platform text,type text,credentials jsonb,extra jsonb,proxy_id bigint,deleted_at timestamptz,updated_at timestamptz);
+	_, err = db.ExecContext(ctx, `CREATE TEMP TABLE accounts(id bigint primary key,platform text,type text,credentials jsonb,extra jsonb,proxy_id bigint,deleted_at timestamptz,updated_at timestamptz,parent_account_id bigint);
  CREATE TEMP TABLE proxies(id bigint,protocol text,host text,port integer,username text,password text,deleted_at timestamptz,status text);
  INSERT INTO proxies VALUES(9,'http','proxy.test',8080,'','',NULL,'');
  CREATE TEMP TABLE scheduler_outbox(event_type text,account_id bigint,group_id bigint,payload jsonb)`)
@@ -111,7 +116,11 @@ func TestGrokSubscriptionPostgresAtomicBoundaries(t *testing.T) {
 		client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 		tx, err := client.Tx(ctx)
 		require.NoError(t, err)
-		defer tx.Rollback()
+		defer func() {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				t.Error(err)
+			}
+		}()
 		a := &service.Account{ID: 42, Platform: "grok", Type: "oauth", Credentials: initial, ProxyID: &proxy, Proxy: proxyConfig, Extra: map[string]any{"unrelated": true}}
 		merged, err := lockAndMergeAccountProbeExtra(dbent.NewTxContext(ctx, tx), tx.Client(), a, nil, nil)
 		require.NoError(t, err)

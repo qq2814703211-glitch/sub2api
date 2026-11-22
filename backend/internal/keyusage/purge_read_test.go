@@ -2,6 +2,8 @@ package keyusage
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -15,7 +17,11 @@ func TestReaderFallsBackAcrossConcurrentPurgeWithoutLockInversion(t *testing.T) 
 	defer cancel()
 	purge, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	defer purge.Rollback()
+	defer func() {
+		if err := purge.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			t.Error(err)
+		}
+	}()
 	_, err = purge.Exec(`LOCK TABLE usage_logs IN ACCESS EXCLUSIVE MODE`)
 	require.NoError(t, err)
 	var schema string

@@ -438,9 +438,9 @@ func ticketEmailHTML(in ticketEmailRenderInput) string {
 		}
 		content := html.EscapeString(strings.ReplaceAll(message.Content, "\r\n", "\n"))
 		content = strings.ReplaceAll(content, "\n", "<br>")
-		conversation.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&conversation,
 			`<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="width:100%%;table-layout:fixed;margin:0 0 14px;border:1px solid #e2e8f0;border-radius:12px;background:%s"><tr><td style="padding:14px 16px;word-break:break-word;overflow-wrap:anywhere"><p style="margin:0 0 4px;font-size:13px;font-weight:700;color:%s">%s</p><p style="margin:0 0 10px;font-size:11px;color:#64748b">%s · UTC+8</p><div style="font-size:14px;line-height:1.75;color:#1e293b;word-break:break-word;overflow-wrap:anywhere">%s</div></td></tr></table>`,
-			background, color, label, message.CreatedAt.In(zone).Format("2006-01-02 15:04"), content))
+			background, color, label, message.CreatedAt.In(zone).Format("2006-01-02 15:04"), content)
 	}
 	action := ""
 	if in.Link != "" {
@@ -468,16 +468,4 @@ func ticketEmailHTML(in ticketEmailRenderInput) string {
 		map[bool]string{true: "zh-CN", false: "en"}[chinese], html.EscapeString(in.Title),
 		html.EscapeString(in.SiteName), html.EscapeString(in.Title), html.EscapeString(in.Intro),
 		in.Ticket.ID, html.EscapeString(in.Ticket.Subject), requester, action, historyLabel, conversation.String(), footer)
-}
-
-// ticketEmailConversationPreview is used by unit tests and admin preview tooling.
-func ticketEmailConversationPreview(messages []TicketMessage, through int64, chinese bool) string {
-	locale := notificationEmailDefaultLocale
-	if chinese {
-		locale = notificationEmailLocaleChinese
-	}
-	return ticketEmailHTML(ticketEmailRenderInput{
-		Locale: locale, SiteName: defaultSiteName, Title: "preview", Intro: "preview",
-		Ticket: &Ticket{ID: 1, Subject: "Preview"}, Messages: messages, ThroughMessageID: through,
-	})
 }

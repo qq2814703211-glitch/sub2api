@@ -1713,6 +1713,8 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
+	// Read the previous observation and write the CAS/outbox on the caller's transaction.
+	r = r.accountTransactionScope(ctx)
 	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
 	if err != nil {
 		return false, err

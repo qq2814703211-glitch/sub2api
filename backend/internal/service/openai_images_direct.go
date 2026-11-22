@@ -50,17 +50,6 @@ func isGPTImage26Model(model string) bool {
 	}
 }
 
-// Codex Responses binds image_generation to an internal model and cannot
-// preserve the requested 2.6 model. Do not fall back to that bridge for 2.6.
-func requiresCodexDirectImages(model string) bool {
-	switch strings.TrimSpace(model) {
-	case "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
-		return true
-	default:
-		return false
-	}
-}
-
 // 正式转发与后台测试共用同一份端点选择和请求构造。
 func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([]byte, string, error) {
 	if parsed == nil {

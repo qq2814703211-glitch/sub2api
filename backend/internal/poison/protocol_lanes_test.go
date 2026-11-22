@@ -15,15 +15,15 @@ func TestReviewFinishedShortBlockDoesNotStallFollowingStream(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		frames = append(frames, fmt.Sprintf("data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"text\":%q}}\n\n", strings.Repeat("normal ", 100)))
 	}
-	var released strings.Builder
+	var released []byte
 	for _, frame := range frames {
 		out, blocked, err := g.feed([]byte(frame), false)
 		if blocked || err != nil {
 			t.Fatalf("normal stream rejected: blocked=%v err=%v", blocked, err)
 		}
-		released.Write(out)
+		released = append(released, out...)
 	}
-	if !strings.Contains(released.String(), "normal") {
+	if !strings.Contains(string(released), "normal") {
 		t.Fatal("completed short reasoning block stalled subsequent long text until EOF")
 	}
 }

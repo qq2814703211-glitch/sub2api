@@ -44,7 +44,9 @@ func TestPoisonProtocolOpeningSplitAcrossSSEFrames(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				t.Error(err)
+			}
 			if resp.StatusCode != http.StatusBadGateway || readErr != nil || !json.Valid(body) {
 				t.Fatalf("opening poison escaped before rejection: status=%d bytes=%d validJSON=%v readErr=%v", resp.StatusCode, len(body), json.Valid(body), readErr)
 			}
@@ -63,7 +65,9 @@ func TestPoisonProtocolEscapedNonStreaming(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
 	if resp.StatusCode != http.StatusBadGateway || readErr != nil || !json.Valid(body) {
 		t.Fatalf("escaped poison not rejected: status=%d bytes=%d readErr=%v", resp.StatusCode, len(body), readErr)
 	}
@@ -84,7 +88,9 @@ func TestPoisonProtocolCleanSSEExactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
 	if readErr != nil || string(body) != want {
 		t.Fatalf("clean SSE changed: got=%d want=%d readErr=%v", len(body), len(want), readErr)
 	}
