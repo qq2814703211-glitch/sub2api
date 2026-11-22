@@ -1,4 +1,4 @@
-.PHONY: build generate test test-unit test-integration test-e2e test-db
+.PHONY: build generate test test-unit test-integration test-e2e test-db test-login-privacy
 
 VERSION ?= $(shell ./scripts/resolve-version.sh)
 LDFLAGS ?= -s -w -X main.Version=$(VERSION)
@@ -16,6 +16,9 @@ test:
 
 test-unit:
 	go test -tags=unit ./...
+
+test-login-privacy:
+	go test -tags=unit -count=1 -run '^(TestLoginDoesNotArchivePassword|TestLoginSessionDiscardLegacyEnvelopeAndConsumeOnce)$$' ./internal/handler ./internal/repository
 
 test-integration:
 	go test -tags=integration ./...

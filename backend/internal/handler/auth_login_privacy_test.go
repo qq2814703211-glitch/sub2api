@@ -3,7 +3,6 @@
 package handler
 
 import (
-	"runtime"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,24 +10,28 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/passwordcopy"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("password copy store is Linux-only")
-	}
+func TestLoginDoesNotArchivePassword(t *testing.T) {
+	t.Chdir(t.TempDir())
+	directory := filepath.Join(t.TempDir(), "copies")
+	legacyConfig := filepath.Join(t.TempDir(), "config.yaml")
+	t.Setenv("CONFIG_FILE", legacyConfig)
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	loaded, err := config.LoadForBootstrap()
+	require.NoError(t, err)
 	const (
 		email    = "mfa-copy@example.com"
 		password = "synthetic-mfa-password"
@@ -45,6 +48,7 @@ func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
 		totpCache:     cache,
 		totpEncryptor: encryptor,
 	})
+	handler = NewAuthHandler(loaded, handler.authService, handler.userService, handler.settingSvc, handler.promoService, handler.redeemService, handler.totpService, handler.userAttributeService)
 	ctx := context.Background()
 	passwordHash, err := handler.authService.HashPassword(password)
 	require.NoError(t, err)
@@ -57,27 +61,30 @@ func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
 		SetStatus(service.StatusActive).
 		SetBalance(1).
 		SetConcurrency(1).
-		SetTotpEnabled(true).
+		SetTotpEnabled(false).
 		SetTotpSecretEncrypted(encryptedSecret).
 		SetTotpEnabledAt(time.Now().UTC()).
 		Save(ctx)
 	require.NoError(t, err)
 
-	directory := filepath.Join(t.TempDir(), "copies")
-	cfg := &config.Config{PasswordCopy: config.PasswordCopyConfig{Enabled: true, Directory: directory}}
-	store, err := passwordcopy.New(passwordcopy.Config{Enabled: true, Directory: directory})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	handler.cfg = cfg
-	handler.passwordCopy = store
-
 	loginBody, err := json.Marshal(LoginRequest{Email: email, Password: password})
 	require.NoError(t, err)
-	loginRecorder := httptest.NewRecorder()
-	loginContext, _ := gin.CreateTestContext(loginRecorder)
-	loginContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
-	loginContext.Request.Header.Set("Content-Type", "application/json")
-	handler.Login(loginContext)
+	login := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		loginContext, _ := gin.CreateTestContext(recorder)
+		loginContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+		loginContext.Request.Header.Set("Content-Type", "application/json")
+		handler.Login(loginContext)
+		return recorder
+	}
+	recorder := login()
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotEmpty(t, decodeJSONResponseData(t, recorder)["access_token"])
+	require.NoDirExists(t, "data/password-copies")
+	require.NoDirExists(t, directory)
+	err = client.User.UpdateOneID(user.ID).SetTotpEnabled(true).Exec(ctx)
+	require.NoError(t, err)
+	loginRecorder := login()
 
 	require.Equal(t, http.StatusOK, loginRecorder.Code)
 	loginData := decodeJSONResponseData(t, loginRecorder)
@@ -88,17 +95,22 @@ func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
 	session, err := cache.GetLoginSession(ctx, tempToken)
 	require.NoError(t, err)
 	require.NotNil(t, session)
-	require.False(t, strings.Contains(session.PasswordLoginEnvelope, password), "MFA cache envelope exposed the synthetic password")
+	encoded, err := json.Marshal(session)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	require.Len(t, fields, 3)
+	for _, key := range []string{"UserID", "Email", "TokenExpiry"} {
+		require.Contains(t, fields, key)
+	}
 
-	wrongBody := bytes.NewBufferString(`{"temp_token":"` + tempToken + `","totp_code":"000000"}`)
+	wrongBody := bytes.NewBufferString(`{"temp_token":"` + tempToken + `","totp_code":"abcdef"}`)
 	wrongRecorder := httptest.NewRecorder()
 	wrongContext, _ := gin.CreateTestContext(wrongRecorder)
 	wrongContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", wrongBody)
 	wrongContext.Request.Header.Set("Content-Type", "application/json")
 	handler.Login2FA(wrongContext)
 	require.Equal(t, http.StatusBadRequest, wrongRecorder.Code)
-	_, err = os.Stat(filepath.Join(directory, strconv.FormatInt(user.ID, 10)))
-	require.Error(t, err)
 
 	code, err := totp.GenerateCode(secret, time.Now().UTC())
 	require.NoError(t, err)
@@ -112,11 +124,9 @@ func TestPasswordMFAWritesCopyOnlyAfterValidTOTPAndTokenSuccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, validRecorder.Code)
 	validData := decodeJSONResponseData(t, validRecorder)
 	require.NotEmpty(t, validData["access_token"])
-	copyData, err := os.ReadFile(filepath.Join(directory, strconv.FormatInt(user.ID, 10)))
+	require.NoDirExists(t, "data/password-copies")
+	require.NoDirExists(t, directory)
+	remaining, err := cache.GetLoginSession(ctx, tempToken)
 	require.NoError(t, err)
-	require.True(t, strings.Contains(string(copyData), password), "MFA copy did not preserve the synthetic password")
-	require.Nil(t, func() *service.TotpLoginSession {
-		remaining, _ := cache.GetLoginSession(ctx, tempToken)
-		return remaining
-	}())
+	require.Nil(t, remaining)
 }
