@@ -144,6 +144,42 @@ func admissionOwnerContext(t *testing.T) (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
+func TestAPIKeyRoutesQueuedFallbackRechecksRevokedBackupGroup(t *testing.T) {
+	user := &User{ID: 7, Status: StatusActive, AllowedGroups: []int64{1, 2}}
+	users := &routeTestUsers{user: user}
+	groups := &routeTestGroups{groups: map[int64]*Group{
+		1: {ID: 1, Platform: PlatformOpenAI, Status: StatusActive},
+		2: {ID: 2, Platform: PlatformOpenAI, Status: StatusActive, IsExclusive: true},
+	}}
+	accounts := &routeTestAccounts{byGroup: map[int64][]Account{
+		2: {{Platform: PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-test": "gpt-test"}}}},
+	}}
+	resolver := keyRouteResolver{groups: groups.GetByIDLite, users: users, accounts: accounts}
+	primary := int64(1)
+	key := &APIKey{ID: 7, UserID: user.ID, GroupID: &primary, RouteGroupIDs: []int64{1, 2}, User: user, Group: groups.groups[1]}
+
+	cache := &apiKeyQueueCacheStub{immediateNowMs: 1_000, outcomes: []APIKeyQueueOutcome{APIKeyQueueOutcomeWaiting, APIKeyQueueOutcomeAcquired}}
+	queue := queueServiceWithStub(APIKeyQueuePolicy{MaxWaiting: 2, Timeout: time.Second}, cache)
+	ctx, _ := admissionOwnerContext(t)
+	calls := 0
+	ctx = WithAPIKeyQueueAuthRevalidator(ctx, func(context.Context) (int, error) {
+		calls++
+		if calls == 2 {
+			users.user = &User{ID: 7, Status: StatusActive, AllowedGroups: []int64{1}}
+		}
+		return 1, nil
+	})
+	reservation, err := queue.ReserveAPIKeySlotWithWait(ctx, key.ID, 1)
+	require.NoError(t, err)
+	require.NotNil(t, reservation)
+	defer reservation.Release()
+
+	_, err = resolver.candidates(ctx, key, "gpt-test", PlatformOpenAI)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.Equal(t, []int64{1}, users.user.AllowedGroups)
+	require.GreaterOrEqual(t, calls, 2, "the route must be checked after the queued grant")
+}
+
 func TestAPIKeyQueueZeroLimitPreservesLegacyFailOpen(t *testing.T) {
 	cache := &apiKeyQueueCacheStub{immediateErr: errors.New("redis down")}
 	svc := queueServiceWithStub(APIKeyQueuePolicy{MaxWaiting: 20, Timeout: time.Second}, cache)
