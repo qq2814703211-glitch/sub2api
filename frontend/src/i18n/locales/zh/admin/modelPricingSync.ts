@@ -2,7 +2,7 @@ export default {
   modelPricingSync: {
     title: 'models.dev 价格同步',
     description:
-      '后台定时拉取 models.dev 官方参考价，写入 pricing.override_file 覆盖层并热生效。只补/改我们价表里还没有手动定价的模型；已手工配置的模型绝不覆盖，分组价卡优先于同步价。',
+      '同步服务发布全局参考价。手动覆盖优先，直到恢复自动价；分组和渠道价卡仍优先于全局价格。',
     empty: '暂无同步记录',
     loadFailed: '加载同步记录失败',
     statusLoadFailed: '加载同步状态失败',
@@ -27,7 +27,13 @@ export default {
       input_cost_per_token: '输入价',
       output_cost_per_token: '输出价',
       cache_read_input_token_cost: '缓存读',
-      cache_creation_input_token_cost: '缓存写'
+      cache_creation_input_token_cost: '缓存写（默认 / 短时）',
+      cache_creation_input_token_cost_above_1hr: '缓存写（1 小时）',
+      cache_creation_input_token_cost_30m: '缓存写（30 分钟）',
+      cache_creation_input_token_cost_12h: '缓存写（12 小时）',
+      cost_per_request: '每次请求',
+      cost_per_second: '每秒',
+      output_cost_per_image: '每张输出图片'
     },
     status: {
       title: '同步状态',
@@ -41,11 +47,37 @@ export default {
       lastError: '最近错误',
       changes: '{count} 项'
     },
-    priceUnitHint: '价格单位为 USD / 1M tokens（覆盖层按 USD / token 存储，此处已换算）。',
+    v2: {
+      storedRevision: '已保存修订', activeRevision: '运行中修订（本实例）', refreshStatus: '刷新价格状态',
+      activationPending: '修订已保存，但尚未生效。有效价仍以运行中修订为准。',
+      scopeConverged: '本实例已加载并与库头一致：{revision}。多实例/蓝绿请逐实例核对。',
+      scopeLagging: '本实例尚未跟上：库头 {head}，本实例 {active}，上次校验 {age} 秒前。多实例/蓝绿请逐实例核对。',
+      scopeUnverified: '本实例尚未校验库头（{reason}），不能据此宣称全局生效。',
+      scopeStale: '校验已过期',
+      billingMode: '计费方式', siteCurrency: '站内单位',
+      mode: { token: '按 token', per_request: '按次', per_second: '按秒', per_image: '按张' },
+      unit: { token: '百万 tokens', per_request: '次', per_second: '秒', per_image: '张', storage: '百万 tokens · 小时' },
+      quote: { auto: '最新可信自动价', manual: '已保存的手动覆盖', effective: '本实例运行中的有效价（全局目录）' },
+      quoteMode: { auto: '自动来源', manual: '手动来源' },
+      empty: { auto: '暂无可信自动报价', manual: '无手动覆盖', effective: '暂无已确认的有效价' },
+      provider: '提供商', evidence: '核验证据', verifiedAt: '核验时间', contextTier: '上下文档位',
+      effectivePriceHint: '全局计费目录口径，不代表实际采购成本或分组售价。',
+      day: { 0: '周日', 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六' },
+      excludeHolidays: '不含中国法定节假日',
+      inspectModel: '查看模型价格（完整模型名）', editSelected: '编辑手动覆盖',
+      missingReason: '报价诊断', noVerifiedQuote: '没有该模型的可信自动报价；服务未返回更具体的原因。',
+      unknownRate: '未知或不适用', unsetRate: '未配置', manualPinned: '保留手动覆盖',
+      autoRestore: '可信价恢复后自动撤销', autoRestoreHint: '只有新核实的同模型报价通过校验后才撤销。',
+      restoreAuto: '恢复自动价', restoreCleanFirst: '请先保存或撤销其他草稿。',
+      revisionConflict: '价格修订已变更。草稿仍保留；请记录需要的改动，再读取最新修订。',
+      discardAndReload: '放弃草稿并重新读取', discardDraft: '撤销未保存改动',
+      sourceFailures: '采集来源错误',
+      restoreFailed: '无法恢复自动价'
+    },
     pricingSource: {
       title: '计价口径配置',
       description:
-        '同步按三档优先级取价，数字小的档位让位给数字大的档位。手动配置永远最高，同步任务不会覆盖它。',
+        '全局参考价按三档优先级取价。手动配置优先，直到手动恢复或按所选策略自动恢复。',
       priorityLabel: '优先级（低 → 高）',
       highestBadge: '最高',
       tierUsd: 'USD 同步',
@@ -53,7 +85,7 @@ export default {
       tierCny: 'CNY 官方价',
       tierCnyNote: '国模人民币原币牌价，覆盖 USD',
       tierManual: '手动配置',
-      tierManualNote: '本卡片配置，永不被同步覆盖',
+      tierManualNote: '覆盖自动报价，直到撤销',
       loading: '加载口径配置中…',
       loadFailed: '加载口径配置失败',
       endpointMissing: '后端接口 {path} 尚未注册，本卡片暂时只读。',
@@ -68,7 +100,7 @@ export default {
       cnyHint: '国模厂商按官方人民币原币取价，不使用美元换算。',
       sourceUrl: '数据源',
       manualTitle: '手动覆盖',
-      manualHint: '按「元 / 百万 tokens」填写，优先级最高。模型名填完整请求名即可（如 deepseek-v4.1-flash-1017、siliconflow/deepseek-v3.2），不用加厂商前缀。',
+      manualHint: '使用完整请求模型名。价格为站内单位，分母以所选计费方式为准。',
       manualEmpty: '还没有手动覆盖价。需要锁定某个模型的价格时，点「添加一行」。',
       manualPriorityNote: '此项优先级最高，同步不会覆盖',
       addRow: '添加一行',
@@ -79,23 +111,27 @@ export default {
         input: '输入价',
         output: '输出价',
         cache_read: '缓存读取价',
-        cache_write: '缓存写入价',
+        cache_write: '缓存写（默认 / 短时）',
+        cache_write_1h: '缓存写（1 小时）',
+        cache_write_30m: '缓存写（30 分钟）',
+        cache_write_12h: '缓存写（12 小时）',
+        per_request_price: '每次请求价格',
+        per_second_price: '每秒价格',
+        image_output_per_image: '每张输出图片价格',
         long_context_threshold: '阈值（tokens）',
         long_context_input_multiplier: '输入倍率',
         long_context_output_multiplier: '输出倍率'
       },
       extraTitle: '其他计费项',
-      extraHint: '默认只显示上面四项，需要更多计费项时从目录里添加。',
+      extraHint: '按需添加优先档、图片和缓存存储计费项。',
       addExtra: '添加计费项',
       removeExtra: '移除该项',
       extraGroup: {
-        cache: '缓存写入分档',
         priority: 'Priority 服务档',
         image: '图片计费',
         storage: '上下文缓存存储'
       },
       extra: {
-        cache_write_1h: '1 小时缓存写入',
         input_priority: 'Priority 输入价',
         output_priority: 'Priority 输出价',
         cache_read_priority: 'Priority 缓存读取价',
@@ -107,9 +143,9 @@ export default {
         cache_storage_per_hour: '缓存存储'
       },
       extraUnit: {
-        per_million_tokens: '元 / 百万 tokens',
-        per_million_tokens_hour: '元 / 百万 tokens · 小时',
-        per_image: '元 / 张'
+        per_million_tokens: '站内单位 / 百万 tokens',
+        per_million_tokens_hour: '站内单位 / 百万 tokens · 小时',
+        per_image: '站内单位 / 张'
       },
       colPlaceholder: {
         long_context_threshold: '如 32000',

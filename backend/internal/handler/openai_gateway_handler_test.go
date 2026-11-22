@@ -1931,6 +1931,7 @@ func newOpenAIWSHandlerTestServer(t *testing.T, h *OpenAIGatewayHandler, subject
 }
 
 type openAIResponsesWSUsageLogCase struct {
+	catalog                *service.PricingService
 	keyConcurrencyService  *service.ConcurrencyService
 	keyConcurrencyLimit    int
 	keyRevalidator         service.APIKeyQueueAuthRevalidator
@@ -3116,7 +3117,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		cfg,
 		nil,
 		nil,
-		service.NewBillingService(cfg, nil),
+		service.NewBillingService(cfg, tc.catalog),
 		nil,
 		billingCacheSvc,
 		&compositeWSHTTPUpstream{},

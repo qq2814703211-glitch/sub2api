@@ -32,7 +32,8 @@ import (
 // 的字段视为运营手配价，一律不动。
 //
 // 优先级（brief §5.3，必须被测试钉死）：分组价卡（ChannelModelPricing）
-//   > models.dev 同步来的覆盖层 > 内置兜底价。
+//
+//	> models.dev 同步来的覆盖层 > 内置兜底价。
 //
 // 这条不靠本文件的写入顺序保证，而是靠 ModelPricingResolver 的解析顺序：
 // 分组价卡命中时根本不读全局覆盖层。
@@ -152,6 +153,8 @@ type ModelPricingSyncService struct {
 	history  ModelPricingSyncHistoryRepository
 	fetcher  modelPricingSyncFetcher
 	settings cnyOfficialSettingsReader
+	active   *priceSyncRevision // immutable after installation; guarded by mu
+	follow   *priceSyncFollow   // per-process verified head; guarded by its own mutex
 
 	mu             sync.Mutex
 	lastRun        time.Time
@@ -168,10 +171,17 @@ type ModelPricingSyncService struct {
 
 // ModelPricingSyncConfig 是本服务的配置快照。
 type ModelPricingSyncConfig struct {
+	Store              PriceSyncPublishStore
+	Collector          PriceSyncCollector
+	LegacyOverrideFile string
 	// OverrideFile 是 pricing.override_file 的路径，即同步写入目标。
 	OverrideFile string
 	// Interval 是定时同步间隔，取自 pricing.hash_check_interval_minutes。
 	Interval time.Duration
+	// FollowInterval 是跟随已提交修订的兜底校对间隔。通知丢失、监听重连
+	// 或进程刚重启时，最多滞后这么久就会发现新修订；它不是价格轮询，
+	// 每次只读一个已建索引的修订号。
+	FollowInterval time.Duration
 	// RegistryURL 允许测试替换注册表地址。
 	RegistryURL string
 	// SettingsReader 读取 pricing.cny_official。为 nil 时人民币口径整体关闭，
@@ -225,6 +235,7 @@ func NewModelPricingSyncService(cfg *ModelPricingSyncConfig, pricing *PricingSer
 		history:  history,
 		fetcher:  fetcher,
 		settings: cfg.SettingsReader,
+		follow:   newPriceSyncFollow(),
 		stopCh:   make(chan struct{}),
 	}
 }
@@ -282,7 +293,6 @@ func (s *ModelPricingSyncService) Status() map[string]any {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	status := map[string]any{
 		"enabled":          s.SyncEnabled(),
 		"last_run":         s.lastRun,
@@ -309,6 +319,15 @@ func (s *ModelPricingSyncService) Status() map[string]any {
 		cnyStatus["report"] = s.cnyReport
 	}
 	status["cny_official"] = cnyStatus
+	if s.active != nil {
+		cnyStatus["enabled"] = s.active.Settings.Enabled
+		cnyStatus["source_url"] = s.active.Settings.SourceURL
+	}
+	status["pricing_v2"] = priceSyncStatus(s.active)
+	s.mu.Unlock()
+	// Scope is reported from the follow state's own lock: never hold s.mu while
+	// reading it, because publishers take buildMu first and s.mu second.
+	s.mergePriceSyncFollow(status)
 	return status
 }
 
@@ -322,113 +341,12 @@ func sortedStrings[V any](in map[string]V) []string {
 	return out
 }
 
-// Sync 执行一轮同步：拉注册表 → 算差异 → 原子写覆盖层 → 触发热重载 → 记变更史。
-// 返回本次实际应用的变更条数。
-//
-// 失败保留上一份数据：拉不到 / 解析不出参考价时直接返回错误，完全不碰覆盖层。
-//
-// 三档口径（usd < cny-official < manual）在这里合流：
-//   - usd 档：models.dev 参考价，只负责**非国模**模型；
-//   - cny-official 档：人民币官方牌价，负责国模，命中时覆盖 usd 档的同一字段；
-//   - manual 档：覆盖层里已手工配置的模型整条跳过，任何档都不得覆盖。
-//
-// 国模（人民币厂商白名单 / CNY 计价）的模型只由 cny 档处理。没有人民币价的国模
-// 一律不写，绝不回退 models.dev 的美元价 —— 那会把这个模型按美元数字收费，
-// 比「没配价」严重得多。同理，cny 档开启但本轮抓取失败时整轮放弃：只跑 usd 档
-// 会把已按人民币配好的国模改回美元数字。
+// Sync collects outside the publication lock and applies a complete V2 revision.
 func (s *ModelPricingSyncService) Sync(ctx context.Context) (int, error) {
 	if !s.SyncEnabled() {
 		return 0, fmt.Errorf("model pricing sync requires pricing.override_file")
 	}
-	cnySettings, err := loadCNYOfficialPricingSettings(ctx, s.settings)
-	if err != nil {
-		// 配置读不出来时既不能当关闭（会把国模改回美元），也不能猜：整轮放弃。
-		s.recordRun(err, 0)
-		s.recordCNYRun(err, nil, 0)
-		return 0, err
-	}
-	cnyEnabled := cnySettings != nil && cnySettings.Enabled
-
-	var dataset *cnyOfficialDataset
-	if cnyEnabled {
-		dataset, err = s.loadCNYOfficialDataset(ctx, cnySettings)
-		if err != nil {
-			s.recordRun(err, 0)
-			s.recordCNYRun(err, nil, 0)
-			return 0, err
-		}
-		logCNYOfficialReport(dataset.Report)
-	}
-
-	registry, err := s.fetchRegistry(ctx)
-	if err != nil {
-		s.recordRun(err, 0)
-		s.recordCNYRun(nil, nil, 0)
-		return 0, err
-	}
-	reference := buildModelPricingSyncReference(registry)
-	if len(reference) == 0 && (dataset == nil || len(dataset.Pricing) == 0) {
-		err := fmt.Errorf("models.dev registry contains no usable pricing")
-		s.recordRun(err, 0)
-		s.recordCNYRun(nil, nil, 0)
-		return 0, err
-	}
-
-	existing, err := s.loadOverrideEntries()
-	if err != nil {
-		s.recordRun(err, 0)
-		s.recordCNYRun(nil, nil, 0)
-		return 0, fmt.Errorf("read override file: %w", err)
-	}
-	syncedFields, cnyWrittenHist, err := s.loadSyncedFieldsWithCNY(ctx)
-	if err != nil {
-		// 变更史读不到时按「全部都是手动定价」处理：宁可不写，也不覆盖手配价。
-		s.recordRun(err, 0)
-		s.recordCNYRun(nil, nil, 0)
-		return 0, fmt.Errorf("read pricing sync history: %w", err)
-	}
-
-	changes := mergeModelPricingTierChanges(existing, reference, dataset, syncedFields)
-	report := cnyOfficialReportOf(dataset)
-	if report != nil {
-		report.Applied = countSyncModelsBySource(changes, ModelPricingSyncSourceCNYOfficial)
-		report.Skipped = len(dataset.Pricing) - report.Applied
-		if report.Skipped < 0 {
-			report.Skipped = 0
-		}
-	}
-	if len(changes) == 0 {
-		s.recordRun(nil, 0)
-		s.recordCNYRun(nil, report, 0)
-		return 0, nil
-	}
-
-	merged := applyModelPricingSyncChanges(existing, changes, cnyOfficialModelSet(dataset), cnyWrittenModelSet(changes, cnyWrittenHist))
-	if err := s.writeOverrideFile(merged); err != nil {
-		s.recordRun(err, 0)
-		s.recordCNYRun(err, nil, 0)
-		return 0, err
-	}
-	// 写完立刻走 PricingService 已有的文件指纹热重载路径，不需要重启进程。
-	if s.pricing != nil {
-		s.pricing.reloadIfCustomFilesChanged()
-	}
-	s.recordHistory(ctx, changes)
-	appliedCNY := countSyncModelsBySource(changes, ModelPricingSyncSourceCNYOfficial)
-	s.recordRun(nil, len(changes))
-	if report != nil {
-		report.Applied = appliedCNY
-		report.Skipped = len(dataset.Pricing) - appliedCNY
-		if report.Skipped < 0 {
-			report.Skipped = 0
-		}
-	}
-	s.recordCNYRun(nil, report, appliedCNY)
-	slog.Info("model pricing sync applied",
-		"changes", len(changes),
-		"models", countSyncModels(changes),
-		"cny_models", appliedCNY)
-	return len(changes), nil
+	return s.syncPublished(ctx)
 }
 
 func (s *ModelPricingSyncService) recordRun(err error, applied int) {
@@ -481,6 +399,7 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 		slog.Warn("model pricing sync history insert failed", "rows", len(rows), "error", err)
 	}
 }
+
 // loadSyncedFields 读取变更史里由各口径同步任务写过的字段集合。
 //
 // 两个来源都要读：字段归属判定必须知道「当前值是哪个口径写的」。只读 models.dev
@@ -492,23 +411,26 @@ func (s *ModelPricingSyncService) recordHistory(ctx context.Context, changes []m
 // 拿不到跨来源的先后顺序，所以这里用「高优先级覆盖低优先级」这个确定性规则，
 // 而不是猜时间。
 func (s *ModelPricingSyncService) loadSyncedFields(ctx context.Context) (map[string]map[string]float64, error) {
-	merged, _, err := s.loadSyncedFieldsWithCNY(ctx)
+	merged, _, _, err := s.loadSyncedFieldsWithCNY(ctx)
 	return merged, err
 }
 
 // loadSyncedFieldsWithCNY 同 loadSyncedFields，额外返回「历史上被人民币档写入过」
-// 的模型集合。覆盖层打 cny_official 标记时需要它：只有真正写过人民币值的条目
-// 才能标成人民币口径，否则值与标记错配（标着人民币、值还是美元）。
-func (s *ModelPricingSyncService) loadSyncedFieldsWithCNY(ctx context.Context) (map[string]map[string]float64, map[string]struct{}, error) {
+// 的字段值集合与模型集合。覆盖层打 cny_official 标记时需要它：只有真正写过人民币值
+// 的条目才能标成人民币口径，否则值与标记错配（标着人民币、值还是美元）。按字段返回
+// 而不是只返回模型集合，是为了在认定「旧自动价」时逐字段核对当前值确实等于人民币档
+// 最后一次写入，人工改过的行不会被误判。
+func (s *ModelPricingSyncService) loadSyncedFieldsWithCNY(ctx context.Context) (map[string]map[string]float64, map[string]map[string]float64, map[string]struct{}, error) {
 	merged := map[string]map[string]float64{}
+	cnyFields := map[string]map[string]float64{}
 	cnyWritten := map[string]struct{}{}
 	if s.history == nil {
-		return merged, cnyWritten, nil
+		return merged, cnyFields, cnyWritten, nil
 	}
 	for _, source := range []string{ModelPricingSyncSourceModelsDev, ModelPricingSyncSourceCNYOfficial} {
 		fields, err := s.history.ListSyncedFields(ctx, source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for model, perField := range fields {
 			target, ok := merged[model]
@@ -521,10 +443,15 @@ func (s *ModelPricingSyncService) loadSyncedFieldsWithCNY(ctx context.Context) (
 			}
 			if source == ModelPricingSyncSourceCNYOfficial && len(perField) > 0 {
 				cnyWritten[model] = struct{}{}
+				copyFields := make(map[string]float64, len(perField))
+				for field, value := range perField {
+					copyFields[field] = value
+				}
+				cnyFields[model] = copyFields
 			}
 		}
 	}
-	return merged, cnyWritten, nil
+	return merged, cnyFields, cnyWritten, nil
 }
 
 // fetchRegistry 拉取 models.dev 注册表。
@@ -979,8 +906,6 @@ func cnyOfficialManualLongContext(price CNYOfficialManualPrice) *cnyOfficialLong
 	}
 }
 
-
-
 // cnyOfficialManualChanges 按运营手配价生成变更。
 //
 // manual 是最高优先级一档：只要配置了，就按这份价格写覆盖层，不看官方人民币价
@@ -1105,7 +1030,6 @@ func cnyFieldOwnedByManual(field string, current map[string]float64, history map
 	}
 	return modelPricingValueEqual(synced, value)
 }
-
 
 // cnyOfficialReason 生成人民币档的变更原因，带上厂商便于核对牌价出处。
 func cnyOfficialReason(provider string, oldValue float64) string {
@@ -1396,6 +1320,10 @@ func (s *ModelPricingSyncService) writeOverrideFile(entries map[string]json.RawM
 		return fmt.Errorf("encode override file produced invalid JSON: %w", err)
 	}
 
+	return writePriceProjection(path, encoded)
+}
+
+func writePriceProjection(path string, encoded []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create override dir: %w", err)

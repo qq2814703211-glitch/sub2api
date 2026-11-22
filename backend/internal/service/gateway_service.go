@@ -672,12 +672,15 @@ type ClaudeUsage struct {
 
 // ForwardResult 转发结果
 type AudioUsage struct {
-	Mode            string  // realtime | tts | stt
-	DurationOrUnits float64 // minutes / million-chars / hours
+	ProviderBillableSeconds *float64 // trusted upstream meter, distinct from legacy estimates
+	Mode                    string   // realtime | tts | stt
+	DurationOrUnits         float64  // minutes / million-chars / hours
 }
 
 type ForwardResult struct {
-	RequestID string
+	UnitRequestFailed bool // an errored attempt may still carry observed token/image usage
+	actualImageCount  *int // observed before the legacy model-name fallback
+	RequestID         string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           ClaudeUsage

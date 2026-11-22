@@ -8,24 +8,49 @@ import (
 )
 
 // PlazaOfficialPricing 模型广场展示用的官方参考价（USD per token），与计费同源：
-// LiteLLM → 内置兜底价卡 → 模型策略。字段为 nil 表示该项缺失（0 视为未配置）。
+// LiteLLM → 内置兜底价卡 → 模型策略。字段为 nil 表示该项缺失；30m/12h 支持显式 0。
 type PlazaOfficialPricing struct {
+	BillingMode        BillingMode
+	UnitPrice          *float64
+	PriceWindows       []PriceSyncWindow
 	InputPrice         *float64
 	OutputPrice        *float64
 	CacheWritePrice    *float64 // 5m 缓存写入（= LiteLLM cache_creation）
 	CacheWrite1hPrice  *float64 // 1h 缓存写入，仅计费会区分 5m/1h 时给出
+	CacheWrite30mPrice *float64 // OpenAI 30m cache-write price
 	CacheWrite12hPrice *float64 // OpenAI 12h cache-write price
 	CacheReadPrice     *float64
 	// Intervals 官方长上下文阶梯（多档时给出），不受分组开关影响。
-	Intervals []PricingInterval
+	Intervals []PlazaOfficialPricingInterval
+}
+
+// PlazaOfficialPricingInterval adds catalog-only 30m prices without changing operator cards.
+type PlazaOfficialPricingInterval struct {
+	PricingInterval
+	CacheWrite30mPrice *float64
+}
+
+// PlazaCacheWrite30m 是广场实收（分组售价）的 30m 缓存写入价只读投影：
+// Base 为首档，Intervals 与 Pricing.intervals 逐档对齐（无阶梯时为 nil）。
+//
+// 它刻意放在 ChannelModelPricing / PricingInterval 之外：那两个结构是持久化的
+// 渠道/分组可写商业卡，展示需求不得借机给它们加列或改 SQL。nil 表示该档确实
+// 没有 30m 价（缺项），绝不回退成全局参考价。
+type PlazaCacheWrite30m struct {
+	Base      *float64
+	Intervals []*float64
 }
 
 // PlazaModel 模型广场中单个模型条目：按实收口径合成的展示定价 + 官方参考价。
 type PlazaModel struct {
+	catalogModel    string
+	PriceWindows    []PriceSyncWindow
 	Name            string
 	Platform        string
 	Pricing         *ChannelModelPricing
 	OfficialPricing *PlazaOfficialPricing
+	// CacheWrite30m 是本条目实收口径的 30m 缓存写价只读投影；整条无 30m 价时为 nil。
+	CacheWrite30m *PlazaCacheWrite30m
 	// LongContextBasis 多档时的计价基准（整单 / 仅超出部分），单档为空。
 	LongContextBasis ContextPricingBasis
 	// TimePricing 计费会生效的分时倍率时段；无分时为 nil。
@@ -173,6 +198,10 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 			}
 			for j := range supported {
 				m := supported[j]
+				catalogModel := ""
+				if m.catalogModel != "" && s.billingService.exactCatalogUnit(m.catalogModel) != nil {
+					catalogModel = m.catalogModel
+				}
 				if pg.Platform == PlatformComposite {
 					if !isConcreteRequestPlatform(m.Platform) {
 						continue
@@ -185,14 +214,16 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 					// 先见者胜；仅当已存条目无定价而新条目有定价时升级。
 					if pg.Models[at].Pricing == nil && m.Pricing != nil {
 						pg.Models[at].Pricing = m.Pricing
+						pg.Models[at].catalogModel = catalogModel
 					}
 					continue
 				}
 				idx[key] = len(pg.Models)
 				pg.Models = append(pg.Models, PlazaModel{
-					Name:     m.Name,
-					Platform: m.Platform,
-					Pricing:  m.Pricing,
+					Name:         m.Name,
+					catalogModel: catalogModel,
+					Platform:     m.Platform,
+					Pricing:      m.Pricing,
 				})
 			}
 		}
@@ -246,7 +277,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		})
 		for j := range pg.Models {
 			s.fillDisplayPricing(ctx, &pg.Models[j], g)
-			pg.Models[j].OfficialPricing = s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
+			pg.Models[j].OfficialPricing = s.lookupOfficialPricing(ctx, firstNonEmpty(pg.Models[j].catalogModel, pg.Models[j].Name), officialMemo)
 		}
 		out = append(out, *pg)
 	}
@@ -388,8 +419,8 @@ func plazaModelPlatformForKey(groupPlatform string, g *Group, name string) strin
 //
 // 口径（重要）：广场展示的是「这个分组对外提供哪些模型」，不是「这个分组
 // 允许请求哪些模型」。二者语义不同：
-//   * model_pricing 的 models 是本分组真正对外售卖的模型清单 —— 唯一依据；
-//   * model_allowlist 只是请求许可（gate），历史上被塞进大量跨分组的
+//   - model_pricing 的 models 是本分组真正对外售卖的模型清单 —— 唯一依据；
+//   - model_allowlist 只是请求许可（gate），历史上被塞进大量跨分组的
 //     「全家桶」条目（例如 Image / 视频分组的白名单里混着一百多个 gpt/
 //     claude/grok 文本模型，国产之光的白名单里混着 grok-4.5/4.6/4.7），
 //     若把白名单也当作模型清单，广场就会把别的分组的模型显示到这个分组下。
@@ -479,7 +510,9 @@ func appendSelfDeclaredModels(ctx context.Context, pg *PlazaGroup, g *Group) {
 // token 模型取计费阶梯表（单价与档位均由真实计费函数得出），
 // 图片/按次模型（或阶梯表不可用时）沿用渠道定价与分组图片档位价。
 func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) {
+	var groupCard bool
 	if groupPricing := matchGroupModelPricing(g, m.Name); groupPricing != nil {
+		groupCard = true
 		m.Pricing = groupPricing
 		// 分组模型级固定价就是实收价，不能再被分组图片兜底档位覆盖。
 		// 否则模型广场会显示 image_price_1k/2k/4k，而实际按 model_pricing 扣费。
@@ -492,6 +525,12 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		m.TimePricing = resolvedTimePricingSchedule(&ResolvedPricing{Source: PricingSourceChannel, channelPricing: m.Pricing})
 		return
 	}
+	if !groupCard && (m.Pricing == nil || m.Pricing.CatalogUnitPrice != nil) {
+		if unit := s.billingService.exactCatalogUnit(firstNonEmpty(m.catalogModel, m.Name)); unit != nil {
+			m.Pricing = unit.plazaUnitPricing()
+			return
+		}
+	}
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
 			Model:    m.Name,
@@ -500,9 +539,11 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		})
 		if err == nil && sched != nil && len(sched.Tiers) > 0 {
 			m.Pricing = plazaPricingFromSchedule(m.Pricing, sched)
+			m.CacheWrite30m = plazaCacheWrite30mFromSchedule(sched)
 			if len(sched.Tiers) > 1 {
 				m.LongContextBasis = sched.Basis
 			}
+			m.PriceWindows = sched.PriceWindows
 			m.TimePricing = sched.TimePricing
 			return
 		}
@@ -530,6 +571,30 @@ func plazaPricingFromSchedule(raw *ChannelModelPricing, sched *ContextPricingSch
 	out.CacheReadPrice = first.CacheRead
 	if len(sched.Tiers) > 1 {
 		out.Intervals = plazaIntervalsFromTiers(sched.Tiers)
+	}
+	return out
+}
+
+// plazaCacheWrite30mFromSchedule 把阶梯表里的 30m 缓存写价投影成广场只读结构。
+// 逐档来自真实计费探针（含显式 0）；整表都没有 30m 价时返回 nil，让 HTTP 层
+// 省略该字段——缺项保持缺项，不用全局参考价补。
+func plazaCacheWrite30mFromSchedule(sched *ContextPricingSchedule) *PlazaCacheWrite30m {
+	if sched == nil || len(sched.Tiers) == 0 {
+		return nil
+	}
+	out := &PlazaCacheWrite30m{Base: sched.Tiers[0].CacheWrite30m}
+	present := out.Base != nil
+	if len(sched.Tiers) > 1 {
+		out.Intervals = make([]*float64, len(sched.Tiers))
+		for i := range sched.Tiers {
+			out.Intervals[i] = sched.Tiers[i].CacheWrite30m
+			if out.Intervals[i] != nil {
+				present = true
+			}
+		}
+	}
+	if !present {
+		return nil
 	}
 	return out
 }
@@ -610,6 +675,11 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 	if cached, ok := memo[modelName]; ok {
 		return cached
 	}
+	if unit := s.billingService.exactCatalogUnit(modelName); unit != nil {
+		ref := &PlazaOfficialPricing{BillingMode: unit.Mode, UnitPrice: mediaCopyPtr(unit.catalogUnitPrice)}
+		memo[modelName] = ref
+		return ref
+	}
 	var result *PlazaOfficialPricing
 	if mp, err := s.billingService.GetModelPricing(modelName); err == nil && mp != nil {
 		result = &PlazaOfficialPricing{
@@ -622,15 +692,24 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 		if mp.SupportsCacheBreakdown {
 			result.CacheWrite1hPrice = nonZeroPtr(mp.CacheCreation1hPrice)
 		}
+		result.CacheWrite30mPrice = mp.CacheCreation30mPricePerToken
 		result.CacheWrite12hPrice = mp.CacheCreation12hPricePerToken
 		if s.resolver != nil {
 			sched, schedErr := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{Model: modelName})
+			if schedErr == nil && sched != nil && len(sched.Tiers) > 0 && mp.tariff != nil {
+				base := sched.Tiers[0]
+				result.InputPrice, result.OutputPrice = base.Input, base.Output
+				result.CacheReadPrice, result.CacheWritePrice, result.CacheWrite1hPrice = base.CacheRead, base.CacheWrite, base.CacheWrite1h
+				result.PriceWindows = sched.PriceWindows
+			}
 			if schedErr == nil && sched != nil && len(sched.Tiers) > 1 {
-				result.Intervals = plazaIntervalsFromTiers(sched.Tiers)
+				for i, interval := range plazaIntervalsFromTiers(sched.Tiers) {
+					result.Intervals = append(result.Intervals, PlazaOfficialPricingInterval{interval, sched.Tiers[i].CacheWrite30m})
+				}
 			}
 		}
 		if result.InputPrice == nil && result.OutputPrice == nil && result.CacheWritePrice == nil &&
-			result.CacheWrite1hPrice == nil && result.CacheWrite12hPrice == nil && result.CacheReadPrice == nil && len(result.Intervals) == 0 {
+			result.CacheWrite1hPrice == nil && result.CacheWrite30mPrice == nil && result.CacheWrite12hPrice == nil && result.CacheReadPrice == nil && len(result.Intervals) == 0 {
 			result = nil
 		}
 	}

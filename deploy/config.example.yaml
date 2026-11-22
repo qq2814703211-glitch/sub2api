@@ -1189,6 +1189,9 @@ pricing:
   # 哈希检查间隔（分钟）。每次检查同时比对远程目录哈希与本地 fallback/override 文件内容；
   # 删除本地文件会在下次检查时移除其条目，文件存在但不是 JSON 时保留旧数据、下次检查再试。
   hash_check_interval_minutes: 10
+  # Check the committed price revision if a PostgreSQL notification is missed.
+  # 通知丢失时，实例按此间隔核对已提交的价格修订（秒）。
+  publish_follow_backstop_seconds: 15
 
 # =============================================================================
 # Billing Configuration

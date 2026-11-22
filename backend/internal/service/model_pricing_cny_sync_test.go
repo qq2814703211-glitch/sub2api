@@ -22,7 +22,8 @@ import (
 //
 // 数据全部取自 basellm/llm-metadata 实测结构：
 //   - deepseek 用 cost.currency_options.CNY 独立分支（provider 无 currency 字段）；
-//   - alibaba-cn / zhipuai 整厂商以 CNY 计价（cost.input 本身就是人民币）；
+//   - 旧流程的合成 alibaba-cn / zhipuai 测试行在 cost 声明 CNY；真实快照的
+//     alibaba-cn/qwen3-max 只有地区币种，不能用于人民币定价；
 //   - qwen3-max 有两档长上下文阶梯（32000 / 128000）；
 //   - deepseek-flash 有 UTC 分时谷峰（01:00-04:00、06:00-10:00）。
 
@@ -78,7 +79,7 @@ const cnyOfficialRegistrySnapshotJSON = `{
       "qwen3-max": {
         "id": "qwen3-max",
         "cost": {
-          "input": 0.359, "output": 1.434, "reasoning": 1.434,
+          "currency": "CNY", "input": 0.359, "output": 1.434, "reasoning": 1.434,
           "tiers": [
             {"input": 0.574, "output": 2.294, "reasoning": 2.294,
              "tier": {"size": 32000, "type": "context"}},
@@ -89,7 +90,7 @@ const cnyOfficialRegistrySnapshotJSON = `{
       },
       "qwen3-coder-plus": {
         "id": "qwen3-coder-plus",
-        "cost": {"input": 4, "output": 16, "cache_read": 0.4}
+        "cost": {"currency": "CNY", "input": 4, "output": 16, "cache_read": 0.4}
       }
     }
   },
@@ -100,7 +101,7 @@ const cnyOfficialRegistrySnapshotJSON = `{
     "models": {
       "glm-5.3": {
         "id": "glm-5.3",
-        "cost": {"input": 8, "output": 28}
+        "cost": {"currency": "CNY", "input": 8, "output": 28}
       },
       "glm-4.5-flash": {
         "id": "glm-4.5-flash",
@@ -309,7 +310,7 @@ func readTestdata(t *testing.T, path string) string {
 func TestCNYOfficial_NationalModelUsesCNYNotUSD(t *testing.T) {
 	svc, path, history := newCNYSyncTestService(t, "", &CNYOfficialPricingSettings{Enabled: true}, nil)
 
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	require.Greater(t, applied, 0)
 	entries := readOverrideEntries(t, path)
@@ -356,7 +357,7 @@ func TestCNYOfficial_ManualPricingNeverOverwritten(t *testing.T) {
 	}`
 	svc, path, history := newCNYSyncTestService(t, overrideJSON, &CNYOfficialPricingSettings{Enabled: true}, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -402,7 +403,7 @@ func TestCNYOfficial_OverridesPriorUSDValue(t *testing.T) {
 		},
 	)
 
-	_, err = svc.Sync(context.Background())
+	_, err = syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -429,7 +430,7 @@ func TestCNYOfficial_OverridesPriorUSDValue(t *testing.T) {
 func TestCNYOfficial_NationalModelWithoutCNYPriceIsSkipped(t *testing.T) {
 	svc, path, _ := newCNYSyncTestService(t, "{}", &CNYOfficialPricingSettings{Enabled: true}, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -466,7 +467,7 @@ func TestCNYOfficial_ManualOverridesWriteConfiguredPrice(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -500,7 +501,7 @@ func TestCNYOfficial_ManualOverrideWithoutOfficialPrice(t *testing.T) {
 	existing := `{"deepseek-v4-1-flash-1017":{"input_cost_per_token":3e-7,"output_cost_per_token":1.2e-6}}`
 	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -618,7 +619,7 @@ func TestCNYOfficial_MultiTierLadderOnlyExpressesFirstTier(t *testing.T) {
 
 	// 落库校验：三个字段成组写入，128000 档不得出现在覆盖层里。
 	svc, path, _ := newCNYSyncTestService(t, "{}", &CNYOfficialPricingSettings{Enabled: true}, nil)
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 	require.Equal(t, 32000.0, entries["qwen3-max"]["long_context_input_token_threshold"])
@@ -637,7 +638,7 @@ func TestCNYOfficial_LadderMultiplierConflictIsAveraged(t *testing.T) {
 	      "qwen-lopsided": {
 	        "id": "qwen-lopsided",
 	        "cost": {
-	          "input": 1, "output": 1,
+	          "currency": "CNY", "input": 1, "output": 1,
 	          "tiers": [{"input": 3, "output": 1.5, "tier": {"size": 32000, "type": "context"}}]
 	        }
 	      }
@@ -661,7 +662,7 @@ func TestCNYOfficial_LadderMultiplierConflictIsAveraged(t *testing.T) {
 func TestCNYOfficial_DisabledByDefault(t *testing.T) {
 	svc, path, _ := newCNYSyncTestService(t, "{}", nil, nil)
 
-	applied, err := svc.Sync(context.Background())
+	applied, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	require.Greater(t, applied, 0)
 	entries := readOverrideEntries(t, path)
@@ -675,7 +676,7 @@ func TestCNYOfficial_DisabledByDefault(t *testing.T) {
 func TestCNYOfficial_EnabledButExplicitlyFalse(t *testing.T) {
 	svc, path, _ := newCNYSyncTestService(t, "{}", &CNYOfficialPricingSettings{Enabled: false}, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 	require.InDelta(t, 0.15e-6, entries["deepseek-flash"]["input_cost_per_token"], 1e-15)
@@ -702,7 +703,7 @@ func TestCNYOfficial_FetchFailureAbortsWholeSync(t *testing.T) {
 		&cnyRoutingFetcher{cnyErr: cnyOfficialErrUnreachable, usdBody: []byte(cnyOfficialModelsDevSnapshotJSON)},
 	)
 
-	_, err = svc.Sync(context.Background())
+	_, err = syncLegacyForTest(svc, context.Background())
 	require.Error(t, err)
 
 	body, readErr := os.ReadFile(path)
@@ -734,7 +735,7 @@ func TestCNYOfficial_SettingsParseErrorAbortsSync(t *testing.T) {
 		&cnyRoutingFetcher{cnyBody: []byte(cnyOfficialRegistrySnapshotJSON), usdBody: []byte(cnyOfficialModelsDevSnapshotJSON)},
 	)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), SettingKeyPricingCNYOfficial)
 }
@@ -743,7 +744,7 @@ func TestCNYOfficial_SettingsParseErrorAbortsSync(t *testing.T) {
 // Status() 查到（brief 要求分时解析结果可观测）。
 func TestCNYOfficial_StatusExposesPriorityAndReport(t *testing.T) {
 	svc, _, _ := newCNYSyncTestService(t, "", &CNYOfficialPricingSettings{Enabled: true}, nil)
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	status := svc.Status()
@@ -779,7 +780,7 @@ func TestCNYOfficial_PlanVendorDoesNotShadowMeteredPrice(t *testing.T) {
 	  "alibaba-cn": {
 	    "id": "alibaba-cn", "currency": "CNY",
 	    "models": {"qwen3-coder-plus": {"id": "qwen3-coder-plus",
-	      "cost": {"input": 4, "output": 16}}}
+	      "cost": {"currency": "CNY", "input": 4, "output": 16}}}
 	  },
 	  "alibaba-coding-plan-cn": {
 	    "id": "alibaba-coding-plan-cn", "currency": "CNY",
@@ -846,7 +847,7 @@ func TestCNYOfficial_ManualLongContextWritesLadder(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -869,7 +870,7 @@ func TestCNYOfficial_ManualLongContextOmittedWhenEmpty(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -895,7 +896,7 @@ func TestCNYOfficial_ManualLongContextOnlyOutputSide(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entry := readOverrideEntries(t, path)["deepseek-v4.1-flash-1017"]
 	require.InDelta(t, 1, entry["long_context_input_cost_multiplier"], 1e-9)
@@ -906,8 +907,8 @@ func TestCNYOfficial_ManualLongContextOnlyOutputSide(t *testing.T) {
 //
 // 真实模型名本身可能带斜杠（生产覆盖层里就有 `siliconflow/deepseek-v3.2`，
 // 单价 0.27）。早先版本把斜杠前的部分当厂商前缀剥掉，导致：
-//   1. 给 `siliconflow/deepseek-v3.2` 配的价被写到裸名 `deepseek-v3.2` 上；
-//   2. 如果同时存在同名裸模型，它的价被覆盖（实测 0.27 → 55）。
+//  1. 给 `siliconflow/deepseek-v3.2` 配的价被写到裸名 `deepseek-v3.2` 上；
+//  2. 如果同时存在同名裸模型，它的价被覆盖（实测 0.27 → 55）。
 //
 // 键必须原样当作模型名。两种键共存的场合各自独立。
 func TestCNYOfficial_SlashInModelNameIsNotAPrefix(t *testing.T) {
@@ -924,7 +925,7 @@ func TestCNYOfficial_SlashInModelNameIsNotAPrefix(t *testing.T) {
 		},
 	}
 	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -956,7 +957,7 @@ func TestCNYOfficial_ManualKeyIsExactModelName(t *testing.T) {
 		},
 	}
 	svc, path, _ := newCNYSyncTestService(t, existing, settings, nil)
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entries := readOverrideEntries(t, path)
 
@@ -994,7 +995,7 @@ func TestCNYOfficial_ManualExtraFieldsWriteToOverride(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entry := readOverrideEntries(t, path)["glm-4.6"]
 	require.NotNil(t, entry)
@@ -1029,7 +1030,7 @@ func TestCNYOfficial_ManualExtraFieldsOmittedWhenZero(t *testing.T) {
 	}
 	svc, path, _ := newCNYSyncTestService(t, "{}", settings, nil)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entry := readOverrideEntries(t, path)["glm-4.6"]
 	require.NotNil(t, entry)
@@ -1071,7 +1072,7 @@ func TestCNYOfficial_ManualRemovedExtraFieldIsPruned(t *testing.T) {
 		},
 	}
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 	entry := readOverrideEntries(t, path)["glm-4.6"]
 	require.NotNil(t, entry)

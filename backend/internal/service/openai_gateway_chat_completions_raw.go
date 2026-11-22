@@ -550,7 +550,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		usage = parsedUsage
 	}
 	responseModel := gjson.GetBytes(respBody, "model").String()
-	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
+	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) && !s.chatPricedPerSuccessfulRequest(c, originalModel, billingModel, upstreamModel) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}

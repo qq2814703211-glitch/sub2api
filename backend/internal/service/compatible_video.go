@@ -115,9 +115,15 @@ func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gi
 		result.UpstreamTerminalEvent = envelope.Get("status").String()
 		result.MediaUsage = &MediaUsage{}
 		if (result.UpstreamTerminalEvent == "completed" || (nativeTask && result.UpstreamTerminalEvent == "succeeded")) && !mediaResponseHasError(root) && !mediaResponseHasError(envelope) {
+			var outputSeconds float64
+			measuredOutputs := 0
 			for _, item := range envelope.Get("data").Array() {
 				if strings.TrimSpace(item.Get("url").String()) != "" && !mediaResponseHasError(item) {
 					result.MediaUsage.Count++
+					if seconds := reportedVideoSeconds(extractMediaDimensions(item), 1); seconds != nil {
+						outputSeconds += *seconds
+						measuredOutputs++
+					}
 				}
 			}
 			if result.MediaUsage.Count == 0 && nativeTask && strings.TrimSpace(envelope.Get("content.url").String()) != "" {
@@ -129,6 +135,14 @@ func (s *OpenAIGatewayService) ForwardCompatibleVideo(ctx context.Context, c *gi
 				result.MediaUsage = extractMediaDimensions(envelope)
 				result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractCompatibleVideoResponseUsage(responseBody))
 				result.MediaUsage.Count = count
+				switch {
+				case result.MediaUsage.TotalDurationSeconds != nil:
+					result.ProviderBillableSeconds = mediaCopyPtr(result.MediaUsage.TotalDurationSeconds)
+				case measuredOutputs == count:
+					result.ProviderBillableSeconds = &outputSeconds
+				case measuredOutputs == 0:
+					result.ProviderBillableSeconds = reportedVideoSeconds(result.MediaUsage, count)
+				}
 				result.Usage.OutputTokens = max(0, int(envelope.Get("usage.completion_tokens").Int()))
 				result.UpstreamModel = envelope.Get("model").String()
 				result.VideoCount = count

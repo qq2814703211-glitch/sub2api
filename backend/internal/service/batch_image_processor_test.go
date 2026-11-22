@@ -422,6 +422,7 @@ func (r *fakeBatchImageRepository) CreateBatchImageJob(_ context.Context, params
 		BillableUnitPrice:       params.BillableUnitPrice,
 		HoldUnitPrice:           params.HoldUnitPrice,
 		PricingSnapshotVersion:  params.PricingSnapshotVersion,
+		CatalogUnitMode:         params.CatalogUnitMode,
 		Currency:                params.Currency,
 		IdempotencyKey:          params.IdempotencyKey,
 		RequestHash:             params.RequestHash,

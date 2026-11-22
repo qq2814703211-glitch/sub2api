@@ -212,6 +212,7 @@ func (s *OpenAIGatewayService) pollVideoBillingJob(ctx context.Context, j *Video
 		if billed := ExtractGrokVideoBillingFromStatusBody(body, nil, j.TaskID); billed != nil {
 			result.VideoCount = billed.VideoCount
 			result.VideoDurationSeconds = actualGrokVideoSeconds(body)
+			result.ProviderBillableSeconds = billed.ProviderBillableSeconds
 		}
 	}
 	return result, "", nil
@@ -236,6 +237,13 @@ func applySeedanceVideoStatus(result *OpenAIForwardResult, body []byte) {
 	result.UpstreamModel = gjson.GetBytes(body, "model").String()
 	if result.VideoStatus != "succeeded" {
 		return
+	}
+	root := gjson.ParseBytes(body)
+	result.MediaUsage = &MediaUsage{}
+	if strings.TrimSpace(root.Get("content.video_url").String()) != "" && !mediaResponseHasError(root) {
+		result.MediaUsage = MergeMediaUsage(extractMediaDimensions(root), extractCompatibleVideoResponseUsage(body))
+		result.MediaUsage.Count = 1
+		result.ProviderBillableSeconds = reportedVideoSeconds(result.MediaUsage, 1)
 	}
 	tokens := gjson.GetBytes(body, "usage.completion_tokens")
 	result.VideoUsageKnown = tokens.Exists() && tokens.Type == gjson.Number && tokens.Float() >= 0 && tokens.Float() == float64(tokens.Int())

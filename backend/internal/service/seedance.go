@@ -150,17 +150,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		// Completion settlement gates on UpstreamTerminalEvent, so mirror the
 		// parsed status into it instead of leaving the field empty.
 		result.UpstreamTerminalEvent = result.VideoStatus
-		// Media dimensions count only a real, successful artifact: the billing
-		// path requires MediaUsage.Count > 0, so a succeeded status without a
-		// video URL must never become billable metadata.
-		result.MediaUsage = &MediaUsage{}
-		if result.VideoStatus == "succeeded" &&
-			strings.TrimSpace(gjson.GetBytes(responseBody, "content.video_url").String()) != "" &&
-			!mediaResponseHasError(gjson.ParseBytes(responseBody)) {
-			result.MediaUsage = extractMediaDimensions(gjson.ParseBytes(responseBody))
-			result.MediaUsage = MergeMediaUsage(result.MediaUsage, extractMediaReferenceResponse(gjson.ParseBytes(responseBody)))
-			result.MediaUsage.Count = 1
-		}
+
 	}
 	if endpoint == SeedanceEndpointCreate {
 		if err := runVideoBeforePublish(ctx, result); err != nil {

@@ -26,10 +26,8 @@ export interface ModelPricingSyncHistoryRow {
   id: number
   model: string
   field: string
-  /** 每 token 单价（USD），0 表示此前无值 */
-  old_value: number
-  /** 每 token 单价（USD） */
-  new_value: number
+  old_value?: number | null
+  new_value?: number | null
   source: string
   applied_at: string
   reason: string
@@ -54,6 +52,58 @@ export interface ModelPricingSyncStatus {
   tier_priority?: string[]
   /** 人民币口径的同步侧状态（后端 Status() 输出）。 */
   cny_official?: ModelPricingSyncCnyStatus
+  pricing_v2?: {
+    active_revision: string
+    models: Record<string, PricingModelStatus>
+    source_errors?: Record<string, string>
+    /** 本进程真实加载并用于计费的修订。scope 恒为 "process"，不是全局承诺。 */
+    applied_revision?: string
+    applied_at?: string
+    /** 最近一次从库里读到的已提交修订，以及读取时间。 */
+    head_revision?: string
+    head_checked_at?: string
+    head_age_seconds?: number
+    /** active==head 且校验新鲜、本地投影健康时才是 true。 */
+    converged?: boolean
+    stale?: boolean
+    scope?: 'process'
+    node?: string
+    head_error?: string
+    follow?: {
+      mode: 'notify' | 'poll'
+      backstop_seconds: number
+      wakes: number
+      reconnects: number
+      last_wake_at?: string
+      last_reconcile_at?: string
+      last_error?: string
+    }
+  }
+}
+
+export const BILLING_MODES = ['token', 'per_request', 'per_second', 'per_image'] as const
+export type PricingBillingMode = (typeof BILLING_MODES)[number]
+export type PricingQuoteRates = Record<string, number | null>
+
+export interface PriceSyncQuote {
+  model: string
+  provider: string
+  currency: 'SITE' | 'CNY' | 'USD'
+  billing_mode: PricingBillingMode
+  rates: PricingQuoteRates
+  tiers?: { threshold: number; inclusive?: boolean; rates: PricingQuoteRates }[]
+  windows?: { timezone: string; weekdays?: number[]; start: string; end: string; exclude_cn_holidays?: boolean; rates: PricingQuoteRates }[]
+  source_url: string
+  evidence: string
+  verified_at: string
+}
+
+export interface PricingModelStatus {
+  mode: 'auto' | 'manual'
+  auto?: PriceSyncQuote | null
+  effective?: PriceSyncQuote | null
+  issue?: string
+  external?: boolean
 }
 
 /**
@@ -137,17 +187,60 @@ export interface PricingManualLongContext {
   long_context_output_multiplier?: number
 }
 
-/** 单模型手动覆盖价，单位「元 / 百万 tokens」（按张计价项除外，见下方目录）。 */
+/** Token prices are site units per million tokens; fixed prices are per billing unit. */
 export interface PricingManualOverride extends PricingManualLongContext, PricingManualExtraFields {
-  input: number
-  output: number
-  cache_read: number
-  /**
-   * 缓存写入（Anthropic 5m ephemeral）。归在默认展示四项里，但后端历史配置可能
-   * 完全没有这个键，所以类型上可选 —— 强成必填会让回填路径把 undefined 渲染成
-   * 空串，用户看到的是「配了 0」。
-   */
-  cache_write?: number
+  billing_mode?: PricingBillingMode
+  auto_restore?: boolean
+  input?: number | null
+  output?: number | null
+  cache_read?: number | null
+  cache_write?: number | null
+  cache_write_1h?: number | null
+  cache_write_30m?: number | null
+  cache_write_12h?: number | null
+  per_request_price?: number | null
+  per_second_price?: number | null
+}
+
+export const MANUAL_TOKEN_FIELDS = [
+  'input', 'output', 'cache_read', 'cache_write', 'cache_write_1h', 'cache_write_30m', 'cache_write_12h'
+] as const
+
+export const MANUAL_UNIT_FIELDS = {
+  per_request: 'per_request_price',
+  per_second: 'per_second_price',
+  per_image: 'image_output_per_image'
+} as const
+
+export const MANUAL_RATE_KEYS = {
+  input: 'input_cost_per_token',
+  output: 'output_cost_per_token',
+  cache_read: 'cache_read_input_token_cost',
+  cache_write: 'cache_creation_input_token_cost',
+  cache_write_1h: 'cache_creation_input_token_cost_above_1hr',
+  cache_write_30m: 'cache_creation_input_token_cost_30m',
+  cache_write_12h: 'cache_creation_input_token_cost_12h',
+  per_request_price: 'cost_per_request',
+  per_second_price: 'cost_per_second',
+  image_output_per_image: 'output_cost_per_image',
+  input_priority: 'input_cost_per_token_priority',
+  output_priority: 'output_cost_per_token_priority',
+  cache_read_priority: 'cache_read_input_token_cost_priority',
+  cache_write_priority: 'cache_creation_input_token_cost_priority',
+  image_input: 'input_cost_per_image_token',
+  image_cache_read: 'cache_read_input_image_token_cost',
+  image_output_token: 'output_cost_per_image_token',
+  cache_storage_per_hour: 'cache_storage_cost_per_token_per_hour'
+} as const satisfies Partial<Record<keyof PricingManualOverride, string>>
+
+export function getRateUnit(field: string): PricingBillingMode | 'storage' | undefined {
+  switch (field) {
+    case 'cost_per_request': return 'per_request'
+    case 'cost_per_second': return 'per_second'
+    case 'output_cost_per_image': return 'per_image'
+    case 'cache_storage_cost_per_token_per_hour': return 'storage'
+    default: return field.includes('_token') ? 'token' : undefined
+  }
 }
 
 /**
@@ -155,7 +248,6 @@ export interface PricingManualOverride extends PricingManualLongContext, Pricing
  * 已添加的可以删掉。
  *
  * 这些字段在计费链路上都有真实扣费点，不是仅供展示：
- *   - `cache_write_1h`         Anthropic 1 小时缓存写入（与 5m 分档计费）
  *   - `*_priority`             priority 服务档单价，命中时替换基准价
  *   - `image_*`                图片输入 / 图片缓存读 / 图片输出 token
  *   - `image_output_per_image` 图片按张计价
@@ -164,23 +256,22 @@ export interface PricingManualOverride extends PricingManualLongContext, Pricing
  * 字段名与后端 `CNYOfficialManualPrice` 的 json tag 一一对应，不要改名。
  */
 export interface PricingManualExtraFields {
-  cache_write_1h?: number
-  input_priority?: number
-  output_priority?: number
-  cache_read_priority?: number
-  cache_write_priority?: number
-  image_input?: number
-  image_cache_read?: number
-  image_output_token?: number
-  image_output_per_image?: number
-  cache_storage_per_hour?: number
+  input_priority?: number | null
+  output_priority?: number | null
+  cache_read_priority?: number | null
+  cache_write_priority?: number | null
+  image_input?: number | null
+  image_cache_read?: number | null
+  image_output_token?: number | null
+  image_output_per_image?: number | null
+  cache_storage_per_hour?: number | null
 }
 
 /** 可选计费项的一个目录条目。 */
 export interface ManualExtraFieldSpec {
   key: keyof PricingManualExtraFields & string
   /** 所在分组，用于目录分组显示。 */
-  group: 'cache' | 'priority' | 'image' | 'storage'
+  group: 'priority' | 'image' | 'storage'
   /** 计价单位，写进输入框后缀。 */
   unit: 'per_million_tokens' | 'per_million_tokens_hour' | 'per_image'
 }
@@ -190,7 +281,6 @@ export interface ManualExtraFieldSpec {
  * 后端新增一项却没同步这里，页面上就永远加不出那个计费项。
  */
 export const MANUAL_EXTRA_FIELDS: readonly ManualExtraFieldSpec[] = [
-  { key: 'cache_write_1h', group: 'cache', unit: 'per_million_tokens' },
   { key: 'input_priority', group: 'priority', unit: 'per_million_tokens' },
   { key: 'output_priority', group: 'priority', unit: 'per_million_tokens' },
   { key: 'cache_read_priority', group: 'priority', unit: 'per_million_tokens' },
@@ -209,19 +299,16 @@ export interface PricingCnyOfficialConfig {
   manual_overrides: Record<string, PricingManualOverride>
   /** 后端命中的国模 vendor id（只读，回写时不提交）。 */
   cn_vendors?: string[]
+  revision?: string
+  active_revision?: string
 }
 
-/** 写入体：只提交可写的三个字段，`cn_vendors` 由后端自己算。 */
+/** Revision comes from the last read; activation and vendor fields are read-only. */
 export interface PricingCnyOfficialUpdate {
   enabled: boolean
   source_url: string
   manual_overrides: Record<string, PricingManualOverride>
-}
-
-function toPrice(value: unknown): number {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(parsed) || parsed < 0) return 0
-  return parsed
+  revision?: string
 }
 
 /**
@@ -230,7 +317,7 @@ function toPrice(value: unknown): number {
  * 写 0 和不写并不完全等价，少写才是「不启用」的准确表达。
  */
 function toOptionalNumber(value: unknown): number | undefined {
-  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined
   if (typeof value === 'string' && value.trim() === '') return undefined
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(parsed)) return undefined
@@ -239,25 +326,19 @@ function toOptionalNumber(value: unknown): number | undefined {
 
 function normalizeOverrides(value: unknown): Record<string, PricingManualOverride> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const out: Record<string, PricingManualOverride> = {}
+  const out: Record<string, PricingManualOverride> = Object.create(null)
   for (const [model, price] of Object.entries(value as Record<string, unknown>)) {
     const key = model.trim()
     if (!key) continue
     const entry = (price && typeof price === 'object' ? price : {}) as Record<string, unknown>
-    const override: PricingManualOverride = {
-      input: toPrice(entry.input),
-      output: toPrice(entry.output),
-      cache_read: toPrice(entry.cache_read)
+    const override: PricingManualOverride = {}
+    if (BILLING_MODES.includes(entry.billing_mode as PricingBillingMode)) {
+      override.billing_mode = entry.billing_mode as PricingBillingMode
     }
-    // cache_write 归默认四项，但历史配置可能没有这个键：只有 > 0 才带上，
-    // 免得把「从没配过」渲染成「配了 0」。
-    const cacheWrite = toOptionalNumber(entry.cache_write)
-    if (cacheWrite !== undefined && cacheWrite > 0) override.cache_write = cacheWrite
-    // 可选计费项：只有真的配了（> 0）才带上键。写 0 在后端等价于「不配置」，
-    // 但省略能让「未添加」与「添加了填 0」在载荷里可区分，dirty 判断也更准。
-    for (const spec of MANUAL_EXTRA_FIELDS) {
-      const parsed = toOptionalNumber(entry[spec.key])
-      if (parsed !== undefined && parsed > 0) override[spec.key] = parsed
+    if (typeof entry.auto_restore === 'boolean') override.auto_restore = entry.auto_restore
+    for (const field of Object.keys(MANUAL_RATE_KEYS) as (keyof typeof MANUAL_RATE_KEYS)[]) {
+      const parsed = entry[field] === null ? null : toOptionalNumber(entry[field])
+      if (parsed !== undefined) override[field] = parsed
     }
     const threshold = toOptionalNumber(entry.long_context_threshold)
     const inputMultiplier = toOptionalNumber(entry.long_context_input_multiplier)
@@ -299,6 +380,8 @@ export function normalizeCnyOfficialConfig(raw: unknown): PricingCnyOfficialConf
       ? source.source_url.trim()
       : DEFAULT_CNY_SOURCE_URL,
     manual_overrides: normalizeOverrides(source.manual_overrides),
+    ...(typeof source.revision === 'string' ? { revision: source.revision } : {}),
+    ...(typeof source.active_revision === 'string' ? { active_revision: source.active_revision } : {}),
     ...(vendors.length > 0 ? { cn_vendors: vendors } : {})
   }
 }
@@ -316,7 +399,8 @@ export async function updateCnyOfficialConfig(
   const payload: PricingCnyOfficialUpdate = {
     enabled: config.enabled,
     source_url: config.source_url.trim() || DEFAULT_CNY_SOURCE_URL,
-    manual_overrides: normalizeOverrides(config.manual_overrides)
+    manual_overrides: normalizeOverrides(config.manual_overrides),
+    ...(config.revision !== undefined ? { revision: config.revision } : {})
   }
   const { data } = await apiClient.put<unknown>('/admin/model-pricing-sync/cny-official', payload)
   return normalizeCnyOfficialConfig(data ?? payload)

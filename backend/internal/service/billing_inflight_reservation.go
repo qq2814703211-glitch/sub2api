@@ -503,7 +503,7 @@ func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, 
 			rate = d.userGroupRate(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
 		}
 	}
-	return computePeakAwareMultipliers(apiKey, rate, timezone.Now())
+	return computePeakAwareMultipliers(apiKey, rate, requestCatalogAt(ctx, timezone.Now()))
 }
 
 func tokenCounts(cfg config.InflightReservationConfig, bodyBytes, maxTokens int) (int, int) {
@@ -647,6 +647,8 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		// 非计量请求（媒体状态查询、custom-voices 等）：无需预留，也不算「无法定价」。
 		return 0, true
 	}
+	apiKey = RequestCatalogFromContext(ctx).groupFor(apiKey)
+	d.billing = d.billing.forRequest(ctx)
 	textRate, imageRate := d.rates(ctx, apiKey)
 	if textRate <= 0 && imageRate <= 0 {
 		// 免费分组：不计费，也无需预留。

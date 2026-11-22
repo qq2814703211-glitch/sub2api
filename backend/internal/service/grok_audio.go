@@ -353,10 +353,19 @@ func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 		// Prefer response duration when present; do not trust client duration_seconds alone
 		// (under-report would underbill). Floor against body-size heuristic and elapsed.
 		secs := 0.0
+		var reported *float64
 		if gjson.ValidBytes(respBody) {
+			reported = mediaNonNegativeNumber(gjson.GetBytes(respBody, "usage.seconds"))
 			for _, path := range []string{"duration", "duration_seconds", "audio_duration", "usage.seconds"} {
-				if v := gjson.GetBytes(respBody, path); v.Exists() && v.Type == gjson.Number && v.Float() > 0 {
-					secs = v.Float()
+				n := mediaNonNegativeNumber(gjson.GetBytes(respBody, path))
+				if n == nil {
+					continue
+				}
+				if reported == nil {
+					reported = n
+				}
+				if *n > 0 {
+					secs = *n
 					break
 				}
 			}
@@ -395,7 +404,7 @@ func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 		if secs <= 0 {
 			return nil
 		}
-		return &AudioUsage{Mode: "stt", DurationOrUnits: secs / 3600.0}
+		return &AudioUsage{Mode: "stt", DurationOrUnits: secs / 3600.0, ProviderBillableSeconds: reported}
 	case "realtime":
 		mins := elapsed.Minutes()
 		if mins <= 0 {

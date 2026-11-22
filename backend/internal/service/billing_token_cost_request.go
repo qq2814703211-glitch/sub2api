@@ -37,7 +37,13 @@ func (s *BillingService) CalculateTokenCostForRequest(req TokenCostRequest) (*Co
 	if req.ReasoningEffort != "" {
 		return s.CalculateCostUnified(s.tokenCostInput(req, resolved))
 	}
-	return s.CalculateCost(req.Model, req.Tokens, req.RateMultiplier)
+	billing := s.forRequest(req.Ctx)
+	if row := billing.exactCatalogRow(req.Model); row != nil && row.tariff != nil {
+		// A managed token quote can change with the request clock even without
+		// a group or reasoning tier. Use the same pinned row and time as unified billing.
+		return billing.CalculateCostUnified(s.tokenCostInput(req, nil))
+	}
+	return billing.CalculateCost(req.Model, req.Tokens, req.RateMultiplier)
 }
 
 func (s *BillingService) tokenCostInput(req TokenCostRequest, resolved *ResolvedPricing) CostInput {

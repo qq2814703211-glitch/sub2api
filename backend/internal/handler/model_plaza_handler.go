@@ -36,16 +36,26 @@ func NewModelPlazaHandler(
 	}
 }
 
-// modelPlazaOfficialPricing 官方参考价（USD per token，与计费目录同源）。
+// modelPlazaOfficialPricing 全局目录参考价，按计费目录口径返回。
 type modelPlazaOfficialPricing struct {
-	InputPrice         *float64 `json:"input_price"`
-	OutputPrice        *float64 `json:"output_price"`
-	CacheWritePrice    *float64 `json:"cache_write_price"`
-	CacheWrite1hPrice  *float64 `json:"cache_write_1h_price,omitempty"`
-	CacheWrite12hPrice *float64 `json:"cache_write_12h_price,omitempty"`
-	CacheReadPrice     *float64 `json:"cache_read_price"`
+	BillingMode        service.BillingMode `json:"billing_mode,omitempty"`
+	UnitPrice          *float64            `json:"unit_price,omitempty"`
+	InputPrice         *float64            `json:"input_price"`
+	OutputPrice        *float64            `json:"output_price"`
+	CacheWritePrice    *float64            `json:"cache_write_price"`
+	CacheWrite1hPrice  *float64            `json:"cache_write_1h_price,omitempty"`
+	CacheWrite30mPrice *float64            `json:"cache_write_30m_price,omitempty"`
+	CacheWrite12hPrice *float64            `json:"cache_write_12h_price,omitempty"`
+	CacheReadPrice     *float64            `json:"cache_read_price"`
 	// Intervals 官方长上下文阶梯，仅多档模型给出。
-	Intervals []userPricingIntervalDTO `json:"intervals,omitempty"`
+	Intervals []modelPlazaOfficialPricingInterval `json:"intervals,omitempty"`
+	// PriceWindows carries absolute rates per token, without group/user multipliers.
+	PriceWindows []service.PriceSyncWindow `json:"price_windows,omitempty"`
+}
+
+type modelPlazaOfficialPricingInterval struct {
+	userPricingIntervalDTO
+	CacheWrite30mPrice *float64 `json:"cache_write_30m_price,omitempty"`
 }
 
 // modelPlazaTimePricingPeriod 分时倍率时段（配置时区当天 [start, end)）。
@@ -70,16 +80,32 @@ type modelPlazaMediaRateOption struct {
 	Multiplier  float64 `json:"multiplier"`
 }
 
+// modelPlazaPricing 广场实付定价：用户可见白名单字段 + 广场专属的 30m 缓存写价。
+// 30m 只来自 service 层按分组/用户实际生效定价做的只读投影；缺项时省略字段，
+// 绝不用 official_pricing 的目录参考价顶替售价。
+type modelPlazaPricing struct {
+	userSupportedModelPricing
+	CacheWrite30mPrice *float64                    `json:"cache_write_30m_price,omitempty"`
+	Intervals          []modelPlazaPricingInterval `json:"intervals"`
+}
+
+// modelPlazaPricingInterval 实付阶梯：白名单区间字段 + 该档 30m 售价（可为显式 0）。
+type modelPlazaPricingInterval struct {
+	userPricingIntervalDTO
+	CacheWrite30mPrice *float64 `json:"cache_write_30m_price,omitempty"`
+}
+
 // modelPlazaModel 广场模型条目：实收口径展示定价（白名单形态）+ 官方参考价。
 type modelPlazaModel struct {
 	Name            string                     `json:"name"`
 	Platform        string                     `json:"platform"`
-	Pricing         *userSupportedModelPricing `json:"pricing"`
+	Pricing         *modelPlazaPricing         `json:"pricing"`
 	OfficialPricing *modelPlazaOfficialPricing `json:"official_pricing"`
 	// LongContextBasis 多档时的计价基准："whole_request"（整单按档）| "marginal"（仅超出部分）。
 	LongContextBasis string `json:"long_context_basis,omitempty"`
 	// TimePricing 分时倍率时段，落在时段内的请求整单乘倍率；无分时省略。
 	TimePricing      *modelPlazaTimePricing      `json:"time_pricing,omitempty"`
+	PriceWindows     []service.PriceSyncWindow   `json:"price_windows,omitempty"`
 	MediaRateOptions []modelPlazaMediaRateOption `json:"media_rate_options,omitempty"`
 }
 
@@ -213,10 +239,11 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 		models = append(models, modelPlazaModel{
 			Name:             m.Name,
 			Platform:         m.Platform,
-			Pricing:          toUserPricing(m.Pricing),
+			Pricing:          toModelPlazaPricing(m.Pricing, m.CacheWrite30m),
 			OfficialPricing:  toModelPlazaOfficialPricing(m.OfficialPricing),
 			LongContextBasis: string(m.LongContextBasis),
 			TimePricing:      toModelPlazaTimePricing(m.TimePricing),
+			PriceWindows:     m.PriceWindows,
 			MediaRateOptions: toModelPlazaMediaRateOptions(m.Pricing, g, userRates),
 		})
 	}
@@ -248,7 +275,7 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 // Keep these options endpoint-scoped: billing_mode and rule units do not identify
 // whether a non-token media card is called from an image or video endpoint.
 func toModelPlazaMediaRateOptions(pricing *service.ChannelModelPricing, g *service.PlazaGroup, userRates map[int64]float64) []modelPlazaMediaRateOption {
-	if pricing == nil || pricing.MediaPricing == nil {
+	if pricing == nil || (pricing.MediaPricing == nil && pricing.CatalogUnitPrice == nil) {
 		return nil
 	}
 	rate := g.RateMultiplier
@@ -291,18 +318,57 @@ func toModelPlazaTimePricing(p *service.TimePricingSchedule) *modelPlazaTimePric
 	return &modelPlazaTimePricing{Timezone: p.Timezone, WeekdaysOnly: p.WeekdaysOnly, Periods: periods}
 }
 
+// toModelPlazaPricing 组装广场实付定价：先取用户可见白名单定价，再叠加 service
+// 投影的 30m 售价（基础档与逐阶梯档）。w 为 nil 或缺该档时字段省略，不用参考价补。
+func toModelPlazaPricing(p *service.ChannelModelPricing, w *service.PlazaCacheWrite30m) *modelPlazaPricing {
+	base := toUserPricing(p)
+	if base == nil {
+		return nil
+	}
+	out := &modelPlazaPricing{
+		userSupportedModelPricing: *base,
+		Intervals:                 make([]modelPlazaPricingInterval, len(base.Intervals)),
+	}
+	for i := range base.Intervals {
+		out.Intervals[i] = modelPlazaPricingInterval{userPricingIntervalDTO: base.Intervals[i]}
+	}
+	if w == nil {
+		return out
+	}
+	out.CacheWrite30mPrice = w.Base
+	// 逐档只在档数与实付阶梯完全一致时映射，避免错位把某档 30m 挂到另一档上。
+	if len(w.Intervals) != len(out.Intervals) {
+		return out
+	}
+	for i := range out.Intervals {
+		out.Intervals[i].CacheWrite30mPrice = w.Intervals[i]
+	}
+	return out
+}
+
 // toModelPlazaOfficialPricing 转换官方参考价；nil 透传（前端显示 "-"）。
 func toModelPlazaOfficialPricing(p *service.PlazaOfficialPricing) *modelPlazaOfficialPricing {
 	if p == nil {
 		return nil
 	}
+	base := make([]service.PricingInterval, len(p.Intervals))
+	for i, interval := range p.Intervals {
+		base[i] = interval.PricingInterval
+	}
+	var intervals []modelPlazaOfficialPricingInterval
+	for i, interval := range toUserPricingIntervals(base) {
+		intervals = append(intervals, modelPlazaOfficialPricingInterval{interval, p.Intervals[i].CacheWrite30mPrice})
+	}
 	return &modelPlazaOfficialPricing{
+		BillingMode: p.BillingMode, UnitPrice: p.UnitPrice,
 		InputPrice:         p.InputPrice,
 		OutputPrice:        p.OutputPrice,
 		CacheWritePrice:    p.CacheWritePrice,
 		CacheWrite1hPrice:  p.CacheWrite1hPrice,
+		CacheWrite30mPrice: p.CacheWrite30mPrice,
 		CacheWrite12hPrice: p.CacheWrite12hPrice,
 		CacheReadPrice:     p.CacheReadPrice,
-		Intervals:          toUserPricingIntervals(p.Intervals),
+		Intervals:          intervals,
+		PriceWindows:       p.PriceWindows,
 	}
 }

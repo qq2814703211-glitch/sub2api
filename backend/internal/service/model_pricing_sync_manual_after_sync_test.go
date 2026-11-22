@@ -48,7 +48,7 @@ func TestModelPricingSync_ManualEditAfterPriorSyncSurvives(t *testing.T) {
 		stubModelPricingSyncFetcher{body: []byte(modelsDevRegistryJSON)},
 	)
 
-	_, err := svc.Sync(context.Background())
+	_, err := syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	body, err := os.ReadFile(path)

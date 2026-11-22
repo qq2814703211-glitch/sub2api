@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -89,6 +90,26 @@ func (s *PricingServiceSuite) TestFetchHashText_NonOKStatus() {
 
 	_, err := s.client.FetchHashText(s.ctx, s.srv.URL+"/nope")
 	require.Error(s.T(), err, "expected error for non-200 status")
+}
+
+func (s *PricingServiceSuite) TestFetchHashText_RejectsOverlengthChunkedReply() {
+	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.(http.Flusher).Flush()
+		_, _ = w.Write([]byte("abc123 " + strings.Repeat("x", 8192)))
+	}))
+	hash, err := s.client.FetchHashText(s.ctx, s.srv.URL)
+	require.Error(s.T(), err)
+	require.Empty(s.T(), hash)
+}
+
+func (s *PricingServiceSuite) TestFetchPricingJSON_RejectsOversizedDeclaration() {
+	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "67108865")
+		w.WriteHeader(http.StatusOK)
+	}))
+	body, err := s.client.FetchPricingJSON(s.ctx, s.srv.URL)
+	require.ErrorContains(s.T(), err, "exceeds")
+	require.Nil(s.T(), body)
 }
 
 func (s *PricingServiceSuite) TestFetchPricingJSON_InvalidURL() {

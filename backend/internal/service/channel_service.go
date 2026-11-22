@@ -101,8 +101,9 @@ type channelCache struct {
 	groupPlatform           map[int64]string                                    // groupID → platform
 
 	// 冷路径（CRUD 操作）
-	byID     map[int64]*Channel
-	loadedAt time.Time
+	byID        map[int64]*Channel
+	loadedAt    time.Time
+	readFailure bool // negative cache for retry throttling, never an authoritative price list
 }
 
 // ChannelMappingResult 渠道映射查找结果
@@ -166,8 +167,10 @@ type ChannelService struct {
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
 	cachePubSub          ChannelCachePubSub
 
-	cache   atomic.Value // *channelCache
-	cacheSF singleflight.Group
+	cache                atomic.Value // *channelCache
+	cacheSF              singleflight.Group
+	fixedPricingCache    *channelCache                // read-only billing view; never used for route authorization
+	lastConfirmedPricing atomic.Pointer[channelCache] // replaces only after a successful full read, including an empty result
 }
 
 // NewChannelService 创建渠道服务实例。
@@ -187,6 +190,9 @@ func NewChannelService(repo ChannelRepository, groupRepo GroupRepository, authCa
 
 // loadCache 加载或返回缓存的渠道数据
 func (s *ChannelService) loadCache(ctx context.Context) (*channelCache, error) {
+	if s.fixedPricingCache != nil {
+		return s.fixedPricingCache, nil
+	}
 	if cached, ok := s.cache.Load().(*channelCache); ok && cached != nil {
 		if time.Since(cached.loadedAt) < channelCacheTTL {
 			return cached, nil
@@ -281,6 +287,7 @@ func expandMappingToCache(cache *channelCache, ch *Channel, gid int64, platform 
 // 通过回退 loadedAt 使剩余 TTL = channelErrorTTL。
 func (s *ChannelService) storeErrorCache() {
 	errorCache := newEmptyChannelCache()
+	errorCache.readFailure = true
 	errorCache.loadedAt = time.Now().Add(-(channelCacheTTL - channelErrorTTL))
 	s.cache.Store(errorCache)
 }
@@ -297,6 +304,7 @@ func (s *ChannelService) buildCache(ctx context.Context) (*channelCache, error) 
 	}
 
 	cache := populateChannelCache(channels, groupPlatforms)
+	s.lastConfirmedPricing.Store(cache)
 	s.cache.Store(cache)
 	return cache, nil
 }

@@ -50,7 +50,7 @@ func TestCNYOfficial_LadderTakesEffectInBilling(t *testing.T) {
 			usdBody: []byte(cnyOfficialRegistrySnapshotJSON),
 		},
 	)
-	_, err = svc.Sync(context.Background())
+	_, err = syncLegacyForTest(svc, context.Background())
 	require.NoError(t, err)
 
 	pricingService := &PricingService{cfg: &config.Config{}}

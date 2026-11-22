@@ -692,7 +692,8 @@ type UsageLog struct {
 	CacheTTLOverridden bool `json:"cache_ttl_overridden"`
 
 	// BillingMode 计费模式：token/image
-	BillingMode *string `json:"billing_mode,omitempty"`
+	BillingMode  *string  `json:"billing_mode,omitempty"`
+	BillingUnits *float64 `json:"billing_units,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 

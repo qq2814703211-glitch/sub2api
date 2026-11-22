@@ -302,8 +302,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	auditLogService := service.ProvideAuditLogService(auditLogRepository, settingService)
 	auditLogHandler := admin.NewAuditLogHandler(auditLogService, totpService)
 	modelPricingSyncHistoryRepository := repository.NewModelPricingSyncHistoryRepository(db)
-	modelPricingSyncService := service.ProvideModelPricingSyncService(configConfig, pricingService, modelPricingSyncHistoryRepository, pricingRemoteClient, settingService)
-	modelPricingSyncHandler := admin.NewModelPricingSyncHandler(modelPricingSyncService, modelPricingSyncHistoryRepository, settingService)
+	priceSyncPublishStore := repository.ProvidePriceSyncPublishStore(db, configConfig)
+	modelPricingSyncService, err := service.ProvideModelPricingSyncService(configConfig, pricingService, modelPricingSyncHistoryRepository, pricingRemoteClient, settingService, priceSyncPublishStore)
+	if err != nil {
+		return nil, err
+	}
+	modelPricingSyncHandler := admin.NewModelPricingSyncHandler(modelPricingSyncService, modelPricingSyncHistoryRepository)
 	upstreamBillingProbeService := service.ProvideUpstreamBillingProbeService(accountRepository, accountTestService, settingService, leaderLockCache, db)
 	openCodeGoUsageService := service.ProvideOpenCodeGoUsageService(accountRepository, httpUpstream, settingService, leaderLockCache, db)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)

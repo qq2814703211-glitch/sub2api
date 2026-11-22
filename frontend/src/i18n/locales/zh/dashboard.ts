@@ -745,14 +745,33 @@ export default {
       timePricingRowHintPeak: '；本行价格未含高峰倍率，与高峰时段 {window} 重叠的部分实付再乘 ×{multiplier}',
       timePricingWeekdays: '工作日',
       timePricingRateHint: '生效倍率 {rate} × 时段倍率 {multiplier}',
-      paidPrice: '实付价格(折后)',
-      officialPrice: '官方价格',
-      rate: '折扣倍率',
-      unitPerMillion: '$ / 1M token',
+      paidPrice: '你的售价',
+      officialPrice: '全局目录参考价',
+      pricingBasis: '金额以站内单位展示。全局目录价仅供参考，不代表实际采购成本。横线表示未展示价格。',
+      standardPriceHint: '下表默认显示标准时段价，分时价格见各模型的分时价目。',
+      rate: '倍率',
+      unitPerMillion: '站内单位 / 百万 tokens',
       perUnitRequest: '/ 次',
+      perSecond: '按秒',
+      perUnitSecond: '/ 秒',
       perUnitImage: '/ 张',
       perRequest: '按次计费',
       perImage: '按图片计费'
+    },
+    windows: {
+      title: '{model} · 分时价目',
+      paid: '你的售价 · 倍率 ×{rate}',
+      reference: '全局目录参考价',
+      everyDay: '每天',
+      overnight: '次日结束，星期按开始时刻计算',
+      excludeHolidays: '中国法定节假日除外',
+      components: {
+        input: '输入', output: '输出', read: '缓存读取', write: '缓存写入（默认 / 短时）',
+        write1h: '缓存写入（1h）', write30m: '缓存写入（30m）', write12h: '缓存写入（12h）',
+        inputPriority: '优先档输入', outputPriority: '优先档输出',
+        readPriority: '优先档缓存读取', writePriority: '优先档缓存写入',
+        imageInput: '图片输入 token', imageOutput: '图片输出 token', imageRead: '图片输入缓存 token'
+      }
     },
     nav: {
       login: '登录',

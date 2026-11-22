@@ -26,9 +26,8 @@ import (
 //
 //  1. 独立的人民币分支：`cost.currency_options.CNY.{input,output,cache_read,...}`
 //     （deepseek 用这种：美元在 cost.input，人民币在 currency_options.CNY）
-//  2. 整个 provider 以人民币计价：`provider.currency == "CNY"` 或模型
-//     `cost.currency == "CNY"`，此时 `cost.input` 本身就是人民币
-//     （alibaba-cn / zhipuai / minimax-cn / volcengine … 用这种）
+//  2. 模型本身声明 `cost.currency == "CNY"`，此时 `cost.input` 是人民币。
+//     厂商/地区的 currency 只用于归类，不是模型标价币种。
 //
 // 价格单位是「每百万 token」，覆盖层单位是「每 token」，统一除以 1e6。
 //
@@ -100,6 +99,8 @@ var cnyOfficialProviderWhitelist = map[string]struct{}{
 
 // CNYOfficialPricingSettings 是 settings 键 pricing.cny_official 的内容。
 type CNYOfficialPricingSettings struct {
+	Revision       string `json:"revision,omitempty"`
+	ActiveRevision string `json:"active_revision,omitempty"`
 	// Enabled 控制是否参与同步。键缺失时视为关闭：人民币数字写进覆盖层是一次
 	// 定价口径切换，不能因为「配置还没写」就悄悄发生。
 	Enabled bool `json:"enabled"`
@@ -119,6 +120,15 @@ type CNYOfficialPricingSettings struct {
 // 缓存读、缓存写三项上（缓存本质是输入侧复用）。
 // 三个阶梯字段全留空表示不开长上下文。
 type CNYOfficialManualPrice struct {
+	BillingMode     string   `json:"billing_mode,omitempty"`
+	AutoRestore     bool     `json:"auto_restore,omitempty"`
+	CacheWrite30m   *float64 `json:"cache_write_30m,omitempty"`
+	CacheWrite12h   *float64 `json:"cache_write_12h,omitempty"`
+	PerRequestPrice *float64 `json:"per_request_price,omitempty"`
+	PerSecondPrice  *float64 `json:"per_second_price,omitempty"`
+	// Legacy scalar fields retain their Go API. Presence distinguishes an explicitly
+	// free price from a field omitted by the operator.
+	present    map[string]bool
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
 	CacheRead  float64 `json:"cache_read"`
@@ -498,9 +508,6 @@ type cnyOfficialRawPrices struct {
 	CacheWrite float64
 	Tiers      []cnyOfficialTier
 	Schedule   *cnyOfficialSchedule
-	// ScheduleFromCNYBranch 表示分时价取自人民币分支；false 表示回落到 base
-	// schedule（谷峰窗口与倍率两侧一致，可复用）。
-	ScheduleFromCNYBranch bool
 }
 
 func (p cnyOfficialRawPrices) hasAnyPrice() bool {
@@ -515,31 +522,27 @@ func cnyOfficialDeref(v *float64) float64 {
 }
 
 // resolveCNYOfficialRawPrices 从模型 cost 块取人民币原币价。
-// 优先 currency_options.CNY 独立分支，其次 provider/模型声明以 CNY 计价时的 base 字段。
-func resolveCNYOfficialRawPrices(vendorID string, provider cnyOfficialRegistryProvider, model cnyOfficialRegistryModel) *cnyOfficialRawPrices {
+// 优先 currency_options.CNY 独立分支，其次模型声明以 CNY 计价时的 base 字段。
+func resolveCNYOfficialRawPrices(vendorID string, model cnyOfficialRegistryModel) *cnyOfficialRawPrices {
 	cost := model.Cost
 	if cost == nil {
 		return nil
 	}
 	if option, ok := cnyOfficialCurrencyOptionForCNY(cost.CurrencyOptions); ok {
-		raw := &cnyOfficialRawPrices{
-			Provider:              vendorID,
-			Input:                 cnyOfficialDeref(option.Input),
-			Output:                cnyOfficialDeref(option.Output),
-			CacheRead:             cnyOfficialDeref(option.CacheRead),
-			CacheWrite:            cnyOfficialDeref(option.CacheWrite),
-			Tiers:                 option.Tiers,
-			Schedule:              option.Schedule,
-			ScheduleFromCNYBranch: true,
+		if option.Currency != "" && !strings.EqualFold(option.Currency, "CNY") {
+			return nil
 		}
-		if raw.Schedule == nil {
-			raw.Schedule = cost.Schedule
-			raw.ScheduleFromCNYBranch = false
+		return &cnyOfficialRawPrices{
+			Provider:   vendorID,
+			Input:      cnyOfficialDeref(option.Input),
+			Output:     cnyOfficialDeref(option.Output),
+			CacheRead:  cnyOfficialDeref(option.CacheRead),
+			CacheWrite: cnyOfficialDeref(option.CacheWrite),
+			Tiers:      option.Tiers,
+			Schedule:   option.Schedule,
 		}
-		return raw
 	}
-	if strings.EqualFold(strings.TrimSpace(provider.Currency), "CNY") ||
-		strings.EqualFold(strings.TrimSpace(cost.Currency), "CNY") {
+	if strings.EqualFold(strings.TrimSpace(cost.Currency), "CNY") {
 		return &cnyOfficialRawPrices{
 			Provider:   vendorID,
 			Input:      cnyOfficialDeref(cost.Input),
@@ -614,7 +617,7 @@ func buildCNYOfficialDataset(registry map[string]cnyOfficialRegistryProvider, se
 			dataset.National[key] = struct{}{}
 			report.ModelEntries++
 
-			raw := resolveCNYOfficialRawPrices(vendorID, provider, provider.Models[modelID])
+			raw := resolveCNYOfficialRawPrices(vendorID, provider.Models[modelID])
 			if raw == nil || !raw.hasAnyPrice() {
 				continue
 			}
@@ -789,11 +792,6 @@ func buildCNYOfficialTimePricing(model string, raw cnyOfficialRawPrices, report 
 	if schedule == nil || len(schedule.Windows) == 0 {
 		return nil
 	}
-	if !raw.ScheduleFromCNYBranch {
-		report.Conflicts = append(report.Conflicts, fmt.Sprintf(
-			"%s: 分时价取自非人民币分支的 schedule（谷峰窗口两侧一致，倍率按人民币价折算）", model))
-	}
-
 	result := &CNYOfficialTimePricing{
 		Model:    model,
 		Provider: raw.Provider,

@@ -42,6 +42,7 @@ func prepareCompatibleVideoCompletionBilling(ctx context.Context, h *OpenAIGatew
 		return nil
 	}
 	merged := *result
+	merged.FrozenVideoQuote = pending.CatalogQuote
 	merged.MediaUsage = service.MergeMediaUsage(pending.MediaUsage, result.MediaUsage)
 	merged.Model = pending.Model
 	merged.BillingModel = firstNonEmptyString(pending.BillingModel, pending.Model)
@@ -54,7 +55,7 @@ func prepareCompatibleVideoCompletionBilling(ctx context.Context, h *OpenAIGatew
 	service.ApplyMediaUsageModelDimensions(merged.MediaUsage, merged.UpstreamModel)
 	// Seedance's existing no-rule path is token settlement. Other compatible
 	// video keeps scalar-video legacy behavior; an explicit media card supersedes it.
-	if strings.Contains(strings.ToLower(merged.UpstreamModel), "seedance") || strings.Contains(strings.ToLower(merged.Model), "seedance") {
+	if pending.CatalogQuote == nil && (strings.Contains(strings.ToLower(merged.UpstreamModel), "seedance") || strings.Contains(strings.ToLower(merged.Model), "seedance")) {
 		if merged.Usage.OutputTokens <= 0 {
 			return nil
 		}

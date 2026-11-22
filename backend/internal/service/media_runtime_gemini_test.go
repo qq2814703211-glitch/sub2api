@@ -32,7 +32,8 @@ func TestMediaRuntimeGeminiImageInputTokens(t *testing.T) {
 		bs := NewBillingService(&config.Config{}, nil)
 		gateway := &GatewayService{billingService: bs, resolver: NewModelPricingResolver(nil, bs)}
 		group := &Group{ID: 10, ModelPricing: []ChannelModelPricing{{Models: []string{"gemini-3.7-flash"}, BillingMode: BillingModeToken, InputPrice: ptrFloat(0.01), ImageInputPrice: ptrFloat(0.03), OutputPrice: ptrFloat(0.02), CacheReadPrice: ptrFloat(0.005)}}}
-		cost := gateway.calculateTokenCost(context.Background(), result, &APIKey{Group: group, GroupID: &group.ID}, "gemini-3.7-flash", 2, time.Time{})
+		cost, err := gateway.calculateTokenCost(context.Background(), result, &APIKey{Group: group, GroupID: &group.ID}, "gemini-3.7-flash", 2, time.Time{})
+		require.NoError(t, err)
 		require.InDelta(t, 2.0, cost.TotalCost, 1e-12)
 		require.InDelta(t, 4.0, cost.ActualCost, 1e-12)
 	}

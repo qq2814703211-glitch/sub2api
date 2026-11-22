@@ -642,6 +642,7 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 		"output_price":                 pricing.OutputPricePerToken,
 		"cache_write_price":            cacheWritePrice,
 		"cache_write_1h_price":         cacheWrite1hPrice,
+		"cache_write_30m_price":        pricing.CacheCreation30mPricePerToken,
 		"cache_write_12h_price":        pricing.CacheCreation12hPricePerToken,
 		"cache_read_price":             pricing.CacheReadPricePerToken,
 		"reasoning_effort_multipliers": pricing.ReasoningEffortMultipliers,

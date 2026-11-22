@@ -741,14 +741,33 @@ export default {
         '; prices in this row exclude the peak-hour rate — where this period overlaps the peak hours {window}, the overlapping portion is additionally multiplied by ×{multiplier}',
       timePricingWeekdays: 'Weekdays',
       timePricingRateHint: 'Effective rate {rate} × period multiplier {multiplier}',
-      paidPrice: 'Your Price (Discounted)',
-      officialPrice: 'Official Price',
+      paidPrice: 'Your Price',
+      officialPrice: 'Global Catalog Reference',
+      pricingBasis: 'Prices are in site units. Catalog references do not represent actual procurement costs. A dash means no price is shown.',
+      standardPriceHint: 'The table shows standard prices unless a row specifies a time. See each model’s time-window prices above.',
       rate: 'Rate',
-      unitPerMillion: '$ / 1M tokens',
+      unitPerMillion: 'Site units / 1M tokens',
       perUnitRequest: '/ request',
+      perSecond: 'Per second',
+      perUnitSecond: '/ second',
       perUnitImage: '/ image',
       perRequest: 'Per request',
       perImage: 'Per image'
+    },
+    windows: {
+      title: '{model} · Prices by time window',
+      paid: 'Your Price · rate ×{rate}',
+      reference: 'Global Catalog Reference',
+      everyDay: 'Every day',
+      overnight: 'Ends the next day; weekday refers to the start',
+      excludeHolidays: 'Excludes Chinese public holidays',
+      components: {
+        input: 'Input', output: 'Output', read: 'Cache read', write: 'Cache write (default / short)',
+        write1h: 'Cache write (1h)', write30m: 'Cache write (30m)', write12h: 'Cache write (12h)',
+        inputPriority: 'Priority input', outputPriority: 'Priority output',
+        readPriority: 'Priority cache read', writePriority: 'Priority cache write',
+        imageInput: 'Image input tokens', imageOutput: 'Image output tokens', imageRead: 'Cached image input tokens'
+      }
     },
     nav: {
       login: 'Sign In',

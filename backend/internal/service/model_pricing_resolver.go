@@ -42,6 +42,8 @@ type ResolvedPricing struct {
 	channelPricing *ChannelModelPricing
 
 	longContextPricingEnabled bool
+	catalogUnitPrice          *float64
+	catalogUnitIdentity       catalogRowIdentity
 }
 
 // ModelPricingResolver 统一模型定价解析器。
@@ -70,6 +72,9 @@ type PricingInput struct {
 // 1. 获取基础定价（LiteLLM → Fallback）
 // 2. 如果指定了 GroupID，查找渠道定价并覆盖
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
+	if RequestCatalogFromContext(ctx) != nil {
+		r = &ModelPricingResolver{channelService: r.channelService.forRequestPricing(ctx), billingService: r.billingService.forRequest(ctx)}
+	}
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
 		// Group token cards only override the first-tier / flat rates.
@@ -102,6 +107,12 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 				r.applyRequestTierOverrides(chPricing, resolved)
 				return resolved
 			}
+		}
+	}
+
+	if chPricing == nil {
+		if unit := r.billingService.exactCatalogUnit(input.Model); unit != nil {
+			return unit
 		}
 	}
 
@@ -272,10 +283,12 @@ func applyChannelImagePriceOverrides(chPricing *ChannelModelPricing, pricing *Mo
 		return
 	}
 	if chPricing.ImageOutputPrice != nil {
+		pricing.commercialRates |= commercialImageOutput
 		pricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
 		pricing.ImageOutputPriceExplicit = true
 	}
 	if chPricing.ImageInputPrice != nil {
+		pricing.commercialRates |= commercialImageInput
 		pricing.ImageInputPricePerToken = *chPricing.ImageInputPrice
 	}
 }
@@ -336,6 +349,7 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		return value * *multiplier
 	}
 	if iv.InputPrice != nil {
+		pricing.commercialRates |= commercialInput
 		pricing.InputPricePerTokenPriority = channelTierOverridePrice(pricing.InputPricePerToken, pricing.InputPricePerTokenPriority, *iv.InputPrice)
 		pricing.InputPricePerToken = *iv.InputPrice
 	} else if iv.InputMultiplier != nil {
@@ -343,6 +357,7 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.InputPricePerTokenPriority = applyMultiplier(pricing.InputPricePerTokenPriority, iv.InputMultiplier)
 	}
 	if iv.OutputPrice != nil {
+		pricing.commercialRates |= commercialOutput
 		pricing.OutputPricePerTokenPriority = channelTierOverridePrice(pricing.OutputPricePerToken, pricing.OutputPricePerTokenPriority, *iv.OutputPrice)
 		pricing.OutputPricePerToken = *iv.OutputPrice
 	} else if iv.OutputMultiplier != nil {
@@ -350,10 +365,12 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.OutputPricePerTokenPriority = applyMultiplier(pricing.OutputPricePerTokenPriority, iv.OutputMultiplier)
 	}
 	if iv.CacheWritePrice != nil {
+		pricing.commercialRates |= commercialCacheWrite | commercialCacheWrite1h | commercialCacheWrite12h
 		pricing.CacheCreationPricePerTokenPriority = channelTierOverridePrice(pricing.CacheCreationPricePerToken, pricing.CacheCreationPricePerTokenPriority, *iv.CacheWritePrice)
 		pricing.CacheCreationPricePerToken = *iv.CacheWritePrice
 		pricing.CacheCreationPriceExplicit = true
 		pricing.CacheCreation5mPrice = *iv.CacheWritePrice
+		pricing.CacheCreation30mPricePerToken = nil
 		if iv.CacheWrite1hPrice == nil {
 			pricing.CacheCreation1hPrice = *iv.CacheWritePrice
 		}
@@ -362,21 +379,22 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.CacheCreationPricePerTokenPriority = applyMultiplier(pricing.CacheCreationPricePerTokenPriority, iv.CacheWriteMultiplier)
 		pricing.CacheCreation5mPrice = applyMultiplier(pricing.CacheCreation5mPrice, iv.CacheWriteMultiplier)
 		pricing.CacheCreation1hPrice = applyMultiplier(pricing.CacheCreation1hPrice, iv.CacheWriteMultiplier)
-		if pricing.CacheCreation12hPricePerToken != nil {
-			price := applyMultiplier(*pricing.CacheCreation12hPricePerToken, iv.CacheWriteMultiplier)
-			pricing.CacheCreation12hPricePerToken = &price
-		}
+		pricing.CacheCreation30mPricePerToken = scaleOptionalCacheWritePrice(pricing.CacheCreation30mPricePerToken, *iv.CacheWriteMultiplier)
+		pricing.CacheCreation12hPricePerToken = scaleOptionalCacheWritePrice(pricing.CacheCreation12hPricePerToken, *iv.CacheWriteMultiplier)
 	}
 	if iv.CacheWrite12hPrice != nil {
+		pricing.commercialRates |= commercialCacheWrite12h
 		pricing.CacheCreation12hPricePerToken = iv.CacheWrite12hPrice
 	} else if iv.CacheWritePrice != nil {
 		pricing.CacheCreation12hPricePerToken = nil
 	}
 	if iv.CacheWrite1hPrice != nil {
+		pricing.commercialRates |= commercialCacheWrite1h
 		pricing.CacheCreation1hPrice = *iv.CacheWrite1hPrice
 		pricing.SupportsCacheBreakdown = true
 	}
 	if iv.CacheReadPrice != nil {
+		pricing.commercialRates |= commercialCacheRead
 		pricing.CacheReadPricePerTokenPriority = channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.CacheReadPricePerTokenPriority, *iv.CacheReadPrice)
 		pricing.CacheReadPricePerToken = *iv.CacheReadPrice
 	} else if iv.CacheReadMultiplier != nil {

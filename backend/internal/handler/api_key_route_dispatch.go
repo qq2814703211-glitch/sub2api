@@ -15,6 +15,13 @@ import (
 func (h *GatewayHandler) PrepareAPIKeyRoutes(resolver *service.CompositeRouteResolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key, ok := middleware.GetAPIKeyFromContext(c)
+		// All gateway protocols pass here after authentication and before route
+		// selection, queues and reservations. Responses WS pins its first frame.
+		if ok && h != nil && h.gatewayService != nil && !(c.Request.Method == http.MethodGet && strings.HasSuffix(c.FullPath(), "/responses")) {
+			ctx := h.gatewayService.WithRequestCatalog(c.Request.Context())
+			ctx = service.RequestCatalogFromContext(ctx).WithPricingGroup(key.Group).Context(ctx)
+			c.Request = c.Request.WithContext(ctx)
+		}
 		if !ok || !key.HasMultipleRoutes() {
 			c.Next()
 			return

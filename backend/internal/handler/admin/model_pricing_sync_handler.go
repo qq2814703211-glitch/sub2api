@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -14,21 +15,18 @@ import (
 // 同步本身由后台任务按 pricing.hash_check_interval_minutes 自动跑；
 // 这里提供「看改了什么」「现在什么状态」以及人民币口径配置的读写。
 type ModelPricingSyncHandler struct {
-	syncService    *service.ModelPricingSyncService
-	historyRepo    service.ModelPricingSyncHistoryRepository
-	settingService *service.SettingService
+	syncService *service.ModelPricingSyncService
+	historyRepo service.ModelPricingSyncHistoryRepository
 }
 
 // NewModelPricingSyncHandler 创建处理器。
 func NewModelPricingSyncHandler(
 	syncService *service.ModelPricingSyncService,
 	historyRepo service.ModelPricingSyncHistoryRepository,
-	settingService *service.SettingService,
 ) *ModelPricingSyncHandler {
 	return &ModelPricingSyncHandler{
-		syncService:    syncService,
-		historyRepo:    historyRepo,
-		settingService: settingService,
+		syncService: syncService,
+		historyRepo: historyRepo,
 	}
 }
 
@@ -70,11 +68,11 @@ func (h *ModelPricingSyncHandler) Status(c *gin.Context) {
 // 不走 PUT /admin/settings：那里按 UpdateSettingsRequest 的字段白名单逐项写库，
 // 未列出的 JSON 键会被 encoding/json 静默丢弃，提交后返回 200 却什么都不写。
 func (h *ModelPricingSyncHandler) GetCNYOfficialConfig(c *gin.Context) {
-	if h.settingService == nil {
+	if h.syncService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "settings service unavailable")
 		return
 	}
-	settings, err := h.settingService.GetCNYOfficialPricingSettings(c.Request.Context())
+	settings, err := h.syncService.PublishedSettings(c.Request.Context())
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -85,7 +83,7 @@ func (h *ModelPricingSyncHandler) GetCNYOfficialConfig(c *gin.Context) {
 // UpdateCNYOfficialConfig 写入人民币官方价口径的配置。
 // PUT /api/v1/admin/model-pricing-sync/cny-official
 func (h *ModelPricingSyncHandler) UpdateCNYOfficialConfig(c *gin.Context) {
-	if h.settingService == nil {
+	if h.syncService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "settings service unavailable")
 		return
 	}
@@ -94,10 +92,16 @@ func (h *ModelPricingSyncHandler) UpdateCNYOfficialConfig(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "invalid payload: "+err.Error())
 		return
 	}
-	saved, err := h.settingService.SetCNYOfficialPricingSettings(c.Request.Context(), &payload)
+	saved, err := h.syncService.SavePublishedSettings(c.Request.Context(), &payload)
 	if err != nil {
-		// 校验失败与写库失败都返回 400/500 的原文，前端直接展示，不吞。
-		response.Error(c, http.StatusBadRequest, err.Error())
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, service.ErrPriceSyncConflict) {
+			status = http.StatusConflict
+		}
+		if errors.Is(err, service.ErrPriceSyncInvalid) {
+			status = http.StatusBadRequest
+		}
+		response.Error(c, status, err.Error())
 		return
 	}
 	response.Success(c, saved)

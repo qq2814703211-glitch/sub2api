@@ -129,12 +129,12 @@ func (r *modelPricingSyncHistoryRepository) List(ctx context.Context, filter *se
 	records := make([]*service.ModelPricingSyncHistory, 0, pageSize)
 	for rows.Next() {
 		var (
-			record   service.ModelPricingSyncHistory
-			model    sql.NullString
-			field    sql.NullString
-			source   sql.NullString
-			reason   sql.NullString
-			applied  time.Time
+			record  service.ModelPricingSyncHistory
+			model   sql.NullString
+			field   sql.NullString
+			source  sql.NullString
+			reason  sql.NullString
+			applied time.Time
 		)
 		if err := rows.Scan(&model, &field, &record.OldValue, &record.NewValue, &source, &applied, &reason); err != nil {
 			return nil, 0, err
@@ -150,6 +150,32 @@ func (r *modelPricingSyncHistoryRepository) List(ctx context.Context, filter *se
 		return nil, 0, err
 	}
 	return records, total, nil
+}
+
+// ListLatestPricingFields returns the actual last writer, not the last row of a preferred source.
+func (r *modelPricingSyncHistoryRepository) ListLatestPricingFields(ctx context.Context, models []string) ([]service.ModelPricingSyncHistory, error) {
+	if len(models) == 0 {
+		return nil, nil
+	}
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("nil model pricing sync history repository")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT ON (model, field) id, model, field, new_value, source, applied_at, reason
+		FROM model_pricing_sync_history WHERE model = ANY($1::text[])
+		ORDER BY model, field, applied_at DESC, id DESC`, pq.Array(models))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []service.ModelPricingSyncHistory
+	for rows.Next() {
+		var h service.ModelPricingSyncHistory
+		if err := rows.Scan(&h.ID, &h.Model, &h.Field, &h.NewValue, &h.Source, &h.AppliedAt, &h.Reason); err != nil {
+			return nil, err
+		}
+		result = append(result, h)
+	}
+	return result, rows.Err()
 }
 
 // ListSyncedFields 返回指定来源最近一次写入的 (模型, 字段) -> 值。

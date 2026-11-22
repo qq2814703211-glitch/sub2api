@@ -28,6 +28,7 @@ type ContextPricingTier struct {
 	Output        *float64
 	CacheWrite    *float64
 	CacheWrite1h  *float64
+	CacheWrite30m *float64
 	CacheWrite12h *float64
 	CacheRead     *float64
 }
@@ -51,9 +52,11 @@ type TimePricingSchedule struct {
 // 单价由真实计费函数探针得出，与扣费同源；单档表示无阶梯。
 // Tiers 为标准时段单价；TimePricing 非 nil 时，落在时段内的请求整单再乘对应倍率。
 type ContextPricingSchedule struct {
-	Basis       ContextPricingBasis
-	Tiers       []ContextPricingTier
-	TimePricing *TimePricingSchedule
+	// PriceWindows contains absolute component prices (never modelled as a multiplier).
+	PriceWindows []PriceSyncWindow
+	Basis        ContextPricingBasis
+	Tiers        []ContextPricingTier
+	TimePricing  *TimePricingSchedule
 }
 
 // ContextPricingScheduleInput 阶梯表查询输入。
@@ -104,6 +107,9 @@ func (s *BillingService) ResolveContextPricingSchedule(ctx context.Context, reso
 		return nil, nil
 	}
 
+	if resolved.Source == PricingSourceLiteLLM && resolved.BasePricing != nil && resolved.BasePricing.tariff != nil {
+		return resolved.BasePricing.tariff.schedule(resolved.longContextPricingEnabled, in.Group), nil
+	}
 	req := TokenCostRequest{
 		Ctx:            ctx,
 		Model:          in.Model,
@@ -305,6 +311,12 @@ func probeContextTier(seg contextSegment, resolved *ResolvedPricing, probe func(
 		return tier, err
 	}
 	explicit := explicitContextPricingFields(resolved, c)
+	if resolved.BasePricing != nil && resolved.BasePricing.CacheCreation30mPricePerToken != nil {
+		tier.CacheWrite30m, err = probeComponentPrice(func(n int) UsageTokens { return UsageTokens{CacheCreationTokens: n, CacheCreation30mTokens: n} }, c, delta, probe)
+		if err != nil {
+			return tier, err
+		}
+	}
 	if explicit.cacheWrite12h || (resolved.BasePricing != nil && resolved.BasePricing.CacheCreation12hPricePerToken != nil) {
 		tier.CacheWrite12h, err = probeComponentPrice(func(n int) UsageTokens { return UsageTokens{CacheCreationTokens: n, CacheCreation12hTokens: n} }, c, delta, probe)
 		if err != nil {
@@ -315,7 +327,8 @@ func probeContextTier(seg contextSegment, resolved *ResolvedPricing, probe func(
 	tier.Output = contextPricePtr(tier.Output, explicit.output)
 	tier.CacheWrite = contextPricePtr(tier.CacheWrite, explicit.cacheWrite)
 	tier.CacheWrite1h = contextPricePtr(tier.CacheWrite1h, explicit.cacheWrite1h)
-	tier.CacheWrite12h = contextPricePtr(tier.CacheWrite12h, explicit.cacheWrite12h)
+	tier.CacheWrite12h = contextPricePtr(tier.CacheWrite12h, explicit.cacheWrite12h ||
+		(resolved.BasePricing != nil && resolved.BasePricing.CacheCreation12hPricePerToken != nil))
 	tier.CacheRead = contextPricePtr(tier.CacheRead, explicit.cacheRead)
 	return tier, nil
 }
@@ -416,6 +429,7 @@ func mergeEqualContextTiers(tiers []ContextPricingTier) []ContextPricingTier {
 func sameContextPrices(a, b ContextPricingTier) bool {
 	return samePricePtr(a.Input, b.Input) && samePricePtr(a.Output, b.Output) &&
 		samePricePtr(a.CacheWrite, b.CacheWrite) && samePricePtr(a.CacheWrite1h, b.CacheWrite1h) &&
+		samePricePtr(a.CacheWrite30m, b.CacheWrite30m) &&
 		samePricePtr(a.CacheWrite12h, b.CacheWrite12h) && samePricePtr(a.CacheRead, b.CacheRead)
 }
 

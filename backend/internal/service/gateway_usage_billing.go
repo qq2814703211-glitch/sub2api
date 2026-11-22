@@ -629,6 +629,7 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if repo == nil || usageLog == nil {
 		return
 	}
+	logRequestPriceTrace(ctx, usageLog)
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
@@ -781,7 +782,7 @@ func logResponseModelBillingApplied(component string, account *Account, requestI
 // recordUsageCore 是 RecordUsage 的核心实现。
 func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsageCoreInput) error {
 	result := input.Result
-	apiKey := input.APIKey
+	apiKey := RequestCatalogFromContext(ctx).groupFor(input.APIKey)
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
@@ -805,9 +806,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	multiplier, imageMultiplier, pricingAt := s.recordUsageMultipliers(ctx, apiKey, user, input.PricingAt)
+	baseRate, multiplier, imageMultiplier, pricingAt := s.recordUsageMultipliers(ctx, apiKey, user, input.PricingAt)
 	billingModel := s.recordUsageBillingModel(ctx, apiKey, result, input.ChannelUsageFields)
-	cacheStorageCost := s.cacheStorageCost(result, billingModel)
+	cacheStorageCost := s.cacheStorageCost(ctx, result, billingModel)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -816,7 +817,20 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	cost, err := s.recordUsageCost(ctx, result, apiKey, billingModel, baseRate, multiplier, imageMultiplier, pricingAt)
+	if err != nil {
+		if !isTariffPriceIssue(err) || ctx.Value(preparedCachedContentChargeKey{}) != nil {
+			return err
+		}
+		return recordTariffUsageIssue(ctx, s.usageLogRepo, err, user, apiKey, account, tariffUsageEvidence{
+			RequestID: resolveUsageBillingRequestID(ctx, result.RequestID), PricingAt: pricingAt,
+			Tokens: result.Usage.billingUsageTokens(), RateMultiplier: multiplier, SearchCount: result.SearchCount,
+			CacheStorageTokenHours: result.CacheStorageTokenHours, UpstreamPriceFactor: result.upstreamPriceFactor(),
+			RequestedModel: requestedModel, UpstreamModel: result.UpstreamModel, SubscriptionID: optionalSubscriptionID(subscription), ChannelID: input.ChannelID,
+			ServiceTier: optionalStringValue(result.ServiceTier), ReasoningEffort: optionalStringValue(result.ReasoningEffort),
+			PayloadHash: resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash), QuotaPlatform: input.QuotaPlatform,
+		})
+	}
 	// response_model：按上游成功响应自报的模型计费（渠道显式开启才生效）。
 	// 采纳条件见 responseModelBillingDeclaration + hasIdentifiedResponseModelPricing
 	// + responseModelBillingAdoptable。任一条件不满足都静默回落基线，即开启本模式前的
@@ -825,7 +839,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		input.BillingModelSource,
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
-		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
+		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.CacheStorageTokenHours > 0 || (cost != nil && cost.BillingMode != "" && cost.BillingMode != string(BillingModeToken)),
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
 			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
@@ -851,6 +865,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 
+	if cost != nil && cost.catalogUnitMode.isCatalogUnit() && recordFailedCatalogAttempt(ctx, s.usageLogRepo, usageLog, cost, result.catalogUsage().success, "service.gateway") {
+		return nil
+	}
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。纯存储费不是一次模型请求，
 	// 账号统计成本回落 total_cost（官方存储价）。
 	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) {
@@ -865,6 +882,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
 	}
 
+	usageLog.PriceTrace = RequestCatalogFromContext(ctx).trace(cost, billingModel, apiKey.Group)
 	if s.capturePreparedCachedContentCharge(ctx, usageLog, input, cost, accountRateMultiplier, isSubscriptionBilling) {
 		return nil
 	}
@@ -913,7 +931,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 // recordUsageMultipliers 返回 token / 图片售价倍率（用户专属 > 分组默认 > 系统默认，token 倍率叠加高峰因子）
 // 与计价时刻；pricingAt 为零值时取当前时刻。
-func (s *GatewayService) recordUsageMultipliers(ctx context.Context, apiKey *APIKey, user *User, pricingAt time.Time) (float64, float64, time.Time) {
+func (s *GatewayService) recordUsageMultipliers(ctx context.Context, apiKey *APIKey, user *User, pricingAt time.Time) (float64, float64, float64, time.Time) {
 	multiplier := 1.0
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
@@ -926,10 +944,11 @@ func (s *GatewayService) recordUsageMultipliers(ctx context.Context, apiKey *API
 	}
 	// 高峰因子按请求时刻现算，不并入 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
 	if pricingAt.IsZero() {
-		pricingAt = timezone.Now()
+		pricingAt = requestCatalogAt(ctx, timezone.Now())
 	}
+	baseRate := multiplier
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
-	return multiplier, imageMultiplier, pricingAt
+	return baseRate, multiplier, imageMultiplier, pricingAt
 }
 
 // recordUsageBillingModel 按计费模型来源、composite 规则与无价兜底确定计费模型。
@@ -951,11 +970,15 @@ func (s *GatewayService) recordUsageBillingModel(ctx context.Context, apiKey *AP
 	}
 	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：
 	// 选定模型查不到任何价格时回退到实际转发的具体模型。已定价流量不受影响。
+	billingModel = s.billingService.forRequest(ctx).catalogBillingModel(ctx, s.resolver, apiKey, billingModel, result.UpstreamModel, fields)
+	if s.billingService.forRequest(ctx).exactCatalogUnit(billingModel) != nil {
+		return billingModel
+	}
 	return s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
 }
 
 // cacheStoragePrice 返回计费模型的显式缓存存储单价；计费模型未配置时依次回退到实际转发模型与请求模型。
-func (s *GatewayService) cacheStoragePrice(result *ForwardResult, billingModel string) float64 {
+func (s *GatewayService) cacheStoragePrice(ctx context.Context, result *ForwardResult, billingModel string) float64 {
 	if s.billingService == nil {
 		return 0
 	}
@@ -963,7 +986,7 @@ func (s *GatewayService) cacheStoragePrice(result *ForwardResult, billingModel s
 		if strings.TrimSpace(model) == "" {
 			continue
 		}
-		if price := s.billingService.CacheStoragePricePerTokenHour(model); price > 0 {
+		if price := s.billingService.forRequest(ctx).CacheStoragePricePerTokenHour(model); price > 0 {
 			return price
 		}
 	}
@@ -971,11 +994,11 @@ func (s *GatewayService) cacheStoragePrice(result *ForwardResult, billingModel s
 }
 
 // cacheStorageCost 返回 result 的显式缓存存储费（USD，倍率前）。
-func (s *GatewayService) cacheStorageCost(result *ForwardResult, billingModel string) float64 {
+func (s *GatewayService) cacheStorageCost(ctx context.Context, result *ForwardResult, billingModel string) float64 {
 	if result.CacheStorageTokenHours <= 0 {
 		return 0
 	}
-	return result.CacheStorageTokenHours * s.cacheStoragePrice(result, billingModel)
+	return result.CacheStorageTokenHours * s.cacheStoragePrice(ctx, result, billingModel)
 }
 
 // isCacheStorageOnlyResult 判断 result 是否只有显式缓存存储费（延长有效期）：不含 token 用量，不算一次模型请求。
@@ -988,19 +1011,26 @@ func isCacheStorageOnlyResult(result *ForwardResult) bool {
 
 // CacheStoragePriced 判断 RecordUsage 对 input.Result 采用的计费模型（含回退候选）是否配置了显式缓存存储单价。
 func (s *GatewayService) CacheStoragePriced(ctx context.Context, input *RecordUsageInput) bool {
-	billingModel := s.recordUsageBillingModel(ctx, input.APIKey, input.Result, input.ChannelUsageFields)
-	return s.cacheStoragePrice(input.Result, billingModel) > 0
+	billingModel := s.recordUsageBillingModel(ctx, RequestCatalogFromContext(ctx).groupFor(input.APIKey), input.Result, input.ChannelUsageFields)
+	return s.cacheStoragePrice(ctx, input.Result, billingModel) > 0
 }
 
 // QuoteUsageCost 按与 RecordUsage 相同的倍率、计费模型与定价计算 input.Result 的应付金额（倍率后 USD），不记录也不扣费。
 func (s *GatewayService) QuoteUsageCost(ctx context.Context, input *RecordUsageInput) float64 {
+	key := RequestCatalogFromContext(ctx).groupFor(input.APIKey)
 	user := input.User
 	if user == nil {
-		user = input.APIKey.User
+		user = key.User
 	}
-	multiplier, imageMultiplier, pricingAt := s.recordUsageMultipliers(ctx, input.APIKey, user, input.PricingAt)
-	billingModel := s.recordUsageBillingModel(ctx, input.APIKey, input.Result, input.ChannelUsageFields)
-	cost := s.calculateRecordUsageCost(ctx, input.Result, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	baseRate, multiplier, imageMultiplier, pricingAt := s.recordUsageMultipliers(ctx, key, user, input.PricingAt)
+	billingModel := s.recordUsageBillingModel(ctx, key, input.Result, input.ChannelUsageFields)
+	cost, err := s.recordUsageCost(ctx, input.Result, key, billingModel, baseRate, multiplier, imageMultiplier, pricingAt)
+	if isTariffPriceIssue(err) && input.Result.CacheStorageTokenHours > 0 {
+		// This storage reservation estimate is not a settlement: preserve the
+		// pre-existing known surcharge; RecordUsage still refuses a partial debit.
+		cost = &CostBreakdown{}
+		s.addTokenUsageSurcharges(ctx, cost, input.Result, key, billingModel, multiplier)
+	}
 	if cost == nil {
 		return 0
 	}
@@ -1034,16 +1064,46 @@ func applyUpstreamPriceFactor(cost *CostBreakdown, result *ForwardResult) {
 	applyCostBreakdownMultiplier(cost, result.upstreamPriceFactor())
 }
 
-// calculateRecordUsageCost 根据请求类型计算费用。
-func (s *GatewayService) calculateRecordUsageCost(
+func (s *GatewayService) recordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
 	apiKey *APIKey,
 	billingModel string,
+	baseRate float64,
 	multiplier float64,
 	imageMultiplier float64,
 	pricingAt time.Time,
-) *CostBreakdown {
+) (*CostBreakdown, error) {
+	if row := s.billingService.forRequest(ctx).exactCatalogRow(billingModel); row.explicitMode() && !isCacheStorageOnlyResult(result) && s.resolveChannelPricing(ctx, billingModel, apiKey) == nil {
+		image := result.catalogUsage().images > 0 || result.ImageEndpoint
+		if !catalogMediaOverride(apiKey, billingModel, result.ImageSize, "", image, false, result.AudioUsage) && !(imageCountBillingApplies(apiKey, result.ImageEndpoint) && row.GloryBillingMode != BillingModePerImage) {
+			if row.GloryBillingMode.isCatalogUnit() {
+				rate := baseRate
+				if image {
+					rate = imageMultiplier
+				}
+				u := result.catalogUsage()
+				cost, err := u.cost(row.resolvedCatalogUnit(), rate)
+				if err == nil {
+					if result.SearchCount > 0 {
+						extra := s.billingService.CalculateSearchCost(result.SearchCount, groupSearchPricePer1kFromAPIKey(apiKey), multiplier)
+						cost.TotalCost += extra.TotalCost
+						cost.ActualCost += extra.ActualCost
+					}
+					if storage := s.cacheStorageCost(ctx, result, billingModel); storage > 0 {
+						cost.TotalCost += storage
+						cost.ActualCost += storage * multiplier
+					}
+				}
+				return cost, err
+			}
+			if image || result.AudioUsage != nil {
+				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+			}
+		}
+	}
+
+	// Legacy unmarked and commercial card settlement.
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费。
 	// 分组按张计费开关只对专用图片端点生效，混合请求仍按 token 计费。
 	if result.ImageCount > 0 {
@@ -1053,7 +1113,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 			}
 		}
-		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
+		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier), nil
 	}
 
 	// Voice audio (TTS / STT / realtime) when present on the forward result.
@@ -1068,11 +1128,11 @@ func (s *GatewayService) calculateRecordUsageCost(
 				ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 			})
 			if err == nil {
-				return cost
+				return cost, nil
 			}
 		}
 		cfg := groupAudioPriceConfigFromAPIKey(apiKey)
-		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, multiplier)
+		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, multiplier), nil
 	}
 
 	// Token 计费；SearchCount 为叠加 surcharge（不替代 token）。纯存储费不是一次模型请求，不计 token / 按次费用。
@@ -1080,11 +1140,21 @@ func (s *GatewayService) calculateRecordUsageCost(
 	if isCacheStorageOnlyResult(result) {
 		tokenCost = &CostBreakdown{}
 	} else {
-		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		var err error
+		// No partial search/storage charge for an unpriceable tariff.
+		tokenCost, err = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		if err != nil {
+			return nil, err
+		}
 		if s.upstreamPriceFactorApplies(ctx, result, apiKey, billingModel) {
 			applyUpstreamPriceFactor(tokenCost, result)
 		}
 	}
+	s.addTokenUsageSurcharges(ctx, tokenCost, result, apiKey, billingModel, multiplier)
+	return tokenCost, nil
+}
+
+func (s *GatewayService) addTokenUsageSurcharges(ctx context.Context, tokenCost *CostBreakdown, result *ForwardResult, apiKey *APIKey, billingModel string, multiplier float64) {
 	if result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)
 		if price != nil && *price == 0 {
@@ -1092,22 +1162,22 @@ func (s *GatewayService) calculateRecordUsageCost(
 		}
 		searchCost := s.billingService.CalculateSearchCost(result.SearchCount, price, multiplier)
 		if searchCost != nil && (searchCost.TotalCost > 0 || searchCost.ActualCost > 0) {
-			if tokenCost == nil {
-				return searchCost
-			}
 			tokenCost.TotalCost += searchCost.TotalCost
 			tokenCost.ActualCost += searchCost.ActualCost
 		}
 	}
 	// 显式缓存存储费同为叠加 surcharge，与 token 费用使用同一计费模型与倍率。
-	if storageCost := s.cacheStorageCost(result, billingModel); storageCost > 0 {
-		if tokenCost == nil {
-			tokenCost = &CostBreakdown{}
-		}
+	if storageCost := s.cacheStorageCost(ctx, result, billingModel); storageCost > 0 {
 		tokenCost.TotalCost += storageCost
 		tokenCost.ActualCost += storageCost * multiplier
 	}
-	return tokenCost
+}
+
+// An optional response-model proposal is unusable on a pricing error. It must
+// never replace the independently priced baseline or create an accounting incident.
+func (s *GatewayService) calculateRecordUsageCost(ctx context.Context, result *ForwardResult, key *APIKey, model string, rate, imageRate float64, at time.Time) *CostBreakdown {
+	cost, _ := s.recordUsageCost(ctx, result, key, model, rate, rate, imageRate, at)
+	return cost
 }
 
 // compositeBillableModel 决定 composite 分组请求的计费模型：来源覆盖把计费模型
@@ -1156,7 +1226,7 @@ func (s *GatewayService) hasResolvableTokenPricing(ctx context.Context, model st
 	if s.billingService == nil {
 		return false
 	}
-	_, err := s.billingService.GetModelPricing(model)
+	_, err := s.billingService.forRequest(ctx).GetModelPricing(model)
 	return err == nil
 }
 
@@ -1173,7 +1243,8 @@ func (s *GatewayService) hasIdentifiedResponseModelPricing(ctx context.Context, 
 	if s.resolveChannelPricing(ctx, model, apiKey) != nil {
 		return true, true
 	}
-	return s.billingService.HasIdentifiedTokenPricing(model), false
+	billing := s.billingService.forRequest(ctx)
+	return billing.exactCatalogUnit(model) == nil && billing.HasIdentifiedTokenPricing(model), false
 }
 
 // resolveChannelPricing 检查指定模型是否存在渠道级别定价。
@@ -1218,7 +1289,7 @@ func (s *GatewayService) calculateImageCost(
 	}
 	groupConfig := imagePriceConfigFromAPIKey(apiKey)
 	if apiKeyHasConfiguredImagePrice(apiKey, sizeTier) {
-		return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
+		return s.billingService.forRequest(ctx).CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
 	}
 	if resolved != nil && resolved.Source == PricingSourceChannel {
 		tokens := UsageTokens{
@@ -1275,7 +1346,7 @@ func (s *GatewayService) calculateImageCost(
 		// token 模式 + 开关强制按张：跳过 token 分支，落到下面的按张计费。
 	}
 
-	return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
+	return s.billingService.forRequest(ctx).CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
 }
 
 func (usage ClaudeUsage) billingUsageTokens() UsageTokens {
@@ -1296,16 +1367,9 @@ func (usage ClaudeUsage) billingUsageTokens() UsageTokens {
 	return tokens
 }
 
-// calculateTokenCost 计算 Token 计费：路径选择（分组/渠道定价 → 内置定价）
-// 统一交给 BillingService.CalculateTokenCostForRequest，与模型广场的阶梯表查询同源。
-func (s *GatewayService) calculateTokenCost(
-	ctx context.Context,
-	result *ForwardResult,
-	apiKey *APIKey,
-	billingModel string,
-	multiplier float64,
-	pricingAt time.Time,
-) *CostBreakdown {
+// calculateTokenCost computes the configured or catalog token charge. Only a
+// typed unresolved tariff changes the legacy missing-price error policy.
+func (s *GatewayService) calculateTokenCost(ctx context.Context, result *ForwardResult, apiKey *APIKey, billingModel string, multiplier float64, pricingAt time.Time) (*CostBreakdown, error) {
 	tokens := result.Usage.billingUsageTokens()
 
 	var resolved *ResolvedPricing
@@ -1326,11 +1390,14 @@ func (s *GatewayService) calculateTokenCost(
 		Resolver:        s.resolver,
 		Resolved:        resolved,
 	})
+	if isTariffPriceIssue(err) {
+		return nil, err
+	}
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
-		return &CostBreakdown{ActualCost: 0}
+		return &CostBreakdown{ActualCost: 0}, nil
 	}
-	return cost
+	return cost, nil
 }
 
 // buildRecordUsageLog 构建使用日志并设置计费模式。
@@ -1408,7 +1475,11 @@ func (s *GatewayService) buildRecordUsageLog(
 		SubscriptionID:           optionalSubscriptionID(subscription),
 		CreatedAt:                time.Now(),
 	}
-	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
+	if cost != nil && cost.catalogUnitMode.isCatalogUnit() {
+		usageLog.RateMultiplier = cost.catalogUnitMultiplier
+		usageLog.BillingUnits = mediaCopyPtr(&cost.catalogUnits)
+		usageLog.ImageCount = result.catalogUsage().images
+	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
 	if cost != nil {

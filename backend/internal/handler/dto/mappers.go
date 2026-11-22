@@ -774,6 +774,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		SessionID:                 l.SessionID,
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,
+		BillingUnits:              l.BillingUnits,
 		CreatedAt:                 l.CreatedAt,
 		User:                      UserFromServiceShallow(l.User),
 		APIKey:                    APIKeyFromService(l.APIKey),

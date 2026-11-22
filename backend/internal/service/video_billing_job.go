@@ -16,12 +16,13 @@ var (
 // VideoBillingIntent contains no credentials, request bodies or media URLs.
 // Raw amounts are preserved until real usage is known; quantize only the final bill.
 type VideoBillingIntent struct {
-	Command       UsageBillingCommand `json:"command"`
-	Usage         UsageLog            `json:"usage"`
-	RawAmounts    [5]float64          `json:"raw_amounts"`
-	QuotaPlatform string              `json:"quota_platform"`
-	SimpleMode    bool                `json:"simple_mode"`
-	RateLimitOnly bool                `json:"rate_limit_only"`
+	CatalogUnitMode BillingMode         `json:"catalog_unit_mode,omitempty"`
+	Command         UsageBillingCommand `json:"command"`
+	Usage           UsageLog            `json:"usage"`
+	RawAmounts      [5]float64          `json:"raw_amounts"`
+	QuotaPlatform   string              `json:"quota_platform"`
+	SimpleMode      bool                `json:"simple_mode"`
+	RateLimitOnly   bool                `json:"rate_limit_only"`
 }
 
 type VideoBillingSnapshot struct {

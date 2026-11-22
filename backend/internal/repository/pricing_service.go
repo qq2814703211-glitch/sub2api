@@ -13,6 +13,27 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+const (
+	priceCatalogBodyLimit = 64 << 20
+	priceHashBodyLimit    = 4 << 10
+)
+
+// Content-Length may be absent or refer to compressed bytes. Bound the body the
+// decoder actually receives and reject oversize replies instead of truncating.
+func readPricingBody(resp *http.Response, maxBytes int64) ([]byte, error) {
+	if resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("pricing response exceeds %d bytes", maxBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("pricing response exceeds %d bytes", maxBytes)
+	}
+	return body, nil
+}
+
 type pricingRemoteClient struct {
 	httpClient *http.Client
 }
@@ -71,7 +92,11 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	return readPricingBody(resp, priceCatalogBodyLimit)
+}
+
+func (c *pricingRemoteClient) FetchOfficialPricingDocument(ctx context.Context, endpoint string, limit int64) ([]byte, error) {
+	return service.FetchOfficialPricingDocument(ctx, c.httpClient, endpoint, limit)
 }
 
 func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (string, error) {
@@ -90,7 +115,7 @@ func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (st
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readPricingBody(resp, priceHashBodyLimit)
 	if err != nil {
 		return "", err
 	}

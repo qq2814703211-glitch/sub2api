@@ -81,3 +81,37 @@ func newGrokMissingUsageFailoverError(c *gin.Context, account *Account, upstream
 		ResponseHeaders: headers,
 	}
 }
+
+func (s *OpenAIGatewayService) chatPricedPerSuccessfulRequest(c *gin.Context, requested, billingModel, upstream string) bool {
+	if s == nil || s.billingService == nil || c == nil || c.Request == nil {
+		return false
+	}
+	ctx := c.Request.Context()
+	key := getAPIKeyFromContext(c)
+	if key == nil {
+		return false
+	}
+	// Honor configured billing identity and any commercial card first. A self-reported
+	// response model is never sufficient to relax the token integrity check.
+	selected := s.billingService.catalogBillingModel(ctx, s.resolver, key, billingModel, upstream, ChannelUsageFields{})
+	if key.GroupID != nil && s.channelService != nil {
+		mapping := s.channelService.ResolveChannelMapping(ctx, *key.GroupID, requested)
+		switch mapping.BillingModelSource {
+		case BillingModelSourceRequested:
+			selected = requested
+		case BillingModelSourceChannelMapped:
+			if mapping.Mapped {
+				selected = mapping.MappedModel
+			}
+		case BillingModelSourceUpstream:
+			selected = upstream
+		}
+	}
+	for _, m := range []string{selected, requested} {
+		if p := s.resolveOpenAIChannelPricing(ctx, m, key); p != nil {
+			return false
+		}
+	}
+	r := s.billingService.exactCatalogUnit(selected)
+	return r != nil && r.Mode == BillingModePerRequest && r.catalogUnitPrice != nil && *r.catalogUnitPrice >= 0
+}

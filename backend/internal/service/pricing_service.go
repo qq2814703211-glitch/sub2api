@@ -252,12 +252,18 @@ var (
 // tokenPriceOverrides tracks explicit nonnegative rates from pricing.override_file.
 // Keep this provenance with the parsed card so billing never rereads the file.
 type tokenPriceOverrides struct {
-	input, output, cacheRead bool
+	input, output, cacheRead     bool
+	cacheWrite30m, cacheWrite12h bool
 }
 
 // LiteLLMModelPricing LiteLLM价格数据结构
 // 只保留我们需要的字段，使用指针来处理可能缺失的值
 type LiteLLMModelPricing struct {
+	rowIdentity      catalogRowIdentity
+	GloryBillingMode BillingMode `json:"glory_billing_mode,omitempty"`
+	// UnitPrice belongs only to this exact catalog SKU. Nil means missing, zero is free.
+	unitPrice                           *float64
+	tariff                              *priceSyncTariff
 	CacheCreationInputTokenCostExplicit bool `json:"-"`
 	priceOverrides                      tokenPriceOverrides
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
@@ -280,6 +286,11 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格（如 gpt-image-2 图片编辑）
 	CacheReadInputImageTokenCost        float64 `json:"cache_read_input_image_token_cost"`
+
+	// Exact OpenAI write lifetimes; nil is unquoted, not free.
+	CacheCreationInputTokenCost30m *float64 `json:"cache_creation_input_token_cost_30m,omitempty"`
+	CacheCreationInputTokenCost12h *float64 `json:"cache_creation_input_token_cost_12h,omitempty"`
+
 	// CacheStorageCostPerTokenPerHour 显式上下文缓存存储单价（每 token 每小时，USD），一般由定价覆盖文件提供，
 	// 配置后优先于内置价（见 BillingService.CacheStoragePricePerTokenHour）。
 	CacheStorageCostPerTokenPerHour float64 `json:"cache_storage_cost_per_token_per_hour"`
@@ -298,6 +309,11 @@ type LiteLLMModelPricing struct {
 	// 也会在计费时被静默吞掉。该标记只在同步写入人民币价时置位，
 	// 运营手配价与美元目录价都不会带上它。
 	CNYOfficial bool `json:"cny_official,omitempty"`
+
+	// legacyQuarantine is a non-empty reason when a legacy automatic price is
+	// proven to be a USD estimate and must not settle as CNY. It is parsed from
+	// V2-owned metadata and never inferred from the numbers themselves.
+	legacyQuarantine string `json:"-"`
 }
 
 // PricingRemoteClient 远程价格数据获取接口
@@ -308,6 +324,14 @@ type PricingRemoteClient interface {
 
 // LiteLLMRawEntry 用于解析原始JSON数据
 type LiteLLMRawEntry struct {
+	// Keep optional provenance opaque to the pricing decoder.
+	PriceSource      json.RawMessage `json:"glory_price_source"`
+	GloryBillingMode BillingMode     `json:"glory_billing_mode"`
+	CostPerRequest   *float64        `json:"cost_per_request"`
+	CostPerSecond    *float64        `json:"cost_per_second"`
+	PriceTiers       json.RawMessage `json:"glory_price_tiers"`
+	PriceWindows     json.RawMessage `json:"glory_price_windows"`
+
 	InputCostPerToken                   *float64 `json:"input_cost_per_token"`
 	InputCostPerTokenPriority           *float64 `json:"input_cost_per_token_priority"`
 	OutputCostPerToken                  *float64 `json:"output_cost_per_token"`
@@ -315,6 +339,8 @@ type LiteLLMRawEntry struct {
 	CacheCreationInputTokenCost         *float64 `json:"cache_creation_input_token_cost"`
 	CacheCreationInputTokenCostPriority *float64 `json:"cache_creation_input_token_cost_priority"`
 	CacheCreationInputTokenCostAbove1hr *float64 `json:"cache_creation_input_token_cost_above_1hr"`
+	CacheCreationInputTokenCost30m      *float64 `json:"cache_creation_input_token_cost_30m"`
+	CacheCreationInputTokenCost12h      *float64 `json:"cache_creation_input_token_cost_12h"`
 	CacheReadInputTokenCost             *float64 `json:"cache_read_input_token_cost"`
 	CacheReadInputTokenCostPriority     *float64 `json:"cache_read_input_token_cost_priority"`
 	LongContextInputTokenThreshold      *int     `json:"long_context_input_token_threshold"`
@@ -332,19 +358,31 @@ type LiteLLMRawEntry struct {
 
 	// CNYOfficial 标记该条目价格来自官方人民币牌价口径（见 LiteLLMModelPricing）。
 	CNYOfficial *bool `json:"cny_official"`
+
+	// LegacyPrice is V2 provenance that withholds a legacy automatic price from
+	// settlement. It carries no rate and is removed by the next verified render.
+	LegacyPrice json.RawMessage `json:"glory_price_legacy"`
 }
 
 // PricingService 动态价格服务
 type PricingService struct {
-	cfg          *config.Config
-	remoteClient PricingRemoteClient
-	mu           sync.RWMutex
-	pricingData  map[string]*LiteLLMModelPricing
-	lastUpdated  time.Time
-	localHash    string
+	pricePublisher       *ModelPricingSyncService
+	privateProjectionDir string
+	projectionFault      bool       // under buildMu; only DB replay may clear a failed compensation
+	buildMu              sync.Mutex // serialize local catalog rebuilds with V2 activation
+	cfg                  *config.Config
+	remoteClient         PricingRemoteClient
+	mu                   sync.RWMutex
+	pricingData          map[string]*LiteLLMModelPricing
+	lastUpdated          time.Time
+	localHash            string
 	// fallback/override 文件在最近一次成功重建时的内容指纹，定时器据此判断是否
 	// 需要从本地目录缓存重建叠加层。
 	customFilesHash string
+	// Publisher sets this with pricingData under mu on activation. A rebuild
+	// without a verified publisher head is identified by its file hashes.
+	catalogRevision string
+	catalogBaseHash string // exact bytes behind the installed view, independent of remote sync state
 
 	// 停止信号
 	stopCh chan struct{}
@@ -389,8 +427,14 @@ func (s *PricingService) Initialize() error {
 
 // Stop 停止价格服务
 func (s *PricingService) Stop() {
+	if s.pricePublisher != nil {
+		s.pricePublisher.Stop()
+	}
 	close(s.stopCh)
 	s.wg.Wait()
+	if s.privateProjectionDir != "" {
+		_ = os.RemoveAll(s.privateProjectionDir)
+	}
 	logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Service stopped")
 }
 
@@ -615,11 +659,16 @@ func (s *PricingService) reloadIfCustomFilesChanged() {
 // reloadCustomPricingLayers 读取本地目录缓存并重新叠加 fallback/override，只替换内存数据
 // 与叠加层指纹。
 func (s *PricingService) reloadCustomPricingLayers() error {
+	s.buildMu.Lock()
+	defer s.buildMu.Unlock()
+	if s.projectionFault {
+		return fmt.Errorf("price projection awaits database recovery")
+	}
 	pricingFile := s.getPricingFilePath()
 	// 定价层文件可能在读取期间被替换。只有构建前后指纹一致时才提交，
 	// 否则丢弃这次混合快照并重试，避免短暂应用不匹配的 fallback/override。
 	var data map[string]*LiteLLMModelPricing
-	var fingerprint string
+	var fingerprint, baseHash string
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		if validateErr := s.validateCustomPricingFiles(); validateErr != nil {
@@ -639,6 +688,7 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 			return fmt.Errorf("validate custom pricing files: %w", validateErr)
 		}
 		if before == after && after == fingerprint {
+			baseHash = fmt.Sprintf("%x", sha256.Sum256(body))
 			break
 		}
 		if attempt == 2 {
@@ -649,7 +699,9 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
+	s.catalogRevision = ""
 	s.customFilesHash = fingerprint
+	s.catalogBaseHash = baseHash
 	s.mu.Unlock()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
@@ -690,6 +742,11 @@ func (s *PricingService) downloadPricingData() error {
 			remoteHash[:min(8, len(remoteHash))], dataHashStr[:8])
 	}
 
+	s.buildMu.Lock()
+	defer s.buildMu.Unlock()
+	if s.projectionFault {
+		return fmt.Errorf("price projection awaits database recovery")
+	}
 	data, customFilesHash, err := s.buildPricingData(body)
 	if err != nil {
 		return fmt.Errorf("parse pricing data: %w", err)
@@ -716,8 +773,10 @@ func (s *PricingService) downloadPricingData() error {
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
+	s.catalogRevision = ""
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
+	s.catalogBaseHash = dataHashStr
 	s.customFilesHash = customFilesHash
 	s.mu.Unlock()
 
@@ -746,23 +805,43 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 
 		// 尝试解析每个条目
 		var entry LiteLLMRawEntry
+		managed := declaresTokenTariff(rawEntry)
 		if err := json.Unmarshal(rawEntry, &entry); err != nil {
+			if managed {
+				return nil, &TariffPriceIssue{modelName, err.Error()}
+			}
 			skipped++
 			continue
 		}
 
+		if managed && (entry.InputCostPerToken == nil || entry.OutputCostPerToken == nil) {
+			return nil, &TariffPriceIssue{modelName, "managed token tariff requires input_cost_per_token and output_cost_per_token (zero allowed)"}
+		}
+
 		// 只保留有有效价格的条目
-		if entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil {
+		unitPrice := entry.catalogUnitPrice()
+		if !entry.GloryBillingMode.isCatalogUnit() && entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil && entry.OutputCostPerImage == nil && entry.OutputCostPerImageToken == nil && entry.InputCostPerImageToken == nil {
 			continue
 		}
 
 		pricing := &LiteLLMModelPricing{
+			GloryBillingMode: entry.GloryBillingMode, unitPrice: unitPrice,
 			priceOverrides:        priceOverrides[modelName],
 			LiteLLMProvider:       entry.LiteLLMProvider,
 			Mode:                  entry.Mode,
 			SupportsPromptCaching: entry.SupportsPromptCaching,
 			SupportsServiceTier:   entry.SupportsServiceTier,
 			TokenPricingAbsent:    entry.InputCostPerToken == nil && entry.OutputCostPerToken == nil,
+		}
+		pricing.CacheCreationInputTokenCost30m = entry.CacheCreationInputTokenCost30m
+		pricing.CacheCreationInputTokenCost12h = entry.CacheCreationInputTokenCost12h
+
+		if managed {
+			tariff, err := newPriceSyncTariff(modelName, entry, rawEntry)
+			if err != nil {
+				return nil, err
+			}
+			pricing.tariff = tariff
 		}
 
 		if entry.InputCostPerToken != nil {
@@ -820,6 +899,23 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		if entry.CNYOfficial != nil {
 			pricing.CNYOfficial = *entry.CNYOfficial
 		}
+		if len(entry.LegacyPrice) > 0 {
+			var legacy struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(entry.LegacyPrice, &legacy); err != nil {
+				// Our own provenance is unreadable: keep the row out of settlement
+				// until an operator or a verified quote rewrites the whole card.
+				pricing.legacyQuarantine = "历史价格隔离标记无法解析，暂停计费待核"
+			} else if legacy.Status == priceSyncLegacyQuarantined {
+				reason := strings.TrimSpace(legacy.Reason)
+				if reason == "" {
+					reason = priceSyncLegacyReason
+				}
+				pricing.legacyQuarantine = reason
+			}
+		}
 
 		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||
 			entry.LongContextInputCostMultiplier != nil ||
@@ -835,6 +931,7 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 			orphanCacheTiers = append(orphanCacheTiers, modelName+"("+strings.Join(orphans, ",")+")")
 		}
 
+		pricing.rowIdentity = identifyCatalogRow(modelName, rawEntry, entry.PriceSource)
 		result[modelName] = pricing
 	}
 
@@ -1033,9 +1130,11 @@ func tokenPriceOverridesFromPatch(patch json.RawMessage) tokenPriceOverrides {
 		return json.Unmarshal(fields[field], &rate) == nil && rate != nil && *rate >= 0
 	}
 	return tokenPriceOverrides{
-		input:     explicitRate("input_cost_per_token"),
-		output:    explicitRate("output_cost_per_token"),
-		cacheRead: explicitRate("cache_read_input_token_cost"),
+		input:         explicitRate("input_cost_per_token"),
+		output:        explicitRate("output_cost_per_token"),
+		cacheRead:     explicitRate("cache_read_input_token_cost"),
+		cacheWrite30m: explicitRate("cache_creation_input_token_cost_30m"),
+		cacheWrite12h: explicitRate("cache_creation_input_token_cost_12h"),
 	}
 }
 
@@ -1077,6 +1176,13 @@ func mergePricingOverrideEntry(base, patch json.RawMessage) (json.RawMessage, bo
 			merged = make(map[string]any, len(patchFields))
 		}
 	}
+	if patchFields["glory_price_source"] != nil {
+		for field := range merged {
+			if priceSyncManagedField(field) {
+				delete(merged, field)
+			}
+		}
+	}
 	for k, v := range patchFields {
 		if v == nil {
 			delete(merged, k)
@@ -1084,6 +1190,7 @@ func mergePricingOverrideEntry(base, patch json.RawMessage) (json.RawMessage, bo
 		}
 		merged[k] = v
 	}
+	propagateTariffFlatPatch(merged, patchFields)
 	out, err := json.Marshal(merged)
 	if err != nil {
 		return nil, false
@@ -1095,10 +1202,10 @@ func mergePricingOverrideEntry(base, patch json.RawMessage) (json.RawMessage, bo
 // （条目须自带价格字段才能通过有效性过滤），并对最终仍未生效的条目打 WARN：
 // 模型名拼错、或纯补丁条目落在不存在的模型上时会被静默丢弃，让"已改价/已关阶梯"
 // 的运营预期与实际计费脱节，这里是唯一的哨兵。
-func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
+func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPricing) (map[string]*LiteLLMModelPricing, error) {
 	overrides := s.loadPricingOverrideEntries()
 	if len(overrides) == 0 {
-		return data
+		return data, nil
 	}
 	if data == nil {
 		data = make(map[string]*LiteLLMModelPricing)
@@ -1110,13 +1217,15 @@ func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPr
 		}
 	}
 	if len(leftover) == 0 {
-		return data
+		return data, nil
 	}
 	// 复用主解析路径（含 above_XXXk 折算与有效性过滤）；applyPricingOverrides
 	// 对已存在条目做的自我修补是幂等的，不会二次改值。
 	if body, err := json.Marshal(leftover); err == nil {
 		if parsed, err := s.parsePricingData(body); err == nil {
 			maps.Copy(data, parsed)
+		} else if isTariffPriceIssue(err) {
+			return nil, err
 		}
 	}
 	var missing []string
@@ -1126,11 +1235,11 @@ func (s *PricingService) mergeOverrideOnlyModels(data map[string]*LiteLLMModelPr
 		}
 	}
 	if len(missing) == 0 {
-		return data
+		return data, nil
 	}
 	sort.Strings(missing)
 	logger.LegacyPrintf("service.pricing", "[Pricing] Warning: override had no effect for %d model(s): %s (unknown model name, or patch-only entry without price fields)", len(missing), strings.Join(missing, ", "))
-	return data
+	return data, nil
 }
 
 // buildPricingData 解析目录正文并依次叠加 fallback、override 两层，返回合并结果与
@@ -1142,13 +1251,21 @@ func (s *PricingService) buildPricingData(body []byte) (map[string]*LiteLLMModel
 	if err != nil {
 		return nil, "", err
 	}
-	data = s.mergeFallbackPricingData(data)
-	data = s.mergeOverrideOnlyModels(data)
-	return data, fingerprint, nil
+	data, err = s.mergeFallbackPricingDataChecked(data)
+	if err != nil {
+		return nil, "", err
+	}
+	data, err = s.mergeOverrideOnlyModels(data)
+	return data, fingerprint, err
 }
 
 // loadPricingData 从本地文件加载价格数据
 func (s *PricingService) loadPricingData(filePath string) error {
+	s.buildMu.Lock()
+	defer s.buildMu.Unlock()
+	if s.projectionFault {
+		return fmt.Errorf("price projection awaits database recovery")
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("read file failed: %w", err)
@@ -1166,7 +1283,9 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, pricingData)
 	s.pricingData = pricingData
+	s.catalogRevision = ""
 	s.localHash = hashStr
+	s.catalogBaseHash = hashStr
 	s.customFilesHash = customFilesHash
 
 	info, _ := os.Stat(filePath)
@@ -1181,22 +1300,35 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	return nil
 }
 
+// Best-effort standalone fallback merge. Rebuilds use the checked variant so
+// an invalid managed fallback row cannot erase an active tariff on reload.
 func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
+	merged, err := s.mergeFallbackPricingDataChecked(data)
+	if err != nil {
+		return data
+	}
+	return merged
+}
+
+func (s *PricingService) mergeFallbackPricingDataChecked(data map[string]*LiteLLMModelPricing) (map[string]*LiteLLMModelPricing, error) {
 	if data == nil {
 		data = make(map[string]*LiteLLMModelPricing)
 	}
 	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.FallbackFile) == "" {
-		return data
+		return data, nil
 	}
 	fallbackBody, err := os.ReadFile(s.cfg.Pricing.FallbackFile)
 	if err != nil {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge skipped: %v", err)
-		return data
+		return data, nil
 	}
 	fallbackData, err := s.parsePricingData(fallbackBody)
 	if err != nil {
+		if isTariffPriceIssue(err) {
+			return nil, err
+		}
 		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge parse skipped: %v", err)
-		return data
+		return data, nil
 	}
 	merged := 0
 	for modelName, pricing := range fallbackData {
@@ -1209,7 +1341,7 @@ func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelP
 	if merged > 0 {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Merged %d fallback-only models", merged)
 	}
-	return data
+	return data, nil
 }
 
 // warnDroppedLongContextLadders 对比新旧目录数据：原本带长上下文阶梯的条目在新数据里
@@ -1302,6 +1434,16 @@ func (s *PricingService) validatePricingURL(raw string) (string, error) {
 
 // GetModelPricing 获取模型价格（带模糊匹配）
 func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing {
+	p := s.modelPricingCandidate(modelName)
+	if !p.tariffMatches(modelName) {
+		return nil
+	}
+	return p
+}
+
+// The billing lookup distinguishes a miss (legacy fallback allowed) from
+// a family match against somebody else's exact managed SKU (not billable).
+func (s *PricingService) modelPricingCandidate(modelName string) *LiteLLMModelPricing {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1309,23 +1451,30 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 		return nil
 	}
 
+	if p := s.pricingData[strings.TrimSpace(modelName)]; p != nil && (p.explicitMode() || p.tariff != nil) {
+		return p
+	}
 	// 标准化模型名称（同时兼容 "models/xxx"、VertexAI 资源名等前缀）
 	modelLower := strings.ToLower(strings.TrimSpace(modelName))
 	lookupCandidates := s.buildModelLookupCandidates(modelLower)
 
+	// Only the exact lookup above may consume a managed unit row. Its old token
+	// and scalar image fields can still be present in a layered catalog.
 	// 1~3. 确定性识别（精确名 / 已知拼写变体 / 去掉日期版本后缀）
-	if pricing := s.lookupIdentifiedModelPricingLocked(lookupCandidates); pricing != nil {
+	if pricing := s.lookupIdentifiedModelPricingLocked(lookupCandidates); pricing != nil && !pricing.GloryBillingMode.isCatalogUnit() {
 		return pricing
 	}
 
 	// 4. 基于模型系列匹配（Claude）
-	if pricing := s.matchByModelFamily(lookupCandidates[0]); pricing != nil {
+	if pricing := s.matchByModelFamily(lookupCandidates[0]); pricing != nil && !pricing.GloryBillingMode.isCatalogUnit() {
 		return pricing
 	}
 
 	// 5. OpenAI 模型回退策略
 	if strings.HasPrefix(lookupCandidates[0], "gpt-") {
-		return s.matchOpenAIModel(lookupCandidates[0])
+		if p := s.matchOpenAIModel(lookupCandidates[0]); p != nil && !p.GloryBillingMode.isCatalogUnit() {
+			return p
+		}
 	}
 
 	return nil
@@ -1351,7 +1500,7 @@ func (s *PricingService) GetImagePrice(modelName string) float64 {
 		return 0
 	}
 	for _, model := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {
-		if pricing := s.pricingData[model]; pricing != nil {
+		if pricing := s.pricingData[model]; pricing != nil && !pricing.GloryBillingMode.isCatalogUnit() {
 			return pricing.OutputCostPerImage
 		}
 	}
@@ -1413,7 +1562,14 @@ func (s *PricingService) GetIdentifiedModelPricing(modelName string) *LiteLLMMod
 	if modelLower == "" {
 		return nil
 	}
-	return s.lookupIdentifiedModelPricingLocked(s.buildModelLookupCandidates(modelLower))
+	if p := s.pricingData[strings.TrimSpace(modelName)]; p != nil && (p.explicitMode() || p.tariff != nil) {
+		return p
+	}
+	p := s.lookupIdentifiedModelPricingLocked(s.buildModelLookupCandidates(modelLower))
+	if !p.tariffMatches(modelName) || (p != nil && p.GloryBillingMode.isCatalogUnit()) {
+		return nil
+	}
+	return p
 }
 
 func (s *PricingService) buildModelLookupCandidates(modelLower string) []string {
