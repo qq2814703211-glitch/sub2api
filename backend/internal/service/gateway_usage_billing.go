@@ -870,16 +870,24 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。纯存储费不是一次模型请求，
 	// 账号统计成本回落 total_cost（官方存储价）。
+	var statsErr error
+	var statsMedia *MediaUsage
 	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) {
-		if err := applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		// The generic gateway knows the observed Gemini count, not the other
+		// media selectors. Never substitute a model-name or requested count.
+		if result.actualImageCount != nil {
+			statsMedia = &MediaUsage{Count: *result.actualImageCount}
+		}
+		statsErr = applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
 			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.
 			result.Usage.billingUsageTokens(),
 			cost.TotalCost-cacheStorageCost, pricingAt,
-			accountStatsLongContextPricingEnabled(nil), result.upstreamPriceFactor(),
-		); err != nil {
-			return err
+			accountStatsLongContextPricingEnabled(nil), result.upstreamPriceFactor(), statsMedia,
+		)
+		if statsErr != nil && ctx.Value(preparedCachedContentChargeKey{}) != nil {
+			return statsErr // A quote probe is not a completed request.
 		}
 		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
 	}
@@ -891,6 +899,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		recordAccountStatsIssue(ctx, s.usageLogRepo, statsErr, usageLog, account.Platform, pricingAt, result.Usage.billingUsageTokens(), statsMedia)
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -907,7 +916,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		}
 	}
 	requestID := usageLog.RequestID
-	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+	applied, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 		Cost:                       cost,
 		User:                       user,
 		APIKey:                     apiKey,
@@ -927,6 +936,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	if applied {
+		recordAccountStatsIssue(ctx, s.usageLogRepo, statsErr, usageLog, account.Platform, pricingAt, result.Usage.billingUsageTokens(), statsMedia)
+	}
 
 	return nil
 }

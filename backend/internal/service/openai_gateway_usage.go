@@ -542,14 +542,16 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		return nil
 	}
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
+	var statsErr error
 	if apiKey.GroupID != nil {
-		if err := applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		statsErr = applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost, pricingAt,
 			accountStatsLongContextPricingEnabled(longContextBillingGate) && !modelLongContextExempt, 1,
 			result.MediaUsage,
-		); err != nil {
-			return err
+		)
+		if statsErr != nil && ctx.Value(videoPreparedUsageKey{}) != nil {
+			return statsErr // A quote probe is not a completed request.
 		}
 	}
 
@@ -566,6 +568,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		recordAccountStatsIssue(ctx, s.usageLogRepo, statsErr, usageLog, account.Platform, pricingAt, tokens, result.MediaUsage)
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
 		return nil
@@ -578,7 +581,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 	}
 
-	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+	applied, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 		Cost:                       cost,
 		User:                       user,
 		APIKey:                     apiKey,
@@ -604,6 +607,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	if applied {
+		recordAccountStatsIssue(ctx, s.usageLogRepo, statsErr, usageLog, account.Platform, pricingAt, tokens, result.MediaUsage)
+	}
 
 	return nil
 }
