@@ -37,7 +37,7 @@ postgres `127.0.0.1:5433`，redis `127.0.0.1:6380`，独立 project 与卷。
 
 ## 已知的基线失败（非本次引入）
 
-以下 5 个测试在基线 `sub2api-verify-baseline` 上同样失败，已逐个对照确认：
+以下 2 个测试在基线 `sub2api-verify-baseline` 上同样失败，已逐个对照确认：
 
 - `TestProductionOpenAIPricingOverrideShortLongAndFast`
 - `go vet ./internal/service/` 的 `undefined: apiKeyQueueCacheStub`（stub 分散在别的测试文件）
