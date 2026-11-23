@@ -27,6 +27,7 @@ func TestLoginDoesNotArchivePassword(t *testing.T) {
 	t.Chdir(t.TempDir())
 	directory := filepath.Join(t.TempDir(), "copies")
 	legacyConfig := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(legacyConfig, []byte("{}\n"), 0o600))
 	t.Setenv("CONFIG_FILE", legacyConfig)
 	viper.Reset()
 	t.Cleanup(viper.Reset)
