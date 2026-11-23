@@ -36,7 +36,7 @@ func TestPriceSyncRestoreEquivalentKimi(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					record := priceSyncModel{Mode: "manual", NativeCNY: true, Auto: &q, Effective: &prior, ManualEvidence: q.Evidence}
-					var cfgForProjection *CNYOfficialManualPrice = &manual
+					cfgForProjection := &manual
 					if alreadyEffective {
 						record.Mode, record.Effective, record.ManualEvidence = "auto", &q, ""
 						cfgForProjection = nil
