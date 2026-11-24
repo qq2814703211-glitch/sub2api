@@ -22,11 +22,21 @@ export const REWRITE_CONFIG_STORAGE_KEY = 'ig_rewriteConfig'
  */
 export const LEGACY_REWRITE_MODEL_KEY = 'ig_rewriteModel'
 
+function readRewriteApiBaseUrl(): string {
+  const injected = (globalThis as { __APP_CONFIG__?: { rewrite_api_base_url?: string } }).__APP_CONFIG__
+  const configured = injected?.rewrite_api_base_url?.trim().replace(/\/$/, '') ?? ''
+  if (configured) return configured
+  if (typeof location !== 'undefined' && location.origin && location.origin !== 'null') {
+    return location.origin
+  }
+  return ''
+}
+
 /**
- * 改写接口地址写死。用户明确要求不给选择权：
- * 站内网关就是这一处，改由部署方统一决定，页面上不出现可编辑地址框。
+ * 改写接口根地址。部署时只改 config.yaml 的 site.rewrite_api_base_url，
+ * 由服务端注入 window.__APP_CONFIG__。留空则用浏览器当前站点。
  */
-export const REWRITE_API_BASE_URL = 'https://api.example.com'
+export const REWRITE_API_BASE_URL = readRewriteApiBaseUrl()
 
 /** 地址固定后，URL 拼接的根路径随之固定；保留常量便于测试与展示。 */
 export const REWRITE_API_ROOT = `${REWRITE_API_BASE_URL}/v1`

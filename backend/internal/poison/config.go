@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // 配置键统一使用 poison_guard_ 前缀，便于一次性清理。
@@ -50,8 +52,14 @@ const DefaultHeadBufferRunes = 512
 // DefaultBlockMessage 与现有上游错误文案保持一致，不暴露投毒事实。
 const DefaultBlockMessage = "Upstream request failed"
 
-// DefaultUpstreamPrefixes 是已知会注入盗用提示的上游。
+// DefaultUpstreamPrefixes 在进程已加载配置时只认 site.poison_upstream_prefixes。
+// 单测不加载配置，回落到占位上游，避免把真实站点编译进默认值。
 func DefaultUpstreamPrefixes() []string {
+	if cfg := config.Current(); cfg != nil {
+		out := make([]string, len(cfg.Site.PoisonUpstreamPrefixes))
+		copy(out, cfg.Site.PoisonUpstreamPrefixes)
+		return out
+	}
 	return []string{
 		"https://poison.example",
 		"https://poison-sub.example",
@@ -60,7 +68,15 @@ func DefaultUpstreamPrefixes() []string {
 	}
 }
 
-func DefaultVetoKeywords() []string { return []string{"kedaya", "poison.example"} }
+// DefaultVetoKeywords 在进程已加载配置时只认 site.poison_veto_keywords。
+func DefaultVetoKeywords() []string {
+	if cfg := config.Current(); cfg != nil {
+		out := make([]string, len(cfg.Site.PoisonVetoKeywords))
+		copy(out, cfg.Site.PoisonVetoKeywords)
+		return out
+	}
+	return []string{"kedaya", "poison.example"}
+}
 func DefaultStrongKeywords() []string {
 	return []string{"盗", "偷", "窃", "这里是"}
 }

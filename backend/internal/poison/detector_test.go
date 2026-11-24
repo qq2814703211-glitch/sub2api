@@ -239,8 +239,8 @@ func TestScopeDisabled(t *testing.T) {
 
 func TestHoldBackRunes(t *testing.T) {
 	d := NewDetector(testConfig())
-	// 最长词 poison.example 为 9 个字符，保留 8 个。
-	if got := d.HoldBackRunes(); got != 8 {
-		t.Fatalf("HoldBackRunes()=%d want 8 (maxRunes=%d)", got, d.MaxKeywordRunes())
+	// 最长词 poison.example 为 14 个字符，保留 13 个。
+	if got := d.HoldBackRunes(); got != 13 {
+		t.Fatalf("HoldBackRunes()=%d want 13 (maxRunes=%d)", got, d.MaxKeywordRunes())
 	}
 }

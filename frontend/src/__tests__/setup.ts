@@ -5,6 +5,10 @@
 import { config } from '@vue/test-utils'
 import { vi } from 'vitest'
 
+;(globalThis as { __APP_CONFIG__?: { rewrite_api_base_url?: string } }).__APP_CONFIG__ = {
+  rewrite_api_base_url: 'https://api.example.com',
+}
+
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>()
 

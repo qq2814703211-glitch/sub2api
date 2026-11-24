@@ -110,9 +110,19 @@ type Config struct {
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
+	Site                    SiteConfig                    `mapstructure:"site"`
 
 	// Enforce only API-key spending windows in simple mode.
 	SimpleModeKeyRateLimitEnabled bool `mapstructure:"simple_mode_key_rate_limit_enabled" yaml:"simple_mode_key_rate_limit_enabled"`
+}
+
+// SiteConfig 是部署时唯一要改的站点段。源码不写死对外地址、购卡地址和防投毒上游。
+// 留空时：改写接口用浏览器当前站点；购卡没有编译期默认地址；防投毒不带上游名单。
+type SiteConfig struct {
+	RewriteAPIBaseURL       string   `mapstructure:"rewrite_api_base_url"`
+	ExternalCardPurchaseURL string   `mapstructure:"external_card_purchase_url"`
+	PoisonUpstreamPrefixes  []string `mapstructure:"poison_upstream_prefixes"`
+	PoisonVetoKeywords      []string `mapstructure:"poison_veto_keywords"`
 }
 
 // SimpleModeConfig controls startup behavior in simple mode.
@@ -2119,8 +2129,22 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		)
 	}
 
+	cfg.Site.RewriteAPIBaseURL = strings.TrimRight(strings.TrimSpace(cfg.Site.RewriteAPIBaseURL), "/")
+	cfg.Site.ExternalCardPurchaseURL = strings.TrimSpace(cfg.Site.ExternalCardPurchaseURL)
+	if raw, ok := os.LookupEnv("SITE_POISON_UPSTREAM_PREFIXES"); ok && strings.TrimSpace(raw) != "" {
+		cfg.Site.PoisonUpstreamPrefixes = normalizeStringSlice(strings.Split(raw, ","))
+	}
+	if raw, ok := os.LookupEnv("SITE_POISON_VETO_KEYWORDS"); ok && strings.TrimSpace(raw) != "" {
+		cfg.Site.PoisonVetoKeywords = normalizeStringSlice(strings.Split(raw, ","))
+	}
+	current.Store(&cfg)
 	return &cfg, nil
 }
+
+var current atomic.Pointer[Config]
+
+// Current 返回最近一次成功加载的配置。未加载时为 nil（单测不依赖部署配置）。
+func Current() *Config { return current.Load() }
 
 func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	if configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE")); configFile != "" {
@@ -2140,6 +2164,8 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 
 func setDefaults() {
 	viper.SetDefault("run_mode", RunModeStandard)
+	viper.SetDefault("site.rewrite_api_base_url", "")
+	viper.SetDefault("site.external_card_purchase_url", "")
 	viper.SetDefault("gateway.min_output_tokens", 128)
 	viper.SetDefault("simple_mode.auto_create_default_groups", true)
 	viper.SetDefault("simple_mode_key_rate_limit_enabled", false)

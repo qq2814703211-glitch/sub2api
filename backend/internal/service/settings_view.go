@@ -360,6 +360,7 @@ type PublicSettings struct {
 	SiteLogo                            string
 	SiteSubtitle                        string
 	APIBaseURL                          string
+	RewriteAPIBaseURL                   string
 	ContactInfo                         string
 	DocURL                              string
 	HomeContent                         string

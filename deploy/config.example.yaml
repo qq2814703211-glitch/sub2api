@@ -7,6 +7,19 @@
 # Documentation / 文档: https://github.com/Wei-Shaw/sub2api
 
 # =============================================================================
+# 部署站点（只改这一段）
+# 对外改写地址、默认购卡地址、防投毒上游和一票否决词都在这里。
+# 不要改源码。留空表示：改写跟浏览器当前站点、购卡无默认地址、防投毒无上游名单。
+# 环境变量：SITE_REWRITE_API_BASE_URL、SITE_EXTERNAL_CARD_PURCHASE_URL、
+# SITE_POISON_UPSTREAM_PREFIXES（逗号分隔）、SITE_POISON_VETO_KEYWORDS（逗号分隔）。
+# =============================================================================
+site:
+  rewrite_api_base_url: ""
+  external_card_purchase_url: ""
+  poison_upstream_prefixes: []
+  poison_veto_keywords: []
+
+# =============================================================================
 # Server Configuration
 # 服务器配置
 # =============================================================================

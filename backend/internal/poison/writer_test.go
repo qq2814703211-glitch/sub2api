@@ -21,7 +21,11 @@ func newGuardContext(t *testing.T, snap *Snapshot, baseURL string, hasProxy bool
 }
 
 func activeSnapshot() *Snapshot {
-	snap := parse(map[string]string{SettingEnabled: "true"})
+	snap := parse(map[string]string{
+		SettingEnabled:          "true",
+		SettingUpstreamPrefixes: "https://poison.example,https://poison-sub.example,http://203.0.113.20:17777,http://203.0.113.21:17777",
+		SettingKeywordsVeto:     `["kedaya","poison.example"]`,
+	})
 	return snap
 }
 

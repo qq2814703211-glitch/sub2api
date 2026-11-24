@@ -32,11 +32,12 @@ func TestParseDefaultsWhenNoValues(t *testing.T) {
 
 func TestParseEnabledAndCustomKeywords(t *testing.T) {
 	snap := parse(map[string]string{
-		SettingEnabled:        "true",
-		SettingKeywordsVeto:   `["kedaya"]`,
-		SettingKeywordsStrong: "盗取,窃取",
-		SettingKeywordsWeak:   "Key",
-		SettingThreshold:      "2",
+		SettingEnabled:          "true",
+		SettingUpstreamPrefixes: "https://poison.example",
+		SettingKeywordsVeto:     `["kedaya"]`,
+		SettingKeywordsStrong:   "盗取,窃取",
+		SettingKeywordsWeak:     "Key",
+		SettingThreshold:        "2",
 	})
 	if !snap.Active() {
 		t.Fatal("expected active")
