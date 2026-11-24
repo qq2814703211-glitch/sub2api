@@ -33,6 +33,12 @@ const (
 	// Soft adaptive timing: grow only when a recompute is clearly cheap.
 	channelMonitorV2GrowChunkUnder = 15 * time.Second
 	channelMonitorV2MaxBackoff     = 10 * time.Minute
+	// Default board is 90m. Each catch-up tick rewrites at most 30m so the
+	// 55s runOnce budget still fits current traffic. The live edge is seeded
+	// first; the rest of that board is filled before any older hole.
+	channelMonitorV2LiveBoard       = 90 * time.Minute
+	channelMonitorV2CatchupMaxChunk = 30 * time.Minute
+	channelMonitorV2CatchupWait     = 15 * time.Second
 )
 
 // channelMonitorRuntimeSubscriber is the optional settings hook that lets the
@@ -63,13 +69,21 @@ type ChannelMonitorV2Aggregator struct {
 	cursorLoaded bool
 	// hasAggregated is true once any recompute in this process (or durable data) exists.
 	hasAggregated bool
-	// gapCursor is the next minute to fill during a stall recovery, or zero.
+	// gapCursor is the next minute of the current catch-up phase, or zero.
 	gapCursor time.Time
-	// liveSeeded records a successful live-window recompute for the current stall.
+	// gapLimit is the exclusive end of the current catch-up phase.
+	gapLimit time.Time
+	// holeCursor is the older stall, filled only after the live board is whole.
+	holeCursor time.Time
+	// liveSeeded records a successful live-edge recompute for the current stall.
 	liveSeeded bool
-	unsub      func()
-	ctx        context.Context
-	cancel     context.CancelFunc
+	// edgeRefreshedAt is the last seed or overlap. Catch-up ticks skip the
+	// overlap until this is 5 minutes old so a long hole fill does not
+	// recompute the live edge every 15 seconds.
+	edgeRefreshedAt time.Time
+	unsub           func()
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 func NewChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settings channelMonitorRuntimeReader) *ChannelMonitorV2Aggregator {
@@ -186,7 +200,13 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 		// repeated failures raise the wait floor (exponential backoff).
 		s.mu.Lock()
 		floor := s.nextWaitFloor
+		catchingUp := !s.gapCursor.IsZero() || !s.holeCursor.IsZero()
 		s.mu.Unlock()
+		// A multi-hour hole must not wait out the steady-state refresh interval,
+		// or the 24h board stays gapped for hours. Failure backoff still wins.
+		if catchingUp && floor == 0 && interval > channelMonitorV2CatchupWait {
+			interval = channelMonitorV2CatchupWait
+		}
 		if floor > interval {
 			interval = floor
 		}
@@ -292,57 +312,97 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	}
 	s.mu.Lock()
 	gapCursor := s.gapCursor
+	gapLimit := s.gapLimit
+	holeCursor := s.holeCursor
 	liveSeeded := s.liveSeeded
 	forwardChunk := s.backfillChunk
 	s.mu.Unlock()
 	if forwardChunk < channelMonitorV2MinBackfillChunk {
 		forwardChunk = channelMonitorV2MinBackfillChunk
 	}
-	forwardChunk = min(forwardChunk, 30*time.Minute)
+	forwardChunk = min(forwardChunk, channelMonitorV2CatchupMaxChunk)
 
-	liveStart := now.Add(-channelMonitorV2BootstrapFirst)
+	// Seed only the newest chunk. A 90m or 2h rewrite of current traffic can
+	// blow the 55s budget and leave the board empty; the rest of the board is
+	// the next phase, and the pre-stall hole waits behind that.
 	if !liveSeeded && wm != nil {
-		// Capture the old watermark before the live seed advances data_through to now.
-		if gapStart, _, stale := channelMonitorForwardCatchup(wm.DataThrough, now, forwardChunk); stale {
-			if err := s.repo.RecomputeRange(ctx, liveStart, now); err != nil {
+		if _, _, stale := channelMonitorForwardCatchup(wm.DataThrough, now, forwardChunk); stale {
+			seedStart := now.Add(-forwardChunk)
+			if err := s.repo.RecomputeRange(ctx, seedStart, now); err != nil {
 				logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] live aggregation seed failed: %v", err)
 				return
 			}
-			gapCursor, liveSeeded = gapStart, true
+			boardStart := now.Add(-channelMonitorV2LiveBoard)
+			gapCursor = time.Time{}
+			holeCursor = time.Time{}
+			if wm.DataThrough.Before(boardStart) {
+				gapCursor = boardStart
+				holeCursor = wm.DataThrough.UTC().Truncate(time.Minute)
+			} else if wm.DataThrough.Before(seedStart) {
+				gapCursor = wm.DataThrough.UTC().Truncate(time.Minute)
+			}
 			s.mu.Lock()
-			s.gapCursor, s.liveSeeded = gapCursor, liveSeeded
+			s.gapCursor = gapCursor
+			s.gapLimit = seedStart
+			s.holeCursor = holeCursor
+			s.liveSeeded = true
+			s.edgeRefreshedAt = now
 			s.mu.Unlock()
+			return
 		}
 	}
-	if !gapCursor.IsZero() {
-		// Keep walking the original hole even after the durable watermark is fresh.
-		if start, end, ok := channelMonitorForwardCatchup(gapCursor, now, forwardChunk); ok && start.Before(liveStart) {
-			if end.After(liveStart) {
-				end = liveStart
-			}
-			if err := s.repo.RecomputeRange(ctx, start, end); err != nil {
-				logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] forward catch-up failed %s..%s: %v", start, end, err)
-				return
-			}
-			if end.Before(liveStart) {
-				s.mu.Lock()
-				s.gapCursor = end
-				s.mu.Unlock()
-				return
-			}
+
+	// Keep the right edge current while an older hole is still filling.
+	// Skipping this for the whole catch-up would open a fresh gap once the
+	// stall repair runs longer than the 10-minute overlap. Repeating it on
+	// every 15s catch-up tick would rewrite the same 10 minutes continuously.
+	s.mu.Lock()
+	edgeAt := s.edgeRefreshedAt
+	s.mu.Unlock()
+	catchingUp := !gapCursor.IsZero() || !holeCursor.IsZero()
+	if !catchingUp || edgeAt.IsZero() || now.Sub(edgeAt) >= 5*time.Minute {
+		if err := s.repo.RecomputeRange(ctx, now.Add(-channelMonitorV2RecentOverlap), now); err != nil {
+			logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
+			return
 		}
 		s.mu.Lock()
-		s.gapCursor = time.Time{}
+		s.edgeRefreshedAt = now
 		s.mu.Unlock()
 	}
 
-	// Refresh the trailing overlap so late usage/error writes land in 1m facts.
-	if err := s.repo.RecomputeRange(ctx, now.Add(-channelMonitorV2RecentOverlap), now); err != nil {
-		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
-		return
-	}
-	if liveSeeded {
+	if !gapCursor.IsZero() {
+		if gapLimit.IsZero() {
+			gapLimit = now.Add(-forwardChunk)
+		}
+		if start, end, ok := channelMonitorForwardCatchup(gapCursor, now, forwardChunk); ok && start.Before(gapLimit) {
+			if end.After(gapLimit) {
+				end = gapLimit
+			}
+			if end.After(start) {
+				if err := s.repo.RecomputeRange(ctx, start, end); err != nil {
+					logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] forward catch-up failed %s..%s: %v", start, end, err)
+					return
+				}
+				if end.Before(gapLimit) {
+					s.mu.Lock()
+					s.gapCursor = end
+					s.mu.Unlock()
+					return
+				}
+			}
+		}
+		// This phase reached its limit. Promote the older hole, if any,
+		// and leave it for the next tick so this one stays inside 55s.
 		s.mu.Lock()
+		if !s.holeCursor.IsZero() {
+			s.gapCursor = s.holeCursor
+			s.gapLimit = now.Add(-channelMonitorV2LiveBoard)
+			s.holeCursor = time.Time{}
+			s.mu.Unlock()
+			return
+		}
+		s.gapCursor = time.Time{}
+		s.gapLimit = time.Time{}
 		s.liveSeeded = false
 		s.mu.Unlock()
 	}

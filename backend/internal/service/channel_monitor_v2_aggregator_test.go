@@ -88,43 +88,45 @@ func (r *channelMonitorV2CatchupRepo) RecomputeRange(_ context.Context, start, e
 	return nil
 }
 
-func TestChannelMonitorV2AggregatorFillsGapAfterLiveSeed(t *testing.T) {
+func TestChannelMonitorV2AggregatorFillsRecentBoardBeforeAncientHole(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
-	through := now.Add(-3*time.Hour - 5*time.Minute)
+	through := now.Add(-30 * time.Hour)
 	repo := &channelMonitorV2CatchupRepo{
 		watermark: ChannelMonitorV2AggregationWatermark{
 			DataThrough:    through,
 			BackfillCursor: now.Add(-91 * 24 * time.Hour),
 			HasData:        true,
 		},
-		failAtStart: through,
 	}
 	s := NewChannelMonitorV2Aggregator(repo, nil, nil)
 
 	s.runOnce()
-	require.Len(t, repo.ranges, 2)
-	seed, failedChunk := repo.ranges[0], repo.ranges[1]
-	require.Equal(t, 2*time.Hour, seed.end.Sub(seed.start))
+	require.Len(t, repo.ranges, 1)
+	seed := repo.ranges[0]
+	require.Equal(t, channelMonitorV2CatchupMaxChunk, seed.end.Sub(seed.start))
 	require.Equal(t, seed.end, repo.watermark.DataThrough)
-	require.Equal(t, channelMonitorV2RecomputeRange{through, through.Add(30 * time.Minute)}, failedChunk)
 
+	repo.failAtStart = seed.end.Add(-channelMonitorV2LiveBoard)
 	s.runOnce()
-	require.Len(t, repo.ranges, 3)
-	require.Equal(t, failedChunk, repo.ranges[2])
+	require.Len(t, repo.ranges, 2, "a fresh edge is not recomputed on the next catch-up tick")
+	failed := repo.ranges[1]
+	require.Equal(t, channelMonitorV2RecomputeRange{seed.end.Add(-channelMonitorV2LiveBoard), seed.end.Add(-channelMonitorV2LiveBoard + channelMonitorV2CatchupMaxChunk)}, failed)
 
+	s.edgeRefreshedAt = time.Now().Add(-6 * time.Minute)
 	s.runOnce()
 	require.Len(t, repo.ranges, 4)
-	require.Equal(t, channelMonitorV2RecomputeRange{through.Add(30 * time.Minute), through.Add(time.Hour)}, repo.ranges[3])
+	require.Equal(t, channelMonitorV2RecentOverlap, repo.ranges[2].end.Sub(repo.ranges[2].start))
+	require.Equal(t, failed, repo.ranges[3])
 
+	s.edgeRefreshedAt = time.Now().Add(-6 * time.Minute)
 	s.runOnce()
 	require.Len(t, repo.ranges, 6)
-	lastChunk, overlap := repo.ranges[4], repo.ranges[5]
-	require.Equal(t, channelMonitorV2RecomputeRange{through.Add(time.Hour), overlap.end.Add(-2 * time.Hour)}, lastChunk)
-	require.Equal(t, 10*time.Minute, overlap.end.Sub(overlap.start))
+	require.Equal(t, channelMonitorV2RecomputeRange{seed.end.Add(-60 * time.Minute), seed.end.Add(-channelMonitorV2CatchupMaxChunk)}, repo.ranges[5])
 
+	s.edgeRefreshedAt = time.Now().Add(-6 * time.Minute)
 	s.runOnce()
-	require.Len(t, repo.ranges, 7)
-	require.Equal(t, 10*time.Minute, repo.ranges[6].end.Sub(repo.ranges[6].start))
+	require.Len(t, repo.ranges, 8)
+	require.Equal(t, channelMonitorV2RecomputeRange{through, through.Add(channelMonitorV2CatchupMaxChunk)}, repo.ranges[7])
 }
 
 func TestChannelMonitorV2MaxChunkForDepth(t *testing.T) {
