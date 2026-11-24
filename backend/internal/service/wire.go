@@ -1231,9 +1231,11 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 }
 
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.
-// Passive aggregation runs when channel_monitor_enabled is true, mode is v2 or v3,
-// and at least one of channel_monitor_v2_config.enabled and channel_monitor_v3_config.enabled is true.
-// The V3 board reads these rollups, so disabling V2 config must not freeze them.
+// V3 runs this worker whenever channel_monitor_v3_config.enabled is true, and
+// does not read channel_monitor_v2_config, channel_monitor_enabled, or
+// channel_monitor_mode. V2 runs it only when the global monitor switch is on,
+// mode is v2, and channel_monitor_v2_config.enabled is true. Both paths reuse
+// the same rollup code because the V3 board reads those tables.
 // Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip Start (local demo with seeded facts).
 func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService) *ChannelMonitorV2Aggregator {
 	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)

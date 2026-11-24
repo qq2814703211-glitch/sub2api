@@ -168,24 +168,23 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 	for {
 		interval := time.Minute
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if !s.passiveAggregationAllowed(ctx) {
-			cancel()
-			if !s.wait(interval) {
-				return
+		// V3 owns its board. Its switch is channel_monitor_v3_config.enabled alone:
+		// not the V2 config row, and not channel_monitor_enabled / channel_monitor_mode.
+		// The rollup math is still the V2 recompute.
+		v3On := s.v3ConfigEnabled(ctx)
+		v2On := false
+		if v3On {
+			if s.settings != nil {
+				if secs := s.settings.GetChannelMonitorRuntime(ctx).DefaultIntervalSeconds; secs > 0 {
+					interval = time.Duration(secs) * time.Second
+				}
 			}
-			continue
-		}
-		v2On := true
-		if cfg, err := s.repo.GetConfig(ctx); err == nil {
-			v2On = cfg.Enabled
-			if cfg.RefreshIntervalSeconds > 0 {
-				interval = time.Duration(cfg.RefreshIntervalSeconds) * time.Second
-			}
-		}
-		var v3On bool
-		if s.db != nil {
-			if err := s.db.QueryRowContext(ctx, "SELECT enabled FROM channel_monitor_v3_config WHERE id = 1").Scan(&v3On); err != nil {
-				v3On = false
+		} else if s.passiveAggregationAllowed(ctx) {
+			if cfg, err := s.repo.GetConfig(ctx); err == nil {
+				v2On = cfg.Enabled
+				if cfg.RefreshIntervalSeconds > 0 {
+					interval = time.Duration(cfg.RefreshIntervalSeconds) * time.Second
+				}
 			}
 		}
 		cancel()
@@ -216,8 +215,23 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 	}
 }
 
+// channelMonitorAggregationWanted is true when either product needs rollups.
+// v3Enabled is only channel_monitor_v3_config.enabled. v2Enabled must already
+// be the V2 product switch (V2 mode and channel_monitor_v2_config.enabled);
+// a closed V2 switch must not be passed in as true just because V3 is on.
 func channelMonitorAggregationWanted(v2Enabled, v3Enabled bool) bool {
-	return v2Enabled || v3Enabled
+	return v3Enabled || v2Enabled
+}
+
+func (s *ChannelMonitorV2Aggregator) v3ConfigEnabled(ctx context.Context) bool {
+	if s == nil || s.db == nil {
+		return false
+	}
+	var enabled bool
+	if err := s.db.QueryRowContext(ctx, "SELECT enabled FROM channel_monitor_v3_config WHERE id = 1").Scan(&enabled); err != nil {
+		return false
+	}
+	return enabled
 }
 
 func channelMonitorForwardCatchup(dataThrough, now time.Time, chunk time.Duration) (start, end time.Time, ok bool) {
