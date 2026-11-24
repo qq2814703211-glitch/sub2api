@@ -82,6 +82,32 @@ func DefaultStrongKeywords() []string {
 }
 func DefaultWeakKeywords() []string { return []string{"Key", "密钥", "您好"} }
 
+// siteList 在 config.yaml 的 site 段写了非空名单时用文件里的值，不再看后台设置。
+func siteList(fromFile, fromSettings []string) []string {
+	if len(fromFile) == 0 {
+		return fromSettings
+	}
+	out := make([]string, len(fromFile))
+	copy(out, fromFile)
+	return out
+}
+
+func cfgSitePrefixes() []string {
+	cfg := config.Current()
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Site.PoisonUpstreamPrefixes
+}
+
+func cfgSiteVeto() []string {
+	cfg := config.Current()
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Site.PoisonVetoKeywords
+}
+
 // SettingsFetcher 返回当前生效的配置快照。由接线层注入，避免本包依赖 service。
 type SettingsFetcher func() (map[string]string, error)
 
@@ -162,7 +188,7 @@ func parse(values map[string]string) *Snapshot {
 	}
 	snap.SharedEnabled = snap.Enabled
 
-	veto := parseList(get, SettingKeywordsVeto, DefaultVetoKeywords)
+	veto := siteList(cfgSiteVeto(), parseList(get, SettingKeywordsVeto, DefaultVetoKeywords))
 	strong := parseList(get, SettingKeywordsStrong, DefaultStrongKeywords)
 	weak := parseList(get, SettingKeywordsWeak, DefaultWeakKeywords)
 	threshold := parseInt(get, SettingThreshold, 3)
@@ -176,7 +202,7 @@ func parse(values map[string]string) *Snapshot {
 		Threshold:       threshold,
 		HeadBufferRunes: headBuffer,
 	})
-	snap.Scope = NewScope(parseList(get, SettingUpstreamPrefixes, DefaultUpstreamPrefixes), true)
+	snap.Scope = NewScope(siteList(cfgSitePrefixes(), parseList(get, SettingUpstreamPrefixes, DefaultUpstreamPrefixes)), true)
 
 	snap.RotateMax = parseInt(get, SettingRotateMax, 3)
 	if snap.RotateMax < 0 {

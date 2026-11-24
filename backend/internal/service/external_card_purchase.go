@@ -41,13 +41,13 @@ func ValidateExternalCardPurchaseURL(raw string) error {
 }
 
 func externalCardPurchaseURL(raw string) string {
-	if value := strings.TrimSpace(raw); value != "" {
-		return value
-	}
 	if cfg := config.Current(); cfg != nil {
 		if value := strings.TrimSpace(cfg.Site.ExternalCardPurchaseURL); value != "" {
 			return value
 		}
+	}
+	if value := strings.TrimSpace(raw); value != "" {
+		return value
 	}
 	return ExternalCardPurchaseDefaultURL
 }

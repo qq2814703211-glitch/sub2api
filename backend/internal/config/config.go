@@ -116,8 +116,8 @@ type Config struct {
 	SimpleModeKeyRateLimitEnabled bool `mapstructure:"simple_mode_key_rate_limit_enabled" yaml:"simple_mode_key_rate_limit_enabled"`
 }
 
-// SiteConfig 是部署时唯一要改的站点段。源码不写死对外地址、购卡地址和防投毒上游。
-// 留空时：改写接口用浏览器当前站点；购卡没有编译期默认地址；防投毒不带上游名单。
+// SiteConfig 是部署时唯一要改的站点段，写在正在使用的 config.yaml 里。
+// 非空项覆盖后台设置里的同名值。留空时：改写接口用浏览器当前站点；购卡用后台已存地址；防投毒不带上游名单。
 type SiteConfig struct {
 	RewriteAPIBaseURL       string   `mapstructure:"rewrite_api_base_url"`
 	ExternalCardPurchaseURL string   `mapstructure:"external_card_purchase_url"`

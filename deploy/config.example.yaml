@@ -7,10 +7,10 @@
 # Documentation / 文档: https://github.com/Wei-Shaw/sub2api
 
 # =============================================================================
-# 部署站点（只改这一段）
-# 对外改写地址、默认购卡地址、防投毒上游和一票否决词都在这里。
-# 不要改源码。留空表示：改写跟浏览器当前站点、购卡无默认地址、防投毒无上游名单。
-# 环境变量：SITE_REWRITE_API_BASE_URL、SITE_EXTERNAL_CARD_PURCHASE_URL、
+# 部署站点。正在跑的那份 config.yaml 只改这一段，改完重启。
+# 非空时覆盖后台设置里保存的同名项，不用进后台逐项改，也不用改源码。
+# 留空：改写跟浏览器当前站点；购卡先用后台已存地址，没有才用示例地址；防投毒不带上游名单。
+# 环境变量（可选，盖过本文件）：SITE_REWRITE_API_BASE_URL、SITE_EXTERNAL_CARD_PURCHASE_URL、
 # SITE_POISON_UPSTREAM_PREFIXES（逗号分隔）、SITE_POISON_VETO_KEYWORDS（逗号分隔）。
 # =============================================================================
 site:
