@@ -63,9 +63,13 @@ type ChannelMonitorV2Aggregator struct {
 	cursorLoaded bool
 	// hasAggregated is true once any recompute in this process (or durable data) exists.
 	hasAggregated bool
-	unsub         func()
-	ctx           context.Context
-	cancel        context.CancelFunc
+	// gapCursor is the next minute to fill during a stall recovery, or zero.
+	gapCursor time.Time
+	// liveSeeded records a successful live-window recompute for the current stall.
+	liveSeeded bool
+	unsub      func()
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 func NewChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settings channelMonitorRuntimeReader) *ChannelMonitorV2Aggregator {
@@ -157,19 +161,26 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 			}
 			continue
 		}
+		v2On := true
 		if cfg, err := s.repo.GetConfig(ctx); err == nil {
-			if !cfg.Enabled {
-				cancel()
-				if !s.wait(interval) {
-					return
-				}
-				continue
-			}
+			v2On = cfg.Enabled
 			if cfg.RefreshIntervalSeconds > 0 {
 				interval = time.Duration(cfg.RefreshIntervalSeconds) * time.Second
 			}
 		}
+		var v3On bool
+		if s.db != nil {
+			if err := s.db.QueryRowContext(ctx, "SELECT enabled FROM channel_monitor_v3_config WHERE id = 1").Scan(&v3On); err != nil {
+				v3On = false
+			}
+		}
 		cancel()
+		if !channelMonitorAggregationWanted(v2On, v3On) {
+			if !s.wait(interval) {
+				return
+			}
+			continue
+		}
 		s.runOnce()
 		// Hard gate: never compress bootstrap to multi-Hz ticks. Soft gate: on
 		// repeated failures raise the wait floor (exponential backoff).
@@ -183,6 +194,26 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 			return
 		}
 	}
+}
+
+func channelMonitorAggregationWanted(v2Enabled, v3Enabled bool) bool {
+	return v2Enabled || v3Enabled
+}
+
+func channelMonitorForwardCatchup(dataThrough, now time.Time, chunk time.Duration) (start, end time.Time, ok bool) {
+	dataThrough = dataThrough.UTC().Truncate(time.Minute)
+	now = now.UTC().Truncate(time.Minute)
+	if dataThrough.IsZero() || !dataThrough.Before(now.Add(-channelMonitorV2RecentOverlap)) {
+		return time.Time{}, time.Time{}, false
+	}
+	if chunk <= 0 {
+		chunk = channelMonitorV2MinBackfillChunk
+	}
+	start, end = dataThrough, dataThrough.Add(chunk)
+	if end.After(now) {
+		end = now
+	}
+	return start, end, end.After(start)
 }
 
 func (s *ChannelMonitorV2Aggregator) passiveAggregationAllowed(ctx context.Context) bool {
@@ -254,10 +285,66 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 
-	// Always refresh the trailing overlap so late usage/error writes land in 1m facts.
+	wm, err := s.repo.GetAggregationWatermark(ctx)
+	if err != nil {
+		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] load watermark failed: %v", err)
+		return
+	}
+	s.mu.Lock()
+	gapCursor := s.gapCursor
+	liveSeeded := s.liveSeeded
+	forwardChunk := s.backfillChunk
+	s.mu.Unlock()
+	if forwardChunk < channelMonitorV2MinBackfillChunk {
+		forwardChunk = channelMonitorV2MinBackfillChunk
+	}
+	forwardChunk = min(forwardChunk, 30*time.Minute)
+
+	liveStart := now.Add(-channelMonitorV2BootstrapFirst)
+	if !liveSeeded && wm != nil {
+		// Capture the old watermark before the live seed advances data_through to now.
+		if gapStart, _, stale := channelMonitorForwardCatchup(wm.DataThrough, now, forwardChunk); stale {
+			if err := s.repo.RecomputeRange(ctx, liveStart, now); err != nil {
+				logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] live aggregation seed failed: %v", err)
+				return
+			}
+			gapCursor, liveSeeded = gapStart, true
+			s.mu.Lock()
+			s.gapCursor, s.liveSeeded = gapCursor, liveSeeded
+			s.mu.Unlock()
+		}
+	}
+	if !gapCursor.IsZero() {
+		// Keep walking the original hole even after the durable watermark is fresh.
+		if start, end, ok := channelMonitorForwardCatchup(gapCursor, now, forwardChunk); ok && start.Before(liveStart) {
+			if end.After(liveStart) {
+				end = liveStart
+			}
+			if err := s.repo.RecomputeRange(ctx, start, end); err != nil {
+				logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] forward catch-up failed %s..%s: %v", start, end, err)
+				return
+			}
+			if end.Before(liveStart) {
+				s.mu.Lock()
+				s.gapCursor = end
+				s.mu.Unlock()
+				return
+			}
+		}
+		s.mu.Lock()
+		s.gapCursor = time.Time{}
+		s.mu.Unlock()
+	}
+
+	// Refresh the trailing overlap so late usage/error writes land in 1m facts.
 	if err := s.repo.RecomputeRange(ctx, now.Add(-channelMonitorV2RecentOverlap), now); err != nil {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
 		return
+	}
+	if liveSeeded {
+		s.mu.Lock()
+		s.liveSeeded = false
+		s.mu.Unlock()
 	}
 
 	// Phase 2: walk history backward at most one chunk per tick until retention max (90d).
