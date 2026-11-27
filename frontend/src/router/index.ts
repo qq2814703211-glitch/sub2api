@@ -187,14 +187,14 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/image-studio',
-    alias: ['/imagegen'],
-    name: 'ImageGen',
-    component: () => import('@/views/ImageGenView.vue'),
+    path: '/creative-plaza',
+    alias: ['/image-studio', '/imagegen'],
+    name: 'CreativePlaza',
+    component: () => import('@/views/CreativePlazaView.vue'),
     meta: {
       requiresAuth: true,
-      title: 'Image Studio',
-      titleKey: 'imagegen.title'
+      title: 'Creative Plaza',
+      titleKey: 'creative.title'
     }
   },
 

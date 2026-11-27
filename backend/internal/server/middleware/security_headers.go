@@ -71,6 +71,11 @@ var requiredCSPDirectiveValues = []struct {
 	{"frame-src", TencentCaptchaGlobalDomain},
 	{"frame-src", TencentCaptchaPrehandleDomain},
 	{"worker-src", TencentCaptchaWorkerSource},
+	// 创意广场在浏览器本机播放/抽帧本地视频（blob:/data:）与生成视频（https:）需要放开 media-src。
+	{"media-src", "'self'"},
+	{"media-src", "data:"},
+	{"media-src", "blob:"},
+	{"media-src", "https:"},
 	{"script-src", StripeDomain},
 	{"frame-src", StripeDomain},
 	{"script-src", AirwallexStaticDomain},

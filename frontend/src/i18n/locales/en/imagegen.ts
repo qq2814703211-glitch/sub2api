@@ -1,7 +1,7 @@
 export default {
   imagegen: {
-    title: 'Image Studio',
-    subtitle: 'Creative image generation',
+    title: 'Creative Plaza',
+    subtitle: 'Quick Image Studio',
     intro:
       'Create a token on the in-app "API Keys" page. History stays in this browser and the server never stores generated images, so download what you keep.',
 

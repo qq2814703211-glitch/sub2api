@@ -6,6 +6,7 @@ import dashboard from './dashboard'
 import channelMonitorV2 from './channelMonitorV2'
 import channelMonitorV3 from './channelMonitorV3'
 import batchImage from './batchImage'
+import creative from './creative'
 import imagegen from './imagegen'
 import groupSignals from './groupSignals'
 import videoBilling from './videoBilling'
@@ -25,6 +26,7 @@ export default {
   ...channelMonitorV2,
   ...channelMonitorV3,
   ...batchImage,
+  ...creative,
   ...imagegen,
   ...groupSignals,
   admin,
