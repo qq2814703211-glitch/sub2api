@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { setLocale, supportedLocales, translate } from '../../../../toonflow/upstream/packages/i18n/src/index'
 import {
+  createPluginTranslator,
+  createScopedPluginTranslator,
+  ensurePluginI18nLoaded,
+} from '../../../../toonflow/runtime/pluginI18n'
+import {
   DEFAULT_WORKSPACE_DIR,
   ensureSeeded,
   joinPath,
@@ -71,6 +76,56 @@ describe('Toonflow browser-native local runtime', () => {
     setLocale('pt')
     expect(translate('插件市场')).not.toBe('插件市场')
     setLocale('zh-CN')
+  })
+
+  it('loads and merges per-package 22-locale plugin dictionaries for imageNode, trumanMap, shared deps, and tools', async () => {
+    try {
+      setLocale('ja')
+      await ensurePluginI18nLoaded('imageNode', 'ja')
+      await ensurePluginI18nLoaded('trumanMap', 'ja')
+
+      const imageTranslator = createScopedPluginTranslator('imageNode')
+      expect(imageTranslator.translate('生成720°全景图')).toBe('720°のパノラマを生成')
+      expect(imageTranslator.translate('生成360°环绕图')).toBe('360°サラウンド画像を生成')
+      expect(imageTranslator.translate('预览720°全景图')).toBe('720° パノラマをプレビュー')
+      expect(imageTranslator.translate('预览360°环绕图')).toBe('360°サラウンド画像をプレビュー')
+      // Fallback from imageNode -> host catalog
+      expect(imageTranslator.translate('插件市场')).toBe('プラグインマーケット')
+
+      const trumanTranslator = createScopedPluginTranslator('trumanMap')
+      expect(trumanTranslator.translate('素材')).toBe('資産')
+      expect(trumanTranslator.translate('画笔')).toBe('ブラシ')
+      expect(trumanTranslator.translate('演绎')).toBe('パフォーマンス')
+      expect(trumanTranslator.translate('按剧本一键预演')).toBe('スクリプトからワンクリックでプリビズ')
+      expect(trumanTranslator.translate('打开场景编辑器')).toBe('シーンエディタを開く')
+
+      // Shared node components (mediaToolDialog / cascadeMenuItems) can translate node tool labels
+      const sharedTranslator = createScopedPluginTranslator('nodeShared')
+      expect(sharedTranslator.translate('搜索画布素材')).not.toBe('搜索画布素材')
+      expect(sharedTranslator.translate('生成720°全景图')).toBe('720°のパノラマを生成')
+
+      // Tool UI scopes (askUser & canvas)
+      const askUserTranslator = createScopedPluginTranslator('askUser')
+      expect(askUserTranslator.translate('提交回答')).not.toBe('提交回答')
+
+      // Custom plugin host translator respects own catalog first, then falls back to shared/host catalogs
+      const customTranslator = createPluginTranslator({
+        ja: { 自定义按钮: 'カスタムボタン' },
+      })
+      expect(customTranslator.translate('自定义按钮')).toBe('カスタムボタン')
+      expect(customTranslator.translate('生成720°全景图')).toBe('720°のパノラマを生成')
+      expect(customTranslator.translate('插件市场')).toBe('プラグインマーケット')
+
+      // Verify additional non-zh/en locales (pt & ar) also resolve node & trumanMap dictionaries
+      for (const code of ['pt', 'ar', 'ko', 'ru'] as const) {
+        setLocale(code)
+        await ensurePluginI18nLoaded('trumanMap', code)
+        expect(imageTranslator.translate('生成720°全景图')).not.toBe('生成720°全景图')
+        expect(trumanTranslator.translate('按剧本一键预演')).not.toBe('按剧本一键预演')
+      }
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('seeds browser VFS workspace, reads/writes files, lists assets, and exports ZIP', async () => {

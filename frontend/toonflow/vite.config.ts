@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +125,199 @@ function toonflowI18nTransformPlugin(): Plugin {
   };
 }
 
+const SCOPED_PLUGIN_I18N_PREFIX = "\0toonflow-plugin-i18n:";
+const PLUGIN_I18N_LOADER_VIRTUAL_ID = "\0toonflow-plugin-i18n-loader";
+
+const NON_DEFAULT_LOCALE_FILES: ReadonlyArray<readonly [string, string]> = [
+  ["zh-TW", "zhTw"],
+  ["en", "en"],
+  ["ja", "ja"],
+  ["ru", "ru"],
+  ["vi", "vi"],
+  ["th", "th"],
+  ["ko", "ko"],
+  ["hi", "hi"],
+  ["id", "id"],
+  ["ms", "ms"],
+  ["fil", "fil"],
+  ["bn", "bn"],
+  ["ur", "ur"],
+  ["ta", "ta"],
+  ["te", "te"],
+  ["mr", "mr"],
+  ["pa", "pa"],
+  ["ar", "ar"],
+  ["fa", "fa"],
+  ["tr", "tr"],
+  ["pt", "pt"],
+];
+
+const CORE_PLUGIN_I18N_DIRS: ReadonlyArray<readonly [string, string]> = [
+  ["nodeScaffold", "nodeScaffold/i18n"],
+  ["nodeShared", "nodeShared/i18n"],
+  ["textNode", "nodes/textNode/i18n"],
+  ["imageNode", "nodes/imageNode/i18n"],
+  ["imageGenerationNode", "nodes/imageGenerationNode/i18n"],
+  ["videoNode", "nodes/videoNode/i18n"],
+  ["videoGenerationNode", "nodes/videoGenerationNode/i18n"],
+  ["audioNode", "nodes/audioNode/i18n"],
+  ["audioGenerationNode", "nodes/audioGenerationNode/i18n"],
+  ["frameAnalysisNode", "nodes/frameAnalysisNode/i18n"],
+  ["askUser", "tools/askUser/i18n"],
+  ["canvas", "tools/canvas/i18n"],
+];
+
+function buildCoreLocalePayload(fileName: string): string {
+  const bundle: Record<string, Record<string, string>> = {};
+  for (const [scope, relDir] of CORE_PLUGIN_I18N_DIRS) {
+    const raw = readFileSync(resolve(pkgsDir, relDir, `${fileName}.json`), "utf8");
+    bundle[scope] = JSON.parse(raw) as Record<string, string>;
+  }
+  return JSON.stringify(bundle);
+}
+
+function buildTrumanMapLocalePayload(fileName: string): string {
+  const raw = readFileSync(resolve(pkgsDir, "nodes/trumanMap/i18n", `${fileName}.json`), "utf8");
+  return JSON.stringify(JSON.parse(raw));
+}
+
+function shortContentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 8);
+}
+
+function detectPluginI18nScope(importer?: string): string | undefined {
+  if (!importer) return undefined;
+  const normalized = importer.replaceAll("\\", "/").split("?")[0] ?? "";
+  const nodeMatch = normalized.match(/\/toonflow\/upstream\/packages\/nodes\/([^/]+)\//);
+  if (nodeMatch?.[1]) return nodeMatch[1];
+  if (/\/toonflow\/upstream\/packages\/nodeShared\//.test(normalized)) return "nodeShared";
+  if (/\/toonflow\/upstream\/packages\/nodeScaffold\//.test(normalized)) return "nodeScaffold";
+  const toolMatch = normalized.match(/\/toonflow\/upstream\/packages\/tools\/(askUser|canvas)\//);
+  if (toolMatch?.[1]) return toolMatch[1];
+  return undefined;
+}
+
+// Route "@toonflow/i18n/vue" per upstream plugin/shared package so each node & tool
+// resolves its own 22-locale dictionary + workspace deps + host fallback, matching upstream pluginI18n.
+// Emit plugin i18n JSON dictionaries as static content-hashed assets (fetched via native Response.json())
+// so Rollup never parses ~320k JSON keys as JS AST during build.
+function toonflowPluginI18nPlugin(): Plugin {
+  const hostVueI18nPath = resolve(pkgsDir, "i18n/src/vue.ts").replaceAll("\\", "/");
+  const pluginI18nRuntimePath = resolve(rootDir, "runtime/pluginI18n.ts").replaceAll("\\", "/");
+
+  let assetManifest:
+    | {
+        core: Record<string, string>;
+        trumanMap: Record<string, string>;
+        byAssetPath: Map<string, { kind: "core" | "trumanMap"; fileName: string }>;
+      }
+    | undefined;
+
+  function ensureAssetManifest() {
+    if (assetManifest) return assetManifest;
+    const core: Record<string, string> = {};
+    const trumanMap: Record<string, string> = {};
+    const byAssetPath = new Map<string, { kind: "core" | "trumanMap"; fileName: string }>();
+
+    for (const [localeCode, fileName] of NON_DEFAULT_LOCALE_FILES) {
+      const corePayload = buildCoreLocalePayload(fileName);
+      const coreAsset = `assets/i18n-plugins-${fileName}-${shortContentHash(corePayload)}.json`;
+      core[localeCode] = coreAsset;
+      byAssetPath.set(coreAsset, { kind: "core", fileName });
+
+      const trumanPayload = buildTrumanMapLocalePayload(fileName);
+      const trumanAsset = `assets/i18n-trumanMap-${fileName}-${shortContentHash(trumanPayload)}.json`;
+      trumanMap[localeCode] = trumanAsset;
+      byAssetPath.set(trumanAsset, { kind: "trumanMap", fileName });
+    }
+
+    assetManifest = { core, trumanMap, byAssetPath };
+    return assetManifest;
+  }
+
+  return {
+    name: "toonflowPluginScopedI18n",
+    enforce: "pre",
+    buildStart() {
+      ensureAssetManifest();
+    },
+    configureServer(server) {
+      const manifest = ensureAssetManifest();
+      server.middlewares.use((req, res, next) => {
+        const cleanUrl = (req.url ?? "").split("?")[0] ?? "";
+        const relPath = cleanUrl.replace(/^\/toonflow\//, "").replace(/^\/+/, "");
+        const hit = manifest.byAssetPath.get(relPath);
+        if (!hit) {
+          next();
+          return;
+        }
+        const payload =
+          hit.kind === "core" ? buildCoreLocalePayload(hit.fileName) : buildTrumanMapLocalePayload(hit.fileName);
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(payload);
+      });
+    },
+    resolveId(id, importer) {
+      if (id === "@toonflow/i18n/vue") {
+        const scope = detectPluginI18nScope(importer);
+        if (scope) return `${SCOPED_PLUGIN_I18N_PREFIX}${scope}`;
+        return hostVueI18nPath;
+      }
+      if (
+        (id === "./pluginI18nLoader" || id === "./pluginI18nLoader.ts") &&
+        importer?.replaceAll("\\", "/").split("?")[0] === pluginI18nRuntimePath
+      ) {
+        return PLUGIN_I18N_LOADER_VIRTUAL_ID;
+      }
+      return undefined;
+    },
+    load(id) {
+      if (id === PLUGIN_I18N_LOADER_VIRTUAL_ID) {
+        const manifest = ensureAssetManifest();
+        return [
+          `const CORE_ASSETS = ${JSON.stringify(manifest.core)};`,
+          `const TRUMAN_MAP_ASSETS = ${JSON.stringify(manifest.trumanMap)};`,
+          `const base = (import.meta.env.BASE_URL || "/toonflow/").replace(/\\/+$/, "") + "/";`,
+          `async function fetchJson(relPath) {`,
+          `  if (!relPath) return undefined;`,
+          `  const resp = await fetch(base + relPath);`,
+          `  if (!resp.ok) throw new Error("Failed to load i18n asset: " + relPath + " (" + resp.status + ")");`,
+          `  return await resp.json();`,
+          `}`,
+          `export async function loadCorePluginLocaleBundle(targetLocale) {`,
+          `  const data = await fetchJson(CORE_ASSETS[targetLocale]);`,
+          `  return data && typeof data === "object" ? data : {};`,
+          `}`,
+          `export async function loadTrumanMapLocaleCatalog(targetLocale) {`,
+          `  const data = await fetchJson(TRUMAN_MAP_ASSETS[targetLocale]);`,
+          `  return data && typeof data === "object" ? data : undefined;`,
+          `}`,
+        ].join("\n");
+      }
+      if (!id.startsWith(SCOPED_PLUGIN_I18N_PREFIX)) return;
+      const scope = id.slice(SCOPED_PLUGIN_I18N_PREFIX.length);
+      return [
+        `export { locale, setLocale, supportedLocales, normalizeLocale, detectLocale, msg, markMessages } from ${JSON.stringify(hostVueI18nPath)};`,
+        `import { createPluginTranslator, createScopedPluginTranslator } from ${JSON.stringify(pluginI18nRuntimePath)};`,
+        `export { createPluginTranslator as createTranslator };`,
+        `export const { translate, t } = createScopedPluginTranslator(${JSON.stringify(scope)});`,
+      ].join("\n");
+    },
+    generateBundle() {
+      const manifest = ensureAssetManifest();
+      for (const [fileName, entry] of manifest.byAssetPath.entries()) {
+        const source =
+          entry.kind === "core" ? buildCoreLocalePayload(entry.fileName) : buildTrumanMapLocalePayload(entry.fileName);
+        this.emitFile({
+          type: "asset",
+          fileName,
+          source,
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: rootDir,
   base: "/toonflow/",
@@ -178,8 +372,7 @@ export default defineConfig({
       // Upstream @/ alias -> apps/web/src
       { find: "@", replacement: webSrcDir },
 
-      // @toonflow/i18n
-      { find: "@toonflow/i18n/vue", replacement: resolve(pkgsDir, "i18n/src/vue.ts") },
+      // @toonflow/i18n ("@toonflow/i18n/vue" is resolved per-package by toonflowPluginI18nPlugin)
       { find: "@toonflow/i18n/elementPlus", replacement: resolve(pkgsDir, "i18n/src/elementPlus.ts") },
       { find: "@toonflow/i18n/errors", replacement: resolve(pkgsDir, "i18n/src/errors.ts") },
       { find: "@toonflow/i18n/transform", replacement: resolve(pkgsDir, "i18n/src/transform.ts") },
@@ -341,6 +534,7 @@ export default defineConfig({
   },
   plugins: [
     toonflowJsonImportAttrPlugin(),
+    toonflowPluginI18nPlugin(),
     toonflowI18nTransformPlugin(),
     vue(),
     components({

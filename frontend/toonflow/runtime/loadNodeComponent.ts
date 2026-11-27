@@ -8,7 +8,8 @@ import * as threeRuntime from "three";
 import * as modelIcons from "@toonflow/model-icons";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { createTranslator } from "@toonflow/i18n/vue";
+import { getLocale } from "@toonflow/i18n";
+import { createPluginTranslator, ensurePluginI18nLoaded } from "./pluginI18n";
 
 type NodeComponent = Exclude<NodeTypesObject[string], string>;
 
@@ -22,7 +23,7 @@ const requests = new Map<string, Promise<NodeComponent>>();
   three: threeRuntime,
   modelIcons,
   ai: { runAgentLoop, createAssistantMessageEventStream },
-  i18n: { createTranslator },
+  i18n: { createTranslator: createPluginTranslator },
 };
 
 const builtinNodeLoaders: Record<string, () => Promise<{ default: NodeComponent }>> = {
@@ -56,13 +57,14 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
     (Object.hasOwn(nodeWindow.toonflowNodes ?? {}, name) ? nodeWindow.toonflowNodes?.[name] : undefined);
   if (!force && cached && (typeof cached === "object" || typeof cached === "function")) {
     components.set(name, cached);
-    return Promise.resolve(cached);
+    return ensurePluginI18nLoaded(name, getLocale()).then(() => cached);
   }
   components.delete(name);
 
   const request = (async (): Promise<NodeComponent> => {
     const builtinLoader = builtinNodeLoaders[name];
     if (builtinLoader) {
+      await ensurePluginI18nLoaded(name, getLocale());
       if (name === "textNode" || name === "trumanMap") {
         await import("@/lib/tiptapHost");
       }

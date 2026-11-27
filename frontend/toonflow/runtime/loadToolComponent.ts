@@ -2,8 +2,9 @@ import * as vueRuntime from "vue";
 import * as elementPlusRuntime from "element-plus";
 import axios from "axios";
 import formCreate from "@form-create/element-ui";
-import { createTranslator } from "@toonflow/i18n/vue";
+import { getLocale } from "@toonflow/i18n";
 import type { Component } from "vue";
+import { createPluginTranslator, ensurePluginI18nLoaded } from "./pluginI18n";
 
 export {
   createBrowserAsr,
@@ -26,7 +27,7 @@ const toolWindow = window as typeof window & {
     elementPlus: typeof elementPlusRuntime;
     axios: typeof axios;
     formCreate: typeof formCreate;
-    i18n: { createTranslator: typeof createTranslator };
+    i18n: { createTranslator: typeof createPluginTranslator };
   };
   toonflowToolViews?: Record<string, Record<string, Component>>;
 };
@@ -35,7 +36,7 @@ toolWindow.toonflowToolHost = {
   elementPlus: elementPlusRuntime,
   axios,
   formCreate,
-  i18n: { createTranslator },
+  i18n: { createTranslator: createPluginTranslator },
 };
 
 const CANVAS_FOCUS_TOOLS = new Set([
@@ -68,19 +69,24 @@ export function getCachedToolComponent(toolName: string): Component | undefined 
 
 export async function loadToolComponent(toolName: string): Promise<Component | undefined> {
   const existing = cachedComponents.get(toolName);
-  if (existing) return existing;
+  if (existing) {
+    await ensurePluginI18nLoaded(toolName === "askUser" ? "askUser" : "canvas", getLocale());
+    return existing;
+  }
 
   const inflight = pendingLoads.get(toolName);
   if (inflight) return inflight;
 
   const promise = (async (): Promise<Component | undefined> => {
     if (toolName === "askUser") {
+      await ensurePluginI18nLoaded("askUser", getLocale());
       const mod = await import("@toonflow-upstream/packages/tools/askUser/src/questionCard.vue");
       const comp = vueRuntime.markRaw(mod.default);
       cachedComponents.set(toolName, comp);
       return comp;
     }
     if (CANVAS_FOCUS_TOOLS.has(toolName)) {
+      await ensurePluginI18nLoaded("canvas", getLocale());
       const mod = await import("@toonflow-upstream/packages/tools/canvas/src/nodeFocusCard.vue");
       const comp = vueRuntime.markRaw(mod.default);
       cachedComponents.set(toolName, comp);

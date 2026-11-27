@@ -1,10 +1,12 @@
 import { installBrowserRuntimeInterceptor } from "./interceptor";
+import { initPluginI18n } from "./pluginI18n";
 import { getHostContext, initSub2ApiBridge, subscribeHostContext, subscribeIncomingMedia } from "./sub2apiBridge";
 import { ASSETS_ROOT, ensureSeeded, joinPath, kvGet, vfsWriteBytes } from "./vfs";
 
 // 1. Install browser-native local API runtime BEFORE upstream Toonflow boots
 installBrowserRuntimeInterceptor();
 initSub2ApiBridge();
+initPluginI18n();
 
 // 2. Sync host theme & incoming Quick Image Studio media
 function applyHostTheme(theme: "dark" | "light") {
