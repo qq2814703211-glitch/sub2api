@@ -12,3 +12,7 @@ dist/
 # 忽略缓存
 .cache/
 .vite/
+
+# 忽略集成的上游 Toonflow Web 源码（由独立 Vite 配置构建）
+toonflow/upstream/
+patches/

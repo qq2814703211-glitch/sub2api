@@ -1,62 +1,75 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
-import { createI18n } from 'vue-i18n'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { createMemoryHistory, createRouter } from 'vue-router'
-
+import { createRouter, createMemoryHistory } from 'vue-router'
+import { createI18n } from 'vue-i18n'
 import CreativePlazaView from '@/views/CreativePlazaView.vue'
-import { resetMemoryStorageForTests } from '@/features/creative/storage'
-import zh from '@/i18n/locales/zh'
+import zhCreative from '@/i18n/locales/zh/creative'
+import enCreative from '@/i18n/locales/en/creative'
 
-vi.mock('@/components/layout/AppLayout.vue', () => ({
-  default: { name: 'AppLayout', template: '<div><slot /></div>' },
-}))
-
-vi.mock('@/api/keys', () => ({
+vi.mock('@/api', () => ({
   keysAPI: {
-    list: vi.fn(async () => ({
+    list: vi.fn().mockResolvedValue({
       items: [
         {
-          id: 11,
-          name: '创意密钥',
-          key: 'sk-test-creative-key',
+          id: 1,
+          name: 'Default Key',
+          key: 'sk-test-demo',
           status: 'active',
-          group: { id: 1, name: 'Grok', platform: 'grok' },
+          group: { id: 1, name: 'OpenAI', platform: 'openai' },
         },
       ],
-      total: 1,
-    })),
-    getById: vi.fn(async () => null),
+    }),
   },
 }))
 
-function makeI18n() {
+vi.mock('@/views/ImageGenView.vue', () => ({
+  default: {
+    name: 'ImageGenView',
+    props: { embedded: Boolean },
+    template: '<div data-test="stub-imagegen-view">Quick Image Studio</div>',
+  },
+}))
+
+vi.mock('@/components/layout/AppLayout.vue', () => ({
+  default: {
+    name: 'AppLayout',
+    template: '<div class="stub-app-layout"><slot /></div>',
+  },
+}))
+
+vi.mock('@/components/icons/Icon.vue', () => ({
+  default: {
+    name: 'Icon',
+    props: { name: String, size: String },
+    template: '<span class="stub-icon" />',
+  },
+}))
+
+function createTestI18n() {
   return createI18n({
     legacy: false,
     locale: 'zh',
-    fallbackLocale: 'zh',
-    messages: { zh },
+    messages: {
+      zh: zhCreative,
+      en: enCreative,
+    },
   })
 }
 
 async function mountAt(path: string) {
+  setActivePinia(createPinia())
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      {
-        path: '/creative-plaza',
-        alias: ['/image-studio', '/imagegen'],
-        name: 'CreativePlaza',
-        component: CreativePlazaView,
-      },
+      { path: '/creative-plaza', alias: ['/image-studio', '/imagegen'], component: CreativePlazaView },
     ],
   })
   await router.push(path)
   await router.isReady()
-
   const wrapper = mount(CreativePlazaView, {
     global: {
-      plugins: [makeI18n(), router],
+      plugins: [router, createTestI18n()],
     },
   })
   await flushPromises()
@@ -64,81 +77,41 @@ async function mountAt(path: string) {
 }
 
 describe('CreativePlazaView', () => {
-  let originalFetch: typeof globalThis.fetch
-
   beforeEach(() => {
-    setActivePinia(createPinia())
-    resetMemoryStorageForTests()
-    originalFetch = globalThis.fetch
-    globalThis.fetch = vi.fn(async () => {
-      return new Response(JSON.stringify({ data: [], templates: [] }), {
+    localStorage.clear()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-image-1' }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      })
-    }) as unknown as typeof globalThis.fetch
-    if (!('indexedDB' in globalThis)) {
-      Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: undefined })
-    }
-  })
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-    vi.restoreAllMocks()
-  })
-
-  it('mounts on /creative-plaza with Toonflow infinite canvas, local compute badge, and starter workflow', async () => {
-    const { wrapper } = await mountAt('/creative-plaza')
-
-    expect(wrapper.find('[data-test="creative-plaza-view"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="local-compute-badge"]').text()).toContain(
-      zh.creative.localComputeBadge,
+      }),
     )
-    expect(wrapper.find('[data-test="creative-canvas-stage"]').exists()).toBe(true)
-    // Default starter short-drama workflow comes with 4 connected nodes
-    expect(wrapper.find('[data-test="canvas-node-text"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="canvas-node-imageGen"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="canvas-node-videoGen"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="canvas-node-frameExtract"]').exists()).toBe(true)
-
-    wrapper.unmount()
   })
 
-  it('adds nodes from toolbar and switches across Canvas, Quick Image Studio, Storyboard, and Asset Library', async () => {
+  it('opens on the real Toonflow Web Studio iframe by default at /creative-plaza', async () => {
     const { wrapper } = await mountAt('/creative-plaza')
+    const iframe = wrapper.find('[data-test="toonflow-iframe"]')
+    expect(iframe.exists()).toBe(true)
+    expect(iframe.attributes('src')).toBe('/toonflow/index.html#/home')
+    expect(wrapper.find('[data-test="local-compute-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="toonflow-nav-trumanMap"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(false)
+  })
 
-    const beforeTextCount = wrapper.findAll('[data-test="canvas-node-text"]').length
-    await wrapper.find('[data-test="add-node-text"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.findAll('[data-test="canvas-node-text"]').length).toBe(beforeTextCount + 1)
+  it('defaults legacy /image-studio bookmark directly to Quick Image Studio tab', async () => {
+    const { wrapper } = await mountAt('/image-studio')
+    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="creative-tab-imagegen"]').attributes('aria-selected')).toBe('true')
+  })
 
-    // Switch to Storyboard tab
-    await wrapper.find('[data-test="creative-tab-storyboard"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="creative-storyboard-workspace"]').exists()).toBe(true)
+  it('toggles gateway key selector panel and switches tabs cleanly', async () => {
+    const { wrapper } = await mountAt('/creative-plaza')
+    expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(false)
+    await wrapper.find('[data-test="toggle-key-panel"]').trigger('click')
+    expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-select-text"]').exists()).toBe(true)
 
-    // Switch to Local Asset Library tab
-    await wrapper.find('[data-test="creative-tab-assets"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="creative-asset-library"]').exists()).toBe(true)
-
-    // Switch to Quick Image Studio tab — fused existing ImageGenView renders inside
     await wrapper.find('[data-test="creative-tab-imagegen"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-test="generation-key-select"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain(zh.imagegen.promptLabel)
-
-    wrapper.unmount()
-  })
-
-  it('opens legacy /image-studio route directly on the Quick Image Studio tab while keeping Creative Plaza tabs', async () => {
-    const { wrapper } = await mountAt('/image-studio')
-
-    expect(wrapper.find('[data-test="creative-tab-canvas"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="creative-tab-imagegen"]').attributes('aria-selected')).toBe(
-      'true',
-    )
-    expect(wrapper.find('[data-test="generation-key-select"]').exists()).toBe(true)
-
-    wrapper.unmount()
+    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(true)
   })
 })

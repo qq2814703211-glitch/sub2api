@@ -527,7 +527,7 @@ import { clearHistoryImages, writeRawHistory } from '@/features/imagegen/storage
 import { ACCEPTED_IMAGE_TYPES, copyImage, dataUrlToFile } from '@/features/imagegen/api'
 import { SIZE_GROUPS, STYLE_OPTIONS, useImageGen } from '@/features/imagegen/useImageGen'
 import type { GeneratedImage, ImageTemplate, QueueState, RetouchPreset } from '@/features/imagegen/types'
-import type { QuickImageBridgePayload } from '@/features/creative/types'
+import type { QuickImageBridgePayload } from '@/features/creative/toonflowHostBridge'
 
 withDefaults(
   defineProps<{

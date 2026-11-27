@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -964,6 +965,42 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestFrontendServerServesToonflowStaticHTML(t *testing.T) {
+	memFS := fstest.MapFS{
+		"index.html":          {Data: []byte("<!doctype html><title>Sub2API</title>")},
+		"toonflow/index.html": {Data: []byte("<!doctype html><title>Toonflow — 创意广场</title>")},
+		"toonflow/app.js":     {Data: []byte("console.log('toonflow')")},
+	}
+	cache := NewHTMLCache()
+	cache.SetBaseHTML(memFS["index.html"].Data)
+	server := &FrontendServer{
+		distFS:     memFS,
+		fileServer: http.FileServer(http.FS(memFS)),
+		baseHTML:   memFS["index.html"].Data,
+		cache:      cache,
+	}
+
+	router := gin.New()
+	router.Use(server.Middleware())
+
+	for _, path := range []string{"/toonflow", "/toonflow/", "/toonflow/index.html"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "path=%s", path)
+		assert.Contains(t, w.Header().Get("Content-Type"), "text/html", "path=%s", path)
+		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"), "path=%s", path)
+		assert.Contains(t, w.Body.String(), "Toonflow — 创意广场", "path=%s", path)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/toonflow/app.js", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "console.log('toonflow')")
 }
 
 // Tests for HTMLCache

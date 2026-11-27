@@ -508,6 +508,48 @@ func TestAddToDirective(t *testing.T) {
 	})
 }
 
+func TestSecurityHeadersToonflowFrameAdaptation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := config.CSPConfig{
+		Enabled: true,
+		Policy:  config.DefaultCSPPolicy,
+	}
+	mw := SecurityHeaders(cfg, nil)
+
+	t.Run("allows_sameorigin_framing_and_local_mcp_on_toonflow_static_routes", func(t *testing.T) {
+		for _, path := range []string{"/toonflow", "/toonflow/", "/toonflow/index.html", "/toonflow/assets/app.js"} {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+			mw(c)
+
+			assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"), "path=%s", path)
+			csp := w.Header().Get("Content-Security-Policy")
+			assert.Contains(t, csp, "frame-ancestors 'self'", "path=%s", path)
+			assert.NotContains(t, csp, "frame-ancestors 'none'", "path=%s", path)
+			assert.Contains(t, csp, "http://localhost:*", "path=%s", path)
+			assert.Contains(t, csp, "http://127.0.0.1:*", "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "script-src", "blob:"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "script-src", "'wasm-unsafe-eval'"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "connect-src", "blob:"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "connect-src", "data:"), "path=%s", path)
+		}
+	})
+
+	t.Run("keeps_deny_and_frame_ancestors_none_on_main_app_routes", func(t *testing.T) {
+		for _, path := range []string{"/", "/creative-plaza", "/dashboard"} {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+			mw(c)
+
+			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"), "path=%s", path)
+			csp := w.Header().Get("Content-Security-Policy")
+			assert.Contains(t, csp, "frame-ancestors 'none'", "path=%s", path)
+		}
+	})
+}
+
 // Benchmark tests
 func BenchmarkGenerateNonce(b *testing.B) {
 	for i := 0; i < b.N; i++ {
