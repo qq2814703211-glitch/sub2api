@@ -594,60 +594,75 @@ export async function streamChatCompletion(
   const tcAccumulator = new Map<number, { id: string; name: string; rawArgs: string }>();
   let usage = { input: 0, output: 0, total: 0 };
 
+  const processSseLine = (rawLine: string) => {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    try {
+      const chunk = JSON.parse(payload) as {
+        choices?: {
+          delta?: {
+            content?: string;
+            reasoning_content?: string;
+            reasoning?: string;
+            tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
+          };
+        }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+      };
+      if (chunk.usage) {
+        usage = {
+          input: chunk.usage.prompt_tokens ?? 0,
+          output: chunk.usage.completion_tokens ?? 0,
+          total: chunk.usage.total_tokens ?? 0,
+        };
+      }
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) return;
+      const thinkingDelta =
+        typeof delta.reasoning_content === "string" && delta.reasoning_content
+          ? delta.reasoning_content
+          : typeof delta.reasoning === "string" && delta.reasoning
+            ? delta.reasoning
+            : "";
+      if (thinkingDelta) {
+        thinking += thinkingDelta;
+        options.onThinkingDelta?.(thinkingDelta);
+      }
+      if (typeof delta.content === "string" && delta.content) {
+        text += delta.content;
+        options.onTextDelta?.(delta.content);
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          const existing = tcAccumulator.get(idx) ?? { id: tc.id || crypto.randomUUID(), name: "", rawArgs: "" };
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.name += tc.function.name;
+          if (tc.function?.arguments) existing.rawArgs += tc.function.arguments;
+          tcAccumulator.set(idx, existing);
+        }
+      }
+    } catch {
+      // ignore malformed SSE chunk
+    }
+  };
+
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
-      buffer += value;
+      if (value) buffer += value;
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        try {
-          const chunk = JSON.parse(payload) as {
-            choices?: {
-              delta?: {
-                content?: string;
-                reasoning_content?: string;
-                tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[];
-              };
-            }[];
-            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-          };
-          if (chunk.usage) {
-            usage = {
-              input: chunk.usage.prompt_tokens ?? 0,
-              output: chunk.usage.completion_tokens ?? 0,
-              total: chunk.usage.total_tokens ?? 0,
-            };
-          }
-          const delta = chunk.choices?.[0]?.delta;
-          if (!delta) continue;
-          if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-            thinking += delta.reasoning_content;
-            options.onThinkingDelta?.(delta.reasoning_content);
-          }
-          if (typeof delta.content === "string" && delta.content) {
-            text += delta.content;
-            options.onTextDelta?.(delta.content);
-          }
-          if (Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              const existing = tcAccumulator.get(idx) ?? { id: tc.id || crypto.randomUUID(), name: "", rawArgs: "" };
-              if (tc.id) existing.id = tc.id;
-              if (tc.function?.name) existing.name += tc.function.name;
-              if (tc.function?.arguments) existing.rawArgs += tc.function.arguments;
-              tcAccumulator.set(idx, existing);
-            }
-          }
-        } catch {
-          // ignore malformed SSE chunk
-        }
+      if (done && buffer.trim()) {
+        lines.push(buffer);
+        buffer = "";
       }
+      for (const rawLine of lines) {
+        processSseLine(rawLine);
+      }
+      if (done) break;
     }
   } finally {
     reader.releaseLock();

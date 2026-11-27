@@ -26,19 +26,19 @@ const requests = new Map<string, Promise<NodeComponent>>();
 };
 
 const builtinNodeLoaders: Record<string, () => Promise<{ default: NodeComponent }>> = {
-  textNode: () => import("../upstream/packages/nodes/textNode/src/index.vue") as Promise<{ default: NodeComponent }>,
-  imageNode: () => import("../upstream/packages/nodes/imageNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+  textNode: () => import("@toonflow-upstream/packages/nodes/textNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+  imageNode: () => import("@toonflow-upstream/packages/nodes/imageNode/src/index.vue") as Promise<{ default: NodeComponent }>,
   imageGenerationNode: () =>
-    import("../upstream/packages/nodes/imageGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
-  videoNode: () => import("../upstream/packages/nodes/videoNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+    import("@toonflow-upstream/packages/nodes/imageGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+  videoNode: () => import("@toonflow-upstream/packages/nodes/videoNode/src/index.vue") as Promise<{ default: NodeComponent }>,
   videoGenerationNode: () =>
-    import("../upstream/packages/nodes/videoGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
-  audioNode: () => import("../upstream/packages/nodes/audioNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+    import("@toonflow-upstream/packages/nodes/videoGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+  audioNode: () => import("@toonflow-upstream/packages/nodes/audioNode/src/index.vue") as Promise<{ default: NodeComponent }>,
   audioGenerationNode: () =>
-    import("../upstream/packages/nodes/audioGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+    import("@toonflow-upstream/packages/nodes/audioGenerationNode/src/index.vue") as Promise<{ default: NodeComponent }>,
   frameAnalysisNode: () =>
-    import("../upstream/packages/nodes/frameAnalysisNode/src/index.vue") as Promise<{ default: NodeComponent }>,
-  trumanMap: () => import("../upstream/packages/nodes/trumanMap/src/index.vue") as Promise<{ default: NodeComponent }>,
+    import("@toonflow-upstream/packages/nodes/frameAnalysisNode/src/index.vue") as Promise<{ default: NodeComponent }>,
+  trumanMap: () => import("@toonflow-upstream/packages/nodes/trumanMap/src/index.vue") as Promise<{ default: NodeComponent }>,
 };
 
 export function getNodeIcon(type?: string): Component | undefined {

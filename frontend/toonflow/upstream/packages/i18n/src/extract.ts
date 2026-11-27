@@ -1,0 +1,84 @@
+import { readdir, readFile, writeAtomic, mkdir } from "@toonflow/file";
+import { resolve, relative } from "node:path";
+import { parse } from "@babel/parser";
+import type { Node } from "@babel/types";
+import { parse as parseSfc } from "@vue/compiler-sfc";
+import { collectMessages } from "./transform";
+import { findWorkspaceDependencies } from "./plugin";
+import { escapeMessageText } from "./index";
+
+const root = resolve(import.meta.dirname, "../../..");
+const catalog = new Map<string, Set<string>>();
+const chinese = /[\u3400-\u9fff]/;
+function add(message: string, path: string) {
+  if (!chinese.test(message) || !message.trim()) return;
+  const locations = catalog.get(message) ?? new Set<string>();
+  locations.add(relative(root, path).replaceAll("\\", "/"));
+  catalog.set(message, locations);
+}
+async function scan(directory: string) {
+  for (const item of await readdir(directory, { withFileTypes: true })) {
+    const path = resolve(directory, item.name);
+    if (item.isDirectory()) { if (!["node_modules", "installer", "locales", "dist"].includes(item.name)) await scan(path); continue; }
+    if (!/\.(ts|vue)$/.test(item.name) || /(?:\.d\.ts|providerPrompt|systemPrompt)\./i.test(item.name) || /packages[\\/]ffmpeg[\\/]src[\\/]browser\.ts$/.test(path)) continue;
+    // 工具自身的文案由工具维护，不纳入宿主字典。
+    if (/apps[\\/]server[\\/]src[\\/](?:agent[\\/](?:tools[\\/](?!index\.ts$)|bridge[\\/]question\.ts$)|routes[\\/]browser[\\/])/.test(path)) continue;
+    const source = await readFile(path, "utf8");
+    if (/(?:apps[\\/]web|packages[\\/](?:multiTenant[\\/](?:adminWeb|userWeb)|providerWeb))/.test(path)) {
+      for (const message of collectMessages(source, path)) add(message, path);
+    }
+    const scripts = item.name.endsWith(".vue")
+      ? (() => { const { descriptor } = parseSfc(source); return [descriptor.script?.content, descriptor.scriptSetup?.content].filter(Boolean) as string[]; })()
+      : [source];
+    for (const script of scripts) {
+      const ast = parse(script, { sourceType: "module", plugins: ["typescript"] });
+      const backend = /(?:apps[\\/](?:server|desktop|mobile)|packages[\\/](?:mcp|ffmpeg))/.test(path)
+        || /packages[\\/]multiTenant[\\/](?!(?:adminWeb|userWeb)[\\/])/.test(path);
+      const visit = (node: Node, parents: Node[] = []) => {
+        const owner = [...parents].reverse().find(parent => parent.type === "VariableDeclarator" || parent.type === "ObjectProperty");
+        const name = owner?.type === "VariableDeclarator" && owner.id.type === "Identifier" ? owner.id.name
+          : owner?.type === "ObjectProperty" && owner.key.type === "Identifier" ? owner.key.name : "";
+        const protectedMessage = /(?:prompt|instructions|rawCode|sourceCode)/i.test(name);
+        if (node.type === "TaggedTemplateExpression" && node.tag.type === "Identifier" && ["t", "msg"].includes(node.tag.name)) {
+          add(node.quasi.quasis.map((part, index) => (node.quasi.expressions.length ? escapeMessageText(part.value.cooked ?? part.value.raw) : part.value.cooked ?? part.value.raw) + (index < node.quasi.expressions.length ? `{${index}}` : "")).join(""), path);
+        }
+        if (node.type === "CallExpression" && node.callee.type === "Identifier" && ["translate", "translateMessage"].includes(node.callee.name) && node.arguments[0]?.type === "StringLiteral") add(node.arguments[0].value, path);
+        // ACT: 服务端这里只提取候选字典，不改业务字符串；真正翻译仅发生于明确的系统文案出口。
+        if (!protectedMessage && backend && node.type === "StringLiteral" && node.value.length < 1200 && !node.value.includes("```")) {
+          const parent = parents.at(-1);
+          if (!(parent?.type === "ObjectProperty" && parent.key === node)) add(node.value, path);
+        }
+        for (const [key, value] of Object.entries(node)) {
+          if (["loc", "start", "end", "comments", "tokens"].includes(key)) continue;
+          if (Array.isArray(value)) for (const child of value) { if (child && typeof child.type === "string") visit(child, [...parents, node]); }
+          else if (value && typeof value === "object" && "type" in value) visit(value as Node, [...parents, node]);
+        }
+      };
+      visit(ast.program);
+    }
+  }
+}
+// ACT: 插件 src 下的界面与服务端代码统一按宿主界面规则收集，服务端代码只会多出少量不翻译的候选键。
+async function scanPlugin(directory: string) {
+  for (const item of await readdir(directory, { withFileTypes: true })) {
+    const path = resolve(directory, item.name);
+    if (item.isDirectory()) { if (item.name !== "node_modules") await scanPlugin(path); continue; }
+    if (/\.(ts|vue)$/.test(item.name)) for (const message of collectMessages(await readFile(path, "utf8"), path)) add(message, path);
+  }
+}
+// 传入插件目录时只抽取该插件 src，写入插件自己的 i18n/zhCn.json。
+const pluginDirectory = process.argv[2] ? resolve(process.argv[2]) : undefined;
+if (pluginDirectory) {
+  await scanPlugin(resolve(pluginDirectory, "src"));
+  // 依赖包（如 nodeScaffold、nodeShared）字典中已有的词条构建时会合并进来，插件不再重复维护；需先抽取依赖包。
+  for (const directory of await findWorkspaceDependencies(pluginDirectory)) {
+    const source = await readFile(resolve(directory, "i18n/zhCn.json"), "utf8").catch(() => "{}");
+    for (const message of Object.keys(JSON.parse(source))) catalog.delete(message);
+  }
+} else for (const path of ["apps/web/src", "apps/server/src", "apps/desktop/src", "apps/mobile/src", "packages/mcp/src", "packages/ffmpeg/src", "packages/multiTenant", "packages/providerWeb"]) await scan(resolve(root, path));
+const messages = Object.fromEntries([...catalog].sort(([left], [right]) => left.localeCompare(right, "zh-CN")).map(([message]) => [message, message]));
+const localesDirectory = pluginDirectory ? resolve(pluginDirectory, "i18n") : resolve(import.meta.dirname, "locales");
+await mkdir(localesDirectory, { recursive: true });
+await writeAtomic(resolve(localesDirectory, "zhCn.json"), JSON.stringify(messages, null, 2) + "\n");
+if (!pluginDirectory) await writeAtomic(resolve(import.meta.dirname, "messageSources.json"), JSON.stringify(Object.fromEntries([...catalog].map(([key, value]) => [key, [...value]])), null, 2) + "\n");
+console.log(`Extracted ${catalog.size} messages`);

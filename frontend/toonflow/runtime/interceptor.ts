@@ -89,15 +89,19 @@ import {
 } from "./browserMedia";
 import {
   answerAgentQuestion,
+  applyAgentCommand,
+  branchAgentConversation,
   controlSingleAgent,
   createAgentConversation,
   createSingleAgentSession,
+  deleteAgentMessages,
   getAgentSession,
   listAgentSessions,
   renameAgentSession,
   runSingleAgentStream,
   runWorkspaceAgentMessage,
   stopAgentRun,
+  submitAgentCanvasResult,
   submitSingleAgentToolResult,
 } from "./agentRuntime";
 
@@ -488,16 +492,16 @@ async function routeToonflowApi(
       await setPluginEnabled("node", String(body.name || ""), Boolean(body.enabled));
       return ok();
     }
-    if (path === "/api/nodes/saveConfig") {
+    if (path === "/api/nodes/saveConfig" || path === "/api/nodes/save") {
       const body = await readJsonBody(rawBody);
-      await savePluginConfig("node", String(body.name || ""), (body.config as Record<string, unknown>) ?? {});
-      return ok();
+      const saved = await savePluginConfig("node", String(body.name || ""), (body.config as Record<string, unknown>) ?? {});
+      return ok(saved);
     }
     if (path === "/api/ext/list") return ok(await listInstalledExtensions());
     if (path === "/api/ext/save") {
       const body = await readJsonBody(rawBody);
-      await savePluginConfig("ext", String(body.name || ""), (body.config as Record<string, unknown>) ?? {});
-      return ok();
+      const saved = await savePluginConfig("ext", String(body.name || ""), (body.config as Record<string, unknown>) ?? {});
+      return ok(saved);
     }
     if (path === "/api/ext/setEnabled") {
       const body = await readJsonBody(rawBody);
@@ -505,10 +509,16 @@ async function routeToonflowApi(
       return ok();
     }
     if (path === "/api/tools/get") return ok(await listInstalledTools());
+    if (path === "/api/tools/renderers") return ok([]);
     if (path === "/api/tools/setEnabled") {
       const body = await readJsonBody(rawBody);
       await setPluginEnabled("tool", String(body.name || ""), Boolean(body.enabled));
       return ok();
+    }
+    if (path === "/api/tools/save" || path === "/api/tools/saveConfig") {
+      const body = await readJsonBody(rawBody);
+      const saved = await savePluginConfig("tool", String(body.name || ""), (body.config as Record<string, unknown>) ?? {});
+      return ok(saved);
     }
 
     if (path === "/api/agent/skills") {
@@ -525,10 +535,15 @@ async function routeToonflowApi(
     }
     if (path === "/api/skills/read") {
       const name = q.get("name") || "";
+      const relPath = (q.get("path") || "SKILL.md").replaceAll("\\", "/").replace(/^\/+/, "") || "SKILL.md";
       const skills = await listAllSkills();
       const found = skills.find((s) => s.name === name);
       if (!found) return fail(404, `未找到技能：${name}`);
-      return ok({ name: found.name, content: found.content, path: "SKILL.md" });
+      const fileContent =
+        (found.files && Object.prototype.hasOwnProperty.call(found.files, relPath) ? found.files[relPath] : undefined) ??
+        (relPath === "SKILL.md" ? found.content : undefined);
+      if (fileContent === undefined) return fail(404, `技能文件不存在：${name}/${relPath}`);
+      return ok({ name: found.name, content: fileContent, path: relPath });
     }
     if (path === "/api/skills/create" || path === "/api/skills/save") {
       const body = await readJsonBody(rawBody);
@@ -646,9 +661,24 @@ async function routeToonflowApi(
     }
 
     // -------------------- AI Assistant & SingleAgent (TrumanMap) --------------------
+    if (path === "/api/agent" && m === "POST") {
+      const body = await readJsonBody(rawBody);
+      return runWorkspaceAgentMessage(nativeFetch, body as never, signal);
+    }
     if (path === "/api/agent/create") {
       const body = await readJsonBody(rawBody);
       return ok(await createAgentConversation(String(body.directory || DEFAULT_WORKSPACE_DIR)));
+    }
+    if (path === "/api/agent/branch") {
+      const body = await readJsonBody(rawBody);
+      return ok(
+        await branchAgentConversation(
+          String(body.directory || DEFAULT_WORKSPACE_DIR),
+          String(body.sessionFile || ""),
+          typeof body.entryId === "string" ? body.entryId : undefined,
+          typeof body.replyTo === "string" ? body.replyTo : undefined
+        )
+      );
     }
     if (path === "/api/agent/list") {
       return ok(await listAgentSessions(q.get("directory") || DEFAULT_WORKSPACE_DIR));
@@ -662,21 +692,47 @@ async function routeToonflowApi(
     }
     if (path === "/api/agent/message") {
       const body = await readJsonBody(rawBody);
+      if (m === "DELETE") {
+        return ok(
+          await deleteAgentMessages(String(body.directory || DEFAULT_WORKSPACE_DIR), String(body.sessionFile || ""), {
+            replyTo: typeof body.replyTo === "string" ? body.replyTo : undefined,
+            entryIds: Array.isArray(body.entryIds) ? body.entryIds.map(String) : undefined,
+          })
+        );
+      }
       return runWorkspaceAgentMessage(nativeFetch, body as never, signal);
     }
     if (path === "/api/agent/stop") {
       const body = await readJsonBody(rawBody);
-      stopAgentRun(String(body.directory || DEFAULT_WORKSPACE_DIR), typeof body.sessionFile === "string" ? body.sessionFile : undefined);
+      stopAgentRun(
+        String(body.directory || DEFAULT_WORKSPACE_DIR),
+        typeof body.sessionFile === "string" ? body.sessionFile : undefined,
+        Array.isArray(body.runIds) ? body.runIds.map(String) : undefined
+      );
       return ok();
     }
     if (path === "/api/agent/answer") {
       const body = await readJsonBody(rawBody);
       return ok(answerAgentQuestion(String(body.callId || ""), body));
     }
+    if (path === "/api/agent/canvasResult") {
+      const body = await readJsonBody(rawBody);
+      return ok(submitAgentCanvasResult(body as never));
+    }
+    if (path === "/api/agent/command") {
+      const body = await readJsonBody(rawBody);
+      return ok(
+        await applyAgentCommand(
+          String(body.directory || DEFAULT_WORKSPACE_DIR),
+          String(body.sessionFile || ""),
+          (body.command ?? {}) as never
+        )
+      );
+    }
     if (path === "/api/agent/automations/list") return ok([]);
-    if (path === "/api/agent/automations/update") return ok({ ok: true });
-    if (path === "/api/agent/command" || path === "/api/agent/queue" || path === "/api/agent/canvasResult") {
-      return ok({ ok: true });
+    if (path === "/api/agent/automations/update") return ok([]);
+    if (path === "/api/agent/queue" || path === "/api/agent/queue/steer") {
+      return ok({ runId: "", revision: 0, steering: [], followUp: [] });
     }
     if (path === "/api/agent/mentionSource") return ok([]);
 

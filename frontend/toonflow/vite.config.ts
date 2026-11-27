@@ -87,6 +87,22 @@ function tablerIconsDirectImportPlugin(): Plugin {
   };
 }
 
+function toonflowJsonImportAttrPlugin(): Plugin {
+  return {
+    name: "toonflowJsonImportAttributes",
+    enforce: "pre",
+    transform(source, id) {
+      const normalized = id.replaceAll("\\", "/");
+      if (!normalized.includes("/toonflow/upstream/packages/i18n/src/index.ts")) return;
+      if (!source.includes('with { type: "json" }')) return;
+      return {
+        code: source.replace(/\s+with\s*\{\s*type:\s*"json"\s*\}/g, ""),
+        map: null,
+      };
+    },
+  };
+}
+
 function toonflowI18nTransformPlugin(): Plugin {
   return {
     name: "toonflowBrowserI18n",
@@ -95,7 +111,7 @@ function toonflowI18nTransformPlugin(): Plugin {
       const normalized = id.replaceAll("\\", "/");
       if (normalized.includes("/node_modules/")) return;
       if (
-        !/\/toonflow\/upstream\/(?:apps\/web\/src|packages\/(?:providerWeb|nodeShared\/src|nodeScaffold\/src|nodes\/[^/]+\/src|ext\/[^/]+\/src|multiTenant\/(?:userWeb|adminWeb)))\//.test(
+        !/\/toonflow\/upstream\/(?:apps\/web\/src|packages\/(?:providerWeb|nodeShared\/src|nodeScaffold\/src|nodes\/[^/]+\/src|ext\/[^/]+\/src|tools\/[^/]+\/src|multiTenant\/(?:userWeb|adminWeb)))\//.test(
           normalized
         )
       ) {
@@ -144,6 +160,18 @@ export default defineConfig({
       {
         find: /^@\/pages\/workspace\/panels\/document\/extensions(?:\.ts)?$/,
         replacement: resolve(rootDir, "runtime/extensions.ts"),
+      },
+      {
+        find: "@toonflow/tools-scaffold/client",
+        replacement: resolve(rootDir, "runtime/loadToolComponent.ts"),
+      },
+      {
+        find: "@toonflow/tool-asset-operator/runtime",
+        replacement: resolve(pkgsDir, "tools/assetOperator/src/runtime.ts"),
+      },
+      {
+        find: /^@toonflow-upstream\/(.+)$/,
+        replacement: resolve(upstreamDir, "$1"),
       },
       // Shiki web alias from upstream apps/web/vite.config.ts
       { find: /^shiki$/, replacement: resolve(webSrcDir, "lib/shiki.ts") },
@@ -231,7 +259,6 @@ export default defineConfig({
       { find: "@toonflow/ext-scaffold/runtime", replacement: resolve(pkgsDir, "extScaffold/src/runtime.ts") },
       { find: "@toonflow/ext-scaffold/serverClient", replacement: resolve(pkgsDir, "extScaffold/src/serverClient.ts") },
       { find: "@toonflow/tools-scaffold/runtime", replacement: resolve(pkgsDir, "toolScaffold/src/runtime.ts") },
-      { find: "@toonflow/tools-scaffold/client", replacement: resolve(pkgsDir, "toolScaffold/src/client.ts") },
 
       // @toonflow/tool-*
       { find: "@toonflow/tool-canvas/runtime", replacement: resolve(pkgsDir, "tools/canvas/src/runtime.ts") },
@@ -313,6 +340,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 15000,
   },
   plugins: [
+    toonflowJsonImportAttrPlugin(),
     toonflowI18nTransformPlugin(),
     vue(),
     components({

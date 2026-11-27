@@ -1,6 +1,6 @@
 import { installBrowserRuntimeInterceptor } from "./interceptor";
 import { getHostContext, initSub2ApiBridge, subscribeHostContext, subscribeIncomingMedia } from "./sub2apiBridge";
-import { ASSETS_ROOT, ensureSeeded, joinPath, vfsWriteBytes } from "./vfs";
+import { ASSETS_ROOT, ensureSeeded, joinPath, kvGet, vfsWriteBytes } from "./vfs";
 
 // 1. Install browser-native local API runtime BEFORE upstream Toonflow boots
 installBrowserRuntimeInterceptor();
@@ -13,12 +13,28 @@ function applyHostTheme(theme: "dark" | "light") {
   document.documentElement.setAttribute("data-theme", theme);
 }
 
+async function hasExplicitToonflowLanguage(): Promise<boolean> {
+  const saved = await kvGet<Record<string, unknown>>("toonflow.settings", {});
+  const ui = saved.ui && typeof saved.ui === "object" && !Array.isArray(saved.ui)
+    ? (saved.ui as Record<string, unknown>)
+    : undefined;
+  return typeof ui?.language === "string" && ui.language.trim() !== "" && ui.language !== "system";
+}
+
+let lastHostLocale = getHostContext().locale;
 applyHostTheme(getHostContext().theme);
+
 subscribeHostContext((ctx) => {
   applyHostTheme(ctx.theme);
-  void import("@toonflow/i18n/vue").then(({ setLocale }) => {
-    setLocale(ctx.locale === "en" ? "en" : "zh-CN");
-  });
+  if (ctx.locale !== lastHostLocale) {
+    lastHostLocale = ctx.locale;
+    void hasExplicitToonflowLanguage().then((explicit) => {
+      if (explicit) return;
+      return import("@toonflow/i18n/vue").then(({ setLocale }) => {
+        setLocale(ctx.locale === "en" ? "en" : "zh-CN");
+      });
+    });
+  }
 });
 
 subscribeIncomingMedia(async (payload) => {
@@ -38,10 +54,13 @@ subscribeIncomingMedia(async (payload) => {
 
 // 3. Boot real upstream HBAI-Ltd/Toonflow-app web frontend
 void ensureSeeded().then(async () => {
-  await import("../upstream/apps/web/src/main.ts");
+  await import("@toonflow-upstream/apps/web/src/main.ts");
   const ctx = getHostContext();
   applyHostTheme(ctx.theme);
-  void import("@toonflow/i18n/vue").then(({ setLocale }) => {
-    setLocale(ctx.locale === "en" ? "en" : "zh-CN");
-  });
+  const explicit = await hasExplicitToonflowLanguage();
+  if (!explicit) {
+    void import("@toonflow/i18n/vue").then(({ setLocale }) => {
+      setLocale(ctx.locale === "en" ? "en" : "zh-CN");
+    });
+  }
 });

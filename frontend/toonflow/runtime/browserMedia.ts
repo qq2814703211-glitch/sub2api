@@ -131,6 +131,40 @@ async function extractVideoFrameInBrowser(bytes: Uint8Array, mimeType: string, t
   }
 }
 
+export async function probeWorkspaceMedia(
+  directory: string,
+  relPath: string
+): Promise<{ path: string; mimeType: string; sizeBytes: number; duration: number; width: number; height: number }> {
+  const { bytes, mimeType } = await vfsReadBytes(joinPath(directory, relPath));
+  const meta = await probeMediaInBrowser(bytes, mimeType);
+  return {
+    path: relPath,
+    mimeType,
+    sizeBytes: bytes.byteLength,
+    duration: meta.duration,
+    width: meta.width,
+    height: meta.height,
+  };
+}
+
+export async function extractWorkspaceVideoFrame(
+  directory: string,
+  relPath: string,
+  timeSec: number,
+  outputRelPath: string
+): Promise<{ source: string; output: string; timeSec: number; sizeBytes: number; mimeType: string }> {
+  const { bytes, mimeType } = await vfsReadBytes(joinPath(directory, relPath));
+  const frame = await extractVideoFrameInBrowser(bytes, mimeType, timeSec);
+  await vfsWriteBytes(joinPath(directory, outputRelPath), frame, { mimeType: "image/webp" });
+  return {
+    source: relPath,
+    output: outputRelPath,
+    timeSec,
+    sizeBytes: frame.byteLength,
+    mimeType: "image/webp",
+  };
+}
+
 export async function handleBrowserFfmpegExecute(body: {
   directory: string;
   calls?: { method: string; args: unknown[] }[];

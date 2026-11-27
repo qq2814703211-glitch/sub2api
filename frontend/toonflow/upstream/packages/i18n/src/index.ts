@@ -1,19 +1,44 @@
 import { IntlMessageFormat } from "intl-messageformat";
 import { escapeMessageText } from "./messageText.ts";
 export { escapeMessageText } from "./messageText.ts";
-import zhTw from "./locales/zhTw.json";
-import en from "./locales/en.json";
+import zhTw from "./locales/zhTw.json" with { type: "json" };
+import en from "./locales/en.json" with { type: "json" };
+import ja from "./locales/ja.json" with { type: "json" };
+import ru from "./locales/ru.json" with { type: "json" };
+import vi from "./locales/vi.json" with { type: "json" };
+import th from "./locales/th.json" with { type: "json" };
+import ko from "./locales/ko.json" with { type: "json" };
+import hi from "./locales/hi.json" with { type: "json" };
+import id from "./locales/id.json" with { type: "json" };
+import ms from "./locales/ms.json" with { type: "json" };
+import fil from "./locales/fil.json" with { type: "json" };
+import bn from "./locales/bn.json" with { type: "json" };
+import ur from "./locales/ur.json" with { type: "json" };
+import ta from "./locales/ta.json" with { type: "json" };
+import te from "./locales/te.json" with { type: "json" };
+import mr from "./locales/mr.json" with { type: "json" };
+import pa from "./locales/pa.json" with { type: "json" };
+import ar from "./locales/ar.json" with { type: "json" };
+import fa from "./locales/fa.json" with { type: "json" };
+import tr from "./locales/tr.json" with { type: "json" };
+import pt from "./locales/pt.json" with { type: "json" };
 
 export type Locale = "zh-CN" | "zh-TW" | "en" | "ja" | "ru" | "vi" | "th" | "ko" | "hi"
   | "id" | "ms" | "fil" | "bn" | "ur" | "ta" | "te" | "mr" | "pa" | "ar" | "fa" | "tr" | "pt";
 export interface MessageDescriptor { id: string; values?: Record<string, unknown> }
 export type Catalogs = Partial<Record<Locale, Record<string, string>>>;
 export const supportedLocales: { code: Locale; name: string }[] = [
-  { code: "zh-CN", name: "简体中文" },
-  { code: "zh-TW", name: "繁體中文" },
-  { code: "en", name: "English" },
+  { code: "zh-CN", name: "简体中文" }, { code: "zh-TW", name: "繁體中文" },
+  { code: "en", name: "English" }, { code: "ja", name: "日本語" },
+  { code: "ru", name: "Русский" }, { code: "vi", name: "Tiếng Việt" },
+  { code: "th", name: "ไทย" }, { code: "ko", name: "한국어" }, { code: "hi", name: "हिन्दी" },
+  { code: "id", name: "Bahasa Indonesia" }, { code: "ms", name: "Bahasa Melayu" }, { code: "fil", name: "Filipino" },
+  { code: "bn", name: "বাংলা" }, { code: "ur", name: "اردو" }, { code: "ta", name: "தமிழ்" },
+  { code: "te", name: "తెలుగు" }, { code: "mr", name: "मराठी" }, { code: "pa", name: "ਪੰਜਾਬੀ" },
+  { code: "ar", name: "العربية" }, { code: "fa", name: "فارسی" }, { code: "tr", name: "Türkçe" },
+  { code: "pt", name: "Português (Brasil)" },
 ];
-const catalogs: Catalogs = { "zh-TW": zhTw, en };
+const catalogs: Catalogs = { "zh-TW": zhTw, en, ja, ru, vi, th, ko, hi, id, ms, fil, bn, ur, ta, te, mr, pa, ar, fa, tr, pt };
 let activeLocale: Locale = "zh-CN";
 const listeners = new Set<(locale: Locale) => void>();
 const formatters = new Map<string, IntlMessageFormat>();

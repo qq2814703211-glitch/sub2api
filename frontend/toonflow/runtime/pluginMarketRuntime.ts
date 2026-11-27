@@ -8,6 +8,23 @@ import canvasSkillMd from "../upstream/packages/skills/canvas/SKILL.md?raw";
 import workflowSkillMd from "../upstream/packages/skills/workflow/SKILL.md?raw";
 import v118WorkflowSkillMd from "../upstream/packages/skills/v118workflow/SKILL.md?raw";
 
+const bundledSkillRawFiles = import.meta.glob<string>("../upstream/packages/skills/**/*.md", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+function collectBundledSkillFiles(skillName: string, fallbackMain: string): Record<string, string> {
+  const prefix = `../upstream/packages/skills/${skillName}/`;
+  const files: Record<string, string> = { "SKILL.md": fallbackMain };
+  for (const [key, content] of Object.entries(bundledSkillRawFiles)) {
+    if (key.startsWith(prefix)) {
+      files[key.slice(prefix.length)] = content;
+    }
+  }
+  return files;
+}
+
 export interface BuiltinNodeMeta {
   name: string;
   displayName: string;
@@ -133,7 +150,7 @@ const BUILTIN_SKILLS: StoredSkill[] = [
     builtin: true,
     enabled: true,
     content: canvasSkillMd,
-    files: { "SKILL.md": canvasSkillMd },
+    files: collectBundledSkillFiles("canvas", canvasSkillMd),
     installedAt: 1700000000000,
   },
   {
@@ -145,7 +162,7 @@ const BUILTIN_SKILLS: StoredSkill[] = [
     builtin: true,
     enabled: true,
     content: workflowSkillMd,
-    files: { "SKILL.md": workflowSkillMd },
+    files: collectBundledSkillFiles("workflow", workflowSkillMd),
     installedAt: 1700000000000,
   },
   {
@@ -157,7 +174,7 @@ const BUILTIN_SKILLS: StoredSkill[] = [
     builtin: true,
     enabled: true,
     content: v118WorkflowSkillMd,
-    files: { "SKILL.md": v118WorkflowSkillMd },
+    files: collectBundledSkillFiles("v118workflow", v118WorkflowSkillMd),
     installedAt: 1700000000000,
   },
 ];
@@ -348,30 +365,229 @@ export async function listInstalledExtensions() {
   }));
 }
 
-export async function listInstalledTools() {
+export interface BuiltinToolPackageDescriptor {
+  name: string;
+  displayName: string;
+  description: string;
+  version: string;
+  browserSupported: boolean;
+  /** Exact function tool names exposed to the browser workspace AI assistant when enabled */
+  agentToolNames: string[];
+  /** Clear explanation shown in Plugin Market when a desktop/server-only tool is unavailable in browser-only mode */
+  loadError?: string;
+  canConfigure?: boolean;
+  configRules?: Record<string, unknown>[];
+  defaultConfig?: Record<string, unknown>;
+}
+
+export const BUILTIN_TOOL_PACKAGES: readonly BuiltinToolPackageDescriptor[] = [
+  {
+    name: "canvas",
+    displayName: "画布操作",
+    description: "通过画布工具通道实时查询与编排当前工作区 Vue Flow 无限画布节点、连线、排版与节点函数。",
+    version: "3.0.1",
+    browserSupported: true,
+    agentToolNames: [
+      "getCanvas",
+      "findCanvasNodes",
+      "getCanvasNodes",
+      "getCanvasEdges",
+      "getNodeTools",
+      "addCanvas",
+      "switchCanvas",
+      "renameCanvas",
+      "addNode",
+      "deleteNodes",
+      "moveNodes",
+      "renameNodes",
+      "connectNodes",
+      "deleteEdges",
+      "selectNodes",
+      "arrangeCanvas",
+      "fitCanvas",
+      "nodeTools",
+    ],
+  },
+  {
+    name: "workspace",
+    displayName: "工作区文件",
+    description: "读写、局部编辑、列目录、全文搜索、文件查找及下载远程图片至浏览器本机 IndexedDB 工作区。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["read", "write", "edit", "ls", "grep", "find", "downloadImage"],
+    canConfigure: true,
+    defaultConfig: { readOnly: false },
+    configRules: [
+      {
+        type: "switch",
+        field: "readOnly",
+        title: "只读模式",
+        value: false,
+      },
+    ],
+  },
+  {
+    name: "assetOperator",
+    displayName: "全局资产管理",
+    description: "统一查询、读取、归档、修订（带 SHA-256 revision 校验）、移动、删除与导入浏览器全局素材库。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["assetOperator"],
+    canConfigure: true,
+    defaultConfig: { readOnly: false },
+    configRules: [
+      {
+        type: "switch",
+        field: "readOnly",
+        title: "只读模式",
+        value: false,
+      },
+    ],
+  },
+  {
+    name: "askUser",
+    displayName: "提问器",
+    description: "在关键创作决策前向用户弹出上游原生交互式提问卡片（单选/多题表单/跳过），等待用户确认后继续。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["askUser"],
+  },
+  {
+    name: "skillOperator",
+    displayName: "Skill 操作器",
+    description: "查询、读取、新建和更新内置、全局与工作区创作技能及其参考资料。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["skillOperator"],
+    canConfigure: true,
+    defaultConfig: { allowRead: true, allowCreate: true, allowUpdate: true },
+    configRules: [
+      { type: "switch", field: "allowRead", title: "允许读取正文", value: true },
+      { type: "switch", field: "allowCreate", title: "允许创建技能", value: true },
+      { type: "switch", field: "allowUpdate", title: "允许更新技能", value: true },
+    ],
+  },
+  {
+    name: "webFetch",
+    displayName: "读取网页",
+    description: "由用户浏览器本机直接获取允许 CORS 的公开 HTTP(S) 网页、文本与 JSON 正文（零服务端代理）。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["web_fetch"],
+    canConfigure: true,
+    defaultConfig: { timeoutMs: 20000, maxChars: 40000 },
+    configRules: [
+      { type: "inputNumber", field: "timeoutMs", title: "超时时间（毫秒）", value: 20000, props: { min: 1000, max: 60000 } },
+      { type: "inputNumber", field: "maxChars", title: "最大返回字符数", value: 40000, props: { min: 1000, max: 100000 } },
+    ],
+  },
+  {
+    name: "webSearch",
+    displayName: "联网搜索",
+    description: "纯浏览器端联网检索：支持配置 Tavily API Key 直连搜索，未配置时回退至浏览器可直连的公开百科检索（零服务端代理）。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["web_search"],
+    canConfigure: true,
+    defaultConfig: { provider: "wikipedia", tavilyApiKey: "", maxResults: 8, timeoutMs: 20000 },
+    configRules: [
+      {
+        type: "select",
+        field: "provider",
+        title: "搜索服务",
+        value: "wikipedia",
+        options: [
+          { label: "公开百科直连（免密钥 / CORS 可用）", value: "wikipedia" },
+          { label: "Tavily（需填写 Tavily API Key）", value: "tavily" },
+        ],
+      },
+      { type: "input", field: "tavilyApiKey", title: "Tavily API Key", value: "", props: { type: "password", showPassword: true } },
+      { type: "inputNumber", field: "maxResults", title: "最大结果数", value: 8, props: { min: 1, max: 20 } },
+      { type: "inputNumber", field: "timeoutMs", title: "超时时间（毫秒）", value: 20000, props: { min: 1000, max: 60000 } },
+    ],
+  },
+  {
+    name: "browserMedia",
+    displayName: "本机音视频处理工具",
+    description: "纯浏览器 HTML5 Video/Canvas + WebAudio 媒体探测与关键帧抽取工具（零服务端 FFmpeg）。",
+    version: "2.0.0",
+    browserSupported: true,
+    agentToolNames: ["browser_media_probe", "browser_media_extract_frame"],
+  },
+  {
+    name: "trumanMap",
+    displayName: "TrumanMap Kiln 建模工具",
+    description: "上游 @instruktlabs/kiln 程序化 3D 建模工具（3D 白模预演编辑器与 Holodeck AI 已在浏览器端通过 SingleAgent 完整运行）。",
+    version: "0.4.1",
+    browserSupported: false,
+    agentToolNames: [],
+    loadError: "纯浏览器模式未启用：上游 kilnPrepare/kilnTool 依赖本机 Node.js 22.2+ 子进程安装 @instruktlabs/kiln（3D 白模预演与 Holodeck AI 仍可直接使用）。",
+  },
+  {
+    name: "ffmpeg",
+    displayName: "FFmpeg 命令行工具",
+    description: "上游 fluent-ffmpeg 原生二进制音视频转码与滤镜工具。",
+    version: "2.0.0",
+    browserSupported: false,
+    agentToolNames: [],
+    loadError: "纯浏览器模式未启用：原生 FFmpeg 子进程需桌面端或本地服务端二进制（零服务端算力限制）；基础抽帧与信息探测已由 browserMedia 提供。",
+  },
+  {
+    name: "browser",
+    displayName: "自动浏览器工具",
+    description: "上游 Chromium/Playwright 自动化浏览器操作工具。",
+    version: "2.0.0",
+    browserSupported: false,
+    agentToolNames: [],
+    loadError: "纯浏览器模式未启用：网页无法在本机拉起受控 Chromium/Playwright 进程（零服务端算力限制）；如需浏览器自动化请配置远端 MCP 服务或使用桌面端。",
+  },
+  {
+    name: "sandbox",
+    displayName: "命令沙箱工具",
+    description: "上游 Shell / just-bash 命令行执行沙箱工具。",
+    version: "2.0.0",
+    browserSupported: false,
+    agentToolNames: [],
+    loadError: "纯浏览器模式未启用：网页无法在本机或服务端执行操作系统 Shell 子进程（零服务端算力限制）。",
+  },
+  {
+    name: "pluginDeveloper",
+    displayName: "插件开发编译工具",
+    description: "上游本地插件 SDK 打包与 Vite/Bun 编译工具。",
+    version: "1.3.0",
+    browserSupported: false,
+    agentToolNames: [],
+    loadError: "纯浏览器模式未启用：本地构建插件产物需本机 Node/Bun 文件系统与编译器进程。",
+  },
+];
+
+export async function getToolRuntimeState(): Promise<{
+  disabled: Set<string>;
+  configs: Record<string, Record<string, unknown>>;
+}> {
   const disabled = new Set(await kvGet<string[]>(DISABLED_PLUGINS_KEY, []));
   const configs = await kvGet<Record<string, Record<string, unknown>>>(PLUGIN_CONFIGS_KEY, {});
-  const builtinTools = [
-    { name: "canvas", displayName: "无限画布操作工具", description: "读写与排版当前工作区 Vue Flow 画布节点与连线。", version: "3.0.1" },
-    { name: "trumanMap", displayName: "白模预演 3D 工具", description: "在浏览器 Three.js 场景中放置资产、调整地形、机位与角色走位。", version: "0.4.1" },
-    { name: "workspace", displayName: "工作区文件工具", description: "读写与搜索浏览器本机 IndexedDB 工作区文件。", version: "2.0.0" },
-    { name: "assetOperator", displayName: "素材库管理工具", description: "检索与归档浏览器全局素材库中的角色与分镜素材。", version: "2.0.0" },
-    { name: "askUser", displayName: "人机交互提问工具", description: "在执行关键创作决策前向用户弹出结构化确认卡片。", version: "2.0.0" },
-    { name: "skillOperator", displayName: "技能读取工具", description: "按需加载内置与自定义创作技能规范。", version: "2.0.0" },
-    { name: "webFetch", displayName: "网页抓取工具", description: "由浏览器端获取允许 CORS 的公开参考资料。", version: "2.0.0" },
-    { name: "browserMedia", displayName: "本机音视频处理工具", description: "纯浏览器 HTML5 Canvas / WebAudio 抽帧与元信息解析。", version: "2.0.0" },
-  ];
+  return { disabled, configs };
+}
+
+export async function listInstalledTools() {
+  const { disabled, configs } = await getToolRuntimeState();
   return {
     canManage: true,
-    tools: builtinTools.map((tool) => ({
-      ...tool,
+    tools: BUILTIN_TOOL_PACKAGES.map((tool) => ({
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      version: tool.version,
       author: "Toonflow",
       github: "https://github.com/HBAI-Ltd/Toonflow-app",
       builtin: true,
-      enabled: !disabled.has(`tool:${tool.name}`),
-      canConfigure: false,
-      config: configs[`tool:${tool.name}`] ?? {},
-      configRules: [],
+      enabled: tool.browserSupported ? !disabled.has(`tool:${tool.name}`) : false,
+      canManage: tool.browserSupported,
+      canConfigure: Boolean(tool.browserSupported && tool.canConfigure),
+      config: { ...(tool.defaultConfig ?? {}), ...(configs[`tool:${tool.name}`] ?? {}) },
+      configRules: tool.configRules ?? [],
+      loadError: tool.loadError ?? "",
       marketIdentifiers: [tool.name],
       installedAt: 1700000000000,
     })),
@@ -387,19 +603,37 @@ export async function listAllSkills(): Promise<StoredSkill[]> {
 }
 
 export async function saveSkillContent(name: string, content: string, displayName?: string, description?: string): Promise<StoredSkill> {
+  return saveSkillFile(name, "SKILL.md", content, { displayName, description });
+}
+
+export async function saveSkillFile(
+  name: string,
+  relPath: string,
+  content: string,
+  options?: { displayName?: string; description?: string; exclusive?: boolean }
+): Promise<StoredSkill> {
+  const normalizedRel = relPath.replaceAll("\\", "/").replace(/^\/+/, "") || "SKILL.md";
   const custom = await kvGet<StoredSkill[]>(CUSTOM_SKILLS_KEY, []);
   const existing = custom.find((s) => s.name === name);
   const builtin = BUILTIN_SKILLS.find((s) => s.name === name);
+  const baseFiles: Record<string, string> = {
+    ...(builtin?.files ?? {}),
+    ...(existing?.files ?? {}),
+  };
+  if (options?.exclusive && Object.prototype.hasOwnProperty.call(baseFiles, normalizedRel)) {
+    throw new Error(`技能文件已存在，不能覆盖：${name}/${normalizedRel}`);
+  }
+  baseFiles[normalizedRel] = content;
   const next: StoredSkill = {
     name,
-    displayName: displayName || existing?.displayName || builtin?.displayName || name,
-    description: description || existing?.description || builtin?.description || "自定义创作技能",
-    version: existing?.version || "1.0.0",
-    author: existing?.author || "用户自定义",
+    displayName: options?.displayName || existing?.displayName || builtin?.displayName || name,
+    description: options?.description || existing?.description || builtin?.description || "自定义创作技能",
+    version: existing?.version || builtin?.version || "1.0.0",
+    author: existing?.author || builtin?.author || "用户自定义",
     builtin: Boolean(builtin),
     enabled: true,
-    content,
-    files: { ...(existing?.files ?? {}), "SKILL.md": content },
+    content: normalizedRel === "SKILL.md" ? content : (baseFiles["SKILL.md"] ?? existing?.content ?? builtin?.content ?? ""),
+    files: baseFiles,
     installedAt: existing?.installedAt || Date.now(),
   };
   await kvSet(CUSTOM_SKILLS_KEY, [next, ...custom.filter((s) => s.name !== name)]);
@@ -415,6 +649,12 @@ export async function uninstallSkill(name: string): Promise<void> {
 }
 
 export async function setPluginEnabled(type: string, name: string, enabled: boolean): Promise<void> {
+  if (type === "tool" && enabled) {
+    const pkg = BUILTIN_TOOL_PACKAGES.find((item) => item.name === name);
+    if (pkg && !pkg.browserSupported) {
+      throw new Error(pkg.loadError || `工具 ${name} 在纯浏览器模式下不可用`);
+    }
+  }
   const disabled = new Set(await kvGet<string[]>(DISABLED_PLUGINS_KEY, []));
   const key = `${type}:${name}`;
   if (enabled) disabled.delete(key);
@@ -422,10 +662,16 @@ export async function setPluginEnabled(type: string, name: string, enabled: bool
   await kvSet(DISABLED_PLUGINS_KEY, [...disabled]);
 }
 
-export async function savePluginConfig(type: string, name: string, config: Record<string, unknown>): Promise<void> {
+export async function savePluginConfig(
+  type: string,
+  name: string,
+  config: Record<string, unknown>
+): Promise<Record<string, unknown>> {
   const configs = await kvGet<Record<string, Record<string, unknown>>>(PLUGIN_CONFIGS_KEY, {});
-  configs[`${type}:${name}`] = config;
+  const next = { ...config };
+  configs[`${type}:${name}`] = next;
   await kvSet(PLUGIN_CONFIGS_KEY, configs);
+  return next;
 }
 
 export async function listMarketPlugins(params: {

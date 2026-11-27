@@ -19,16 +19,16 @@ const host = window as typeof window & { toonflowExts?: Record<string, ExtDefini
 Object.assign(host, { toonflowExtHost: { vue, elementPlus, i18n } });
 
 const builtinExtLoaders: Record<string, () => Promise<{ default: ExtDefinition }>> = {
-  "ext-canvasNode": () => import("../upstream/packages/ext/canvasNode/src/index.ts"),
-  "ext-image": () => import("../upstream/packages/ext/image/src/index.ts"),
-  "ext-md": () => import("../upstream/packages/ext/md/src/index.ts"),
-  "ext-media": () => import("../upstream/packages/ext/media/src/index.ts"),
-  "ext-txt": () => import("../upstream/packages/ext/txt/src/index.ts"),
-  canvasNode: () => import("../upstream/packages/ext/canvasNode/src/index.ts"),
-  image: () => import("../upstream/packages/ext/image/src/index.ts"),
-  md: () => import("../upstream/packages/ext/md/src/index.ts"),
-  media: () => import("../upstream/packages/ext/media/src/index.ts"),
-  txt: () => import("../upstream/packages/ext/txt/src/index.ts"),
+  "ext-canvasNode": () => import("@toonflow-upstream/packages/ext/canvasNode/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  "ext-image": () => import("@toonflow-upstream/packages/ext/image/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  "ext-md": () => import("@toonflow-upstream/packages/ext/md/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  "ext-media": () => import("@toonflow-upstream/packages/ext/media/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  "ext-txt": () => import("@toonflow-upstream/packages/ext/txt/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  canvasNode: () => import("@toonflow-upstream/packages/ext/canvasNode/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  image: () => import("@toonflow-upstream/packages/ext/image/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  md: () => import("@toonflow-upstream/packages/ext/md/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  media: () => import("@toonflow-upstream/packages/ext/media/src/index.ts") as Promise<{ default: ExtDefinition }>,
+  txt: () => import("@toonflow-upstream/packages/ext/txt/src/index.ts") as Promise<{ default: ExtDefinition }>,
 };
 
 const requests = new Map<string, Promise<ExtDefinition>>();
