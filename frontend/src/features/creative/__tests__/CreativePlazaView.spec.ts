@@ -68,6 +68,8 @@ async function mountAt(path: string) {
 describe('CreativePlazaView', () => {
   beforeEach(() => {
     localStorage.clear()
+    document.documentElement.classList.remove('dark')
+    document.documentElement.removeAttribute('data-universe-theme')
     mockKeysList.mockReset()
     mockKeysList.mockResolvedValue({
       items: [
@@ -184,6 +186,25 @@ describe('CreativePlazaView', () => {
     )
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/keys')
+    wrapper.unmount()
+  })
+
+  it('tracks both .dark class and data-universe-theme cosmos surface for host theme sync', async () => {
+    document.documentElement.setAttribute('data-universe-theme', 'cosmos')
+    const { wrapper } = await mountAt('/creative-plaza')
+    expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}').theme).toBe('dark')
+
+    document.documentElement.removeAttribute('data-universe-theme')
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}').theme).toBe('light')
+
+    document.documentElement.classList.add('dark')
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}').theme).toBe('dark')
+
+    document.documentElement.classList.remove('dark')
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}').theme).toBe('light')
     wrapper.unmount()
   })
 })

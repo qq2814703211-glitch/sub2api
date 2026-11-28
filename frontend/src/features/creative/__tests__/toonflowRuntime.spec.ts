@@ -46,7 +46,10 @@ import {
   submitAgentCanvasResult,
 } from '../../../../toonflow/runtime/agentRuntime'
 import {
+  SUB2API_BRIDGE_STORAGE_KEY,
   getHostContext,
+  initSub2ApiBridge,
+  subscribeHostContext,
   updateHostContext,
   updateKeyBindingsFromStudio,
 } from '../../../../toonflow/runtime/sub2apiBridge'
@@ -614,6 +617,33 @@ describe('Toonflow browser-native local runtime', () => {
         configurable: true,
         value: origParent,
       })
+    }
+  })
+
+  it('syncs host context from cross-window storage events without echoing back to localStorage', () => {
+    initSub2ApiBridge()
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const seenThemes: string[] = []
+    const unsubscribe = subscribeHostContext((ctx) => {
+      seenThemes.push(ctx.theme)
+    })
+    try {
+      const next = {
+        ...getHostContext(),
+        theme: 'light' as const,
+        discoveredModels: { 101: ['gpt-4o', 'gpt-image-1'] },
+      }
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: SUB2API_BRIDGE_STORAGE_KEY,
+          newValue: JSON.stringify(next),
+        }),
+      )
+      expect(getHostContext().theme).toBe('light')
+      expect(seenThemes).toContain('light')
+      expect(setItemSpy).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
     }
   })
 })

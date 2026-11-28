@@ -69,6 +69,7 @@ const DEFAULT_CONTEXT: Sub2ApiHostContext = {
 };
 
 let currentContext: Sub2ApiHostContext = loadStoredContext();
+let bridgeInitialized = false;
 const listeners = new Set<(ctx: Sub2ApiHostContext) => void>();
 const incomingMediaListeners = new Set<
   (payload: { src: string; prompt?: string; title?: string; target?: "canvas" | "assets" }) => void
@@ -100,7 +101,10 @@ export function getHostContext(): Sub2ApiHostContext {
   return currentContext;
 }
 
-export function updateHostContext(patch: Partial<Sub2ApiHostContext>): void {
+export function updateHostContext(
+  patch: Partial<Sub2ApiHostContext>,
+  options?: { persist?: boolean },
+): void {
   const prevKeysSig = JSON.stringify([
     currentContext.keys.map((k) => `${k.id}:${k.key}`),
     currentContext.selectedTextKeyId,
@@ -116,10 +120,12 @@ export function updateHostContext(patch: Partial<Sub2ApiHostContext>): void {
     discoveredModels: patch.discoveredModels ?? currentContext.discoveredModels,
     discoveredModelMeta: patch.discoveredModelMeta ?? currentContext.discoveredModelMeta,
   };
-  try {
-    localStorage.setItem(SUB2API_BRIDGE_STORAGE_KEY, JSON.stringify(currentContext));
-  } catch {
-    // ignore storage quota errors
+  if (options?.persist !== false) {
+    try {
+      localStorage.setItem(SUB2API_BRIDGE_STORAGE_KEY, JSON.stringify(currentContext));
+    } catch {
+      // ignore storage quota errors
+    }
   }
   const nextKeysSig = JSON.stringify([
     currentContext.keys.map((k) => `${k.id}:${k.key}`),
@@ -224,6 +230,22 @@ export function requestOpenSiteKeys(): void {
 
 export function initSub2ApiBridge(): void {
   if (typeof window === "undefined") return;
+  if (bridgeInitialized) {
+    postToSub2ApiHost("ready");
+    return;
+  }
+  bridgeInitialized = true;
+  window.addEventListener("storage", (event: StorageEvent) => {
+    if (event.key !== SUB2API_BRIDGE_STORAGE_KEY || !event.newValue) return;
+    try {
+      const parsed = JSON.parse(event.newValue) as Partial<Sub2ApiHostContext>;
+      if (parsed && typeof parsed === "object") {
+        updateHostContext(parsed, { persist: false });
+      }
+    } catch {
+      // ignore malformed storage updates
+    }
+  });
   window.addEventListener("message", (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return;
     const msg = event.data as { source?: string; type?: string; payload?: unknown } | null;

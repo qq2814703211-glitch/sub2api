@@ -240,6 +240,17 @@ export function writeToonflowHostContext(context: Sub2ApiToonflowContext): void 
   }
 }
 
+function toCloneablePayload<T>(payload: T): T {
+  if (payload === null || payload === undefined || typeof payload !== 'object') {
+    return payload
+  }
+  try {
+    return JSON.parse(JSON.stringify(payload)) as T
+  } catch {
+    return payload
+  }
+}
+
 export function postToonflowMessage(
   iframe: HTMLIFrameElement | null | undefined,
   type: 'syncContext' | 'importMedia' | 'navigate',
@@ -248,7 +259,10 @@ export function postToonflowMessage(
   const win = iframe?.contentWindow
   if (!win) return
   try {
-    win.postMessage({ source: 'sub2api-host', type, payload }, window.location.origin)
+    win.postMessage(
+      { source: 'sub2api-host', type, payload: toCloneablePayload(payload) },
+      window.location.origin,
+    )
   } catch {
     // ignore cross-frame messaging errors during load
   }

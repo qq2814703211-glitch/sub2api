@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
 import {
   CREATIVE_KEY_BINDINGS_STORAGE_KEY,
   TOONFLOW_BRIDGE_STORAGE_KEY,
@@ -140,11 +141,33 @@ describe('toonflowHostBridge', () => {
     writeToonflowHostContext(ctx)
     expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')).toEqual(ctx)
 
-    const postMessage = vi.fn()
+    const postMessage = vi.fn((data: unknown) => {
+      // Simulate real browser Window.postMessage structured clone (throws DataCloneError on Vue Proxy)
+      structuredClone(data)
+    })
     const fakeFrame = { contentWindow: { postMessage } } as unknown as HTMLIFrameElement
     postToonflowMessage(fakeFrame, 'navigate', '#/home?section=quickImage')
     expect(postMessage).toHaveBeenCalledWith(
       { source: 'sub2api-host', type: 'navigate', payload: '#/home?section=quickImage' },
+      window.location.origin,
+    )
+
+    const reactiveModels = reactive<Record<number, string[]>>({ 1: ['gpt-4o', 'gpt-image-1'] })
+    postToonflowMessage(fakeFrame, 'syncContext', {
+      ...ctx,
+      theme: 'light',
+      discoveredModels: { ...reactiveModels },
+    })
+    expect(postMessage).toHaveBeenLastCalledWith(
+      {
+        source: 'sub2api-host',
+        type: 'syncContext',
+        payload: {
+          ...ctx,
+          theme: 'light',
+          discoveredModels: { 1: ['gpt-4o', 'gpt-image-1'] },
+        },
+      },
       window.location.origin,
     )
   })

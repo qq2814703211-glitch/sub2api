@@ -49,7 +49,7 @@
             <span>{{ fullscreen ? t('creative.quickNav.fullscreenExit') : t('creative.quickNav.fullscreenEnter') }}</span>
           </button>
           <a
-            :href="studioInitialSrc"
+            :href="standaloneHref"
             target="_blank"
             rel="noopener noreferrer"
             class="btn btn-secondary btn-xs inline-flex items-center gap-1"
@@ -88,6 +88,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
+import { isDarkSurface } from '@/features/universe/theme'
 import { sanitizeUrl } from '@/utils/url'
 import type { ApiKey } from '@/types'
 import {
@@ -131,12 +132,10 @@ function resolveTargetHash(): string {
 
 const initialHash = resolveTargetHash()
 const studioInitialSrc = computed(() => `/toonflow/index.html${initialHash}`)
+const standaloneHref = computed(() => `/toonflow/index.html${resolveTargetHash()}`)
 
 function detectCurrentTheme(): 'dark' | 'light' {
-  if (typeof document !== 'undefined' && document.documentElement.classList.contains('dark')) {
-    return 'dark'
-  }
-  return 'light'
+  return isDarkSurface() ? 'dark' : 'light'
 }
 
 const sanitizedSiteLogo = computed(() =>
@@ -166,8 +165,22 @@ function buildHostContext(): Sub2ApiToonflowContext {
     selectedAudioKeyId: bindings.audioKeyId,
     rewriteModel: bindings.rewriteModel ?? '',
     rewriteEffort: bindings.rewriteEffort ?? 'unset',
-    discoveredModels: { ...discoveredModels },
-    discoveredModelMeta: { ...discoveredModelMeta },
+    discoveredModels: Object.fromEntries(
+      Object.entries(discoveredModels).map(([k, list]) => [k, Array.isArray(list) ? [...list] : []]),
+    ),
+    discoveredModelMeta: Object.fromEntries(
+      Object.entries(discoveredModelMeta).map(([k, list]) => [
+        k,
+        Array.isArray(list)
+          ? list.map((item) => ({
+              ...item,
+              ...(item.reasoningEfforts
+                ? { reasoningEfforts: item.reasoningEfforts.map((e) => ({ ...e })) }
+                : {}),
+            }))
+          : [],
+      ]),
+    ),
   }
 }
 
@@ -289,7 +302,10 @@ onMounted(() => {
   void refreshKeysAndModels()
   if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
     themeObserver = new MutationObserver(() => syncHostContextToStudio())
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'data-universe-theme'],
+    })
   }
 })
 
