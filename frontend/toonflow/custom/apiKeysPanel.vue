@@ -369,11 +369,6 @@ function effortLabel(effort: RewriteEffort): string {
   return effort;
 }
 
-function syncNodeModelMemory(mediaType: "image" | "video" | "audio", modelId: string): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent("toonflow:default-media-model-changed", { detail: { mediaType, modelId } }));
-}
-
 function onSelectKey(field: "textKeyId" | "imageKeyId" | "videoKeyId" | "audioKeyId", value: number | null) {
   const roleMap: Record<typeof field, SiteKeyRole> = {
     imageKeyId: "image",
@@ -389,20 +384,16 @@ function onSelectKey(field: "textKeyId" | "imageKeyId" | "videoKeyId" | "audioKe
   const nextModels = value ? hostCtx.value.discoveredModels[value] ?? [] : [];
   if (role === "image" && defaultImageModel.value && nextModels.length && !nextModels.includes(defaultImageModel.value)) {
     patch.defaultImageModel = nextModels[0] ?? "";
-    syncNodeModelMemory("image", patch.defaultImageModel);
   }
   if (role === "video" && defaultVideoModel.value && nextModels.length && !nextModels.includes(defaultVideoModel.value)) {
     patch.defaultVideoModel = nextModels[0] ?? "";
-    syncNodeModelMemory("video", patch.defaultVideoModel);
   }
   if (role === "audio" && defaultAudioModel.value && nextModels.length && !nextModels.includes(defaultAudioModel.value)) {
     patch.defaultAudioModel = nextModels[0] ?? "";
-    syncNodeModelMemory("audio", patch.defaultAudioModel);
   }
   if (role === "text" && nextModels.length) {
     if (defaultTextModel.value && !nextModels.includes(defaultTextModel.value)) {
       patch.defaultTextModel = nextModels[0] ?? "";
-      window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: patch.defaultTextModel }));
     }
     if (rewriteModel.value && !nextModels.includes(rewriteModel.value)) {
       patch.rewriteModel = "";
@@ -417,12 +408,6 @@ function onUpdateDefaultModel(
 ) {
   const clean = String(value || "").trim();
   updateKeyBindingsFromStudio({ [field]: clean });
-  if (field === "defaultTextModel") {
-    window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: clean }));
-  }
-  if (field === "defaultImageModel") syncNodeModelMemory("image", clean);
-  if (field === "defaultVideoModel") syncNodeModelMemory("video", clean);
-  if (field === "defaultAudioModel") syncNodeModelMemory("audio", clean);
 }
 
 function onUpdateRewriteModel(value: string | undefined) {
@@ -469,21 +454,17 @@ async function verifyKey(role: SiteKeyRole) {
       const patch: StudioKeyBindingsPatch = {};
       if (role === "image" && (!defaultImageModel.value || !res.models.includes(defaultImageModel.value))) {
         patch.defaultImageModel = res.models[0] ?? "";
-        syncNodeModelMemory("image", patch.defaultImageModel);
       } else if (role === "text") {
         if (!defaultTextModel.value || !res.models.includes(defaultTextModel.value)) {
           patch.defaultTextModel = res.models[0] ?? "";
-          window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: patch.defaultTextModel }));
         }
         if (rewriteModel.value && !res.models.includes(rewriteModel.value)) {
           patch.rewriteModel = "";
         }
       } else if (role === "video" && (!defaultVideoModel.value || !res.models.includes(defaultVideoModel.value))) {
         patch.defaultVideoModel = res.models[0] ?? "";
-        syncNodeModelMemory("video", patch.defaultVideoModel);
       } else if (role === "audio" && (!defaultAudioModel.value || !res.models.includes(defaultAudioModel.value))) {
         patch.defaultAudioModel = res.models[0] ?? "";
-        syncNodeModelMemory("audio", patch.defaultAudioModel);
       }
       if (Object.keys(patch).length) {
         updateKeyBindingsFromStudio(patch);

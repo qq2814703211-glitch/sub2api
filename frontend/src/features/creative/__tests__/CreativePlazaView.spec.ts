@@ -275,7 +275,18 @@ describe('CreativePlazaView', () => {
         data: {
           source: 'toonflow-web',
           type: 'updateKeyBindings',
-          payload: { imageKeyId: 2 },
+          payload: {
+            textKeyId: 1,
+            imageKeyId: 2,
+            videoKeyId: 1,
+            audioKeyId: 1,
+            defaultTextModel: 'gpt-4o',
+            defaultImageModel: 'gpt-image-1',
+            defaultVideoModel: '',
+            defaultAudioModel: '',
+            rewriteModel: '',
+            rewriteEffort: 'unset',
+          },
         },
       }),
     )

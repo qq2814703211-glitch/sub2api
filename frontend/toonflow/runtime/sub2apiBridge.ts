@@ -117,6 +117,10 @@ export function updateHostContext(
   patch: Partial<Sub2ApiHostContext>,
   options?: { persist?: boolean },
 ): void {
+  const prevDefaultTextModel = currentContext.defaultTextModel ?? "";
+  const prevDefaultImageModel = currentContext.defaultImageModel ?? "";
+  const prevDefaultVideoModel = currentContext.defaultVideoModel ?? "";
+  const prevDefaultAudioModel = currentContext.defaultAudioModel ?? "";
   const prevKeysSig = JSON.stringify([
     currentContext.keys.map((k) => `${k.id}:${k.key}`),
     currentContext.selectedTextKeyId,
@@ -157,8 +161,26 @@ export function updateHostContext(
     currentContext.rewriteModel,
     currentContext.discoveredModels,
   ]);
-  if (typeof window !== "undefined" && prevKeysSig !== nextKeysSig) {
-    window.dispatchEvent(new Event("toonflow:provider-config-changed"));
+  if (typeof window !== "undefined") {
+    if (prevKeysSig !== nextKeysSig) {
+      window.dispatchEvent(new Event("toonflow:provider-config-changed"));
+    }
+    const nextDefaultTextModel = currentContext.defaultTextModel ?? "";
+    const nextDefaultImageModel = currentContext.defaultImageModel ?? "";
+    const nextDefaultVideoModel = currentContext.defaultVideoModel ?? "";
+    const nextDefaultAudioModel = currentContext.defaultAudioModel ?? "";
+    if (nextDefaultTextModel !== prevDefaultTextModel) {
+      window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: nextDefaultTextModel }));
+    }
+    if (nextDefaultImageModel !== prevDefaultImageModel) {
+      window.dispatchEvent(new CustomEvent("toonflow:default-media-model-changed", { detail: { mediaType: "image", modelId: nextDefaultImageModel } }));
+    }
+    if (nextDefaultVideoModel !== prevDefaultVideoModel) {
+      window.dispatchEvent(new CustomEvent("toonflow:default-media-model-changed", { detail: { mediaType: "video", modelId: nextDefaultVideoModel } }));
+    }
+    if (nextDefaultAudioModel !== prevDefaultAudioModel) {
+      window.dispatchEvent(new CustomEvent("toonflow:default-media-model-changed", { detail: { mediaType: "audio", modelId: nextDefaultAudioModel } }));
+    }
   }
   for (const listener of listeners) {
     try {

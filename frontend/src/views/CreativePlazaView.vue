@@ -199,6 +199,10 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
   const prevImageKeyId = bindings.imageKeyId
   const prevVideoKeyId = bindings.videoKeyId
   const prevAudioKeyId = bindings.audioKeyId
+  const prevDefaultTextModel = bindings.defaultTextModel ?? ''
+  const prevDefaultImageModel = bindings.defaultImageModel ?? ''
+  const prevDefaultVideoModel = bindings.defaultVideoModel ?? ''
+  const prevDefaultAudioModel = bindings.defaultAudioModel ?? ''
 
   if ('textKeyId' in payload) bindings.textKeyId = normalizeOptionalKeyId(payload.textKeyId)
   if ('imageKeyId' in payload) bindings.imageKeyId = normalizeOptionalKeyId(payload.imageKeyId)
@@ -213,25 +217,39 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
   saveCreativeKeyBindings({ ...bindings })
   syncHostContextToStudio()
 
-  const textKeyChanged = bindings.textKeyId !== prevTextKeyId && typeof payload.defaultTextModel !== 'string'
-  const imageKeyChanged = bindings.imageKeyId !== prevImageKeyId && typeof payload.defaultImageModel !== 'string'
-  const videoKeyChanged = bindings.videoKeyId !== prevVideoKeyId && typeof payload.defaultVideoModel !== 'string'
-  const audioKeyChanged = bindings.audioKeyId !== prevAudioKeyId && typeof payload.defaultAudioModel !== 'string'
+  const textKeyChanged =
+    bindings.textKeyId !== prevTextKeyId &&
+    (typeof payload.defaultTextModel !== 'string' || payload.defaultTextModel === prevDefaultTextModel)
+  const imageKeyChanged =
+    bindings.imageKeyId !== prevImageKeyId &&
+    (typeof payload.defaultImageModel !== 'string' || payload.defaultImageModel === prevDefaultImageModel)
+  const videoKeyChanged =
+    bindings.videoKeyId !== prevVideoKeyId &&
+    (typeof payload.defaultVideoModel !== 'string' || payload.defaultVideoModel === prevDefaultVideoModel)
+  const audioKeyChanged =
+    bindings.audioKeyId !== prevAudioKeyId &&
+    (typeof payload.defaultAudioModel !== 'string' || payload.defaultAudioModel === prevDefaultAudioModel)
+
+  const targetTextKeyId = bindings.textKeyId
+  const targetImageKeyId = bindings.imageKeyId
+  const targetVideoKeyId = bindings.videoKeyId
+  const targetAudioKeyId = bindings.audioKeyId
 
   void discoverModelsForKeyIds([
-    bindings.textKeyId,
-    bindings.imageKeyId,
-    bindings.videoKeyId,
-    bindings.audioKeyId,
+    targetTextKeyId,
+    targetImageKeyId,
+    targetVideoKeyId,
+    targetAudioKeyId,
   ]).then(() => {
     let reconciled = false
     const reconcileRole = (
       changed: boolean,
-      keyId: number | null,
+      keyField: 'textKeyId' | 'imageKeyId' | 'videoKeyId' | 'audioKeyId',
+      expectedKeyId: number | null,
       field: 'defaultTextModel' | 'defaultImageModel' | 'defaultVideoModel' | 'defaultAudioModel',
     ) => {
-      if (!changed || !keyId) return
-      const models = discoveredModels[keyId] ?? []
+      if (!changed || !expectedKeyId || bindings[keyField] !== expectedKeyId) return
+      const models = discoveredModels[expectedKeyId] ?? []
       if (!models.length) return
       const current = (bindings[field] || '').trim()
       if (current && !models.includes(current)) {
@@ -246,10 +264,10 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
         }
       }
     }
-    reconcileRole(textKeyChanged, bindings.textKeyId, 'defaultTextModel')
-    reconcileRole(imageKeyChanged, bindings.imageKeyId, 'defaultImageModel')
-    reconcileRole(videoKeyChanged, bindings.videoKeyId, 'defaultVideoModel')
-    reconcileRole(audioKeyChanged, bindings.audioKeyId, 'defaultAudioModel')
+    reconcileRole(textKeyChanged, 'textKeyId', targetTextKeyId, 'defaultTextModel')
+    reconcileRole(imageKeyChanged, 'imageKeyId', targetImageKeyId, 'defaultImageModel')
+    reconcileRole(videoKeyChanged, 'videoKeyId', targetVideoKeyId, 'defaultVideoModel')
+    reconcileRole(audioKeyChanged, 'audioKeyId', targetAudioKeyId, 'defaultAudioModel')
     if (reconciled) {
       saveCreativeKeyBindings({ ...bindings })
     }

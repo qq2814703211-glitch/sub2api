@@ -933,4 +933,40 @@ describe('Toonflow browser-native local runtime', () => {
       setLocale('zh-CN')
     }
   })
+
+  it('dispatches default text and media model change events when host context updates defaults', () => {
+    const textEvents: string[] = []
+    const mediaEvents: Array<{ mediaType?: string; modelId?: string }> = []
+    const onText = (e: Event) => textEvents.push((e as CustomEvent<string>).detail)
+    const onMedia = (e: Event) =>
+      mediaEvents.push((e as CustomEvent<{ mediaType?: string; modelId?: string }>).detail)
+
+    window.addEventListener('toonflow:default-text-model-changed', onText)
+    window.addEventListener('toonflow:default-media-model-changed', onMedia)
+    try {
+      updateHostContext({
+        defaultTextModel: 'reconciled-text-1',
+        defaultImageModel: 'reconciled-img-1',
+        defaultVideoModel: 'reconciled-vid-1',
+        defaultAudioModel: 'reconciled-aud-1',
+      })
+      // Unchanged update must not re-dispatch default model events
+      updateHostContext({
+        defaultTextModel: 'reconciled-text-1',
+        defaultImageModel: 'reconciled-img-1',
+        defaultVideoModel: 'reconciled-vid-1',
+        defaultAudioModel: 'reconciled-aud-1',
+      })
+
+      expect(textEvents).toEqual(['reconciled-text-1'])
+      expect(mediaEvents).toEqual([
+        { mediaType: 'image', modelId: 'reconciled-img-1' },
+        { mediaType: 'video', modelId: 'reconciled-vid-1' },
+        { mediaType: 'audio', modelId: 'reconciled-aud-1' },
+      ])
+    } finally {
+      window.removeEventListener('toonflow:default-text-model-changed', onText)
+      window.removeEventListener('toonflow:default-media-model-changed', onMedia)
+    }
+  })
 })
