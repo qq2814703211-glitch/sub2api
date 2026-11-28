@@ -54,8 +54,7 @@
       </div>
     </div>
 
-    <template>
-      <template v-if="activeTab === 'installed'">
+    <template v-if="activeTab === 'installed'">
         <el-alert v-for="message in visibleLoadErrors" :key="message" class="loadError" :title="message" type="error" :closable="false" showIcon />
         <el-alert v-if="pluginExistenceError" class="loadError" :title="pluginExistenceError" type="warning" :closable="false" showIcon>
           <el-button size="small" @click="pluginExistenceRefreshKey++">重新检查</el-button>
@@ -332,7 +331,6 @@
           <messageMarkdown v-if="selectedPlugin.readme" :content="selectedPlugin.readme" />
         </div>
       </el-dialog>
-    </template>
   </div>
 </template>
 

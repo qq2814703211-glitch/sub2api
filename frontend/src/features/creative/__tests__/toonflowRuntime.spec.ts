@@ -969,4 +969,27 @@ describe('Toonflow browser-native local runtime', () => {
       window.removeEventListener('toonflow:default-media-model-changed', onMedia)
     }
   })
+
+  it('compiles pluginMarket template without wrapping pluginList in an inert bare HTML <template>', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const { parse, compileTemplate } = await import('@vue/compiler-sfc')
+    const pluginMarketPath = resolve(
+      process.cwd(),
+      'toonflow/upstream/apps/web/src/components/settings/panels/pluginMarket/index.vue',
+    )
+    const source = readFileSync(pluginMarketPath, 'utf8')
+    const { descriptor, errors } = parse(source, { filename: pluginMarketPath })
+    expect(errors).toEqual([])
+    expect(descriptor.template).not.toBeNull()
+
+    const compiled = compileTemplate({
+      source: descriptor.template!.content,
+      filename: pluginMarketPath,
+      id: 'pluginMarket-test',
+    })
+    expect(compiled.errors).toEqual([])
+    expect(compiled.code).toContain('pluginList')
+    expect(compiled.code).not.toMatch(/_createElement(?:VNode|Block)\("template"/)
+  })
 })

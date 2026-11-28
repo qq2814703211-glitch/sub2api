@@ -13,7 +13,7 @@
 
         <div
           v-if="isCreativePlaza"
-          class="hidden items-center gap-2.5 lg:flex"
+          class="flex min-w-0 items-center gap-2 sm:gap-2.5"
           data-test="header-creative-brand"
         >
           <img
@@ -29,7 +29,7 @@
           >
             <Icon name="sparkles" size="sm" />
           </span>
-          <h1 class="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">
+          <h1 class="truncate text-base font-semibold tracking-tight text-gray-900 dark:text-white sm:text-lg">
             {{ pageTitle }}
           </h1>
         </div>
@@ -72,12 +72,13 @@
           <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
         </router-link>
 
-        <!-- Creative Plaza Entry (icon only below sm) -->
+        <!-- Creative Plaza Entry (icon only below sm; hidden on Creative Plaza itself) -->
         <router-link
-          v-if="user"
+          v-if="user && !isCreativePlaza"
           to="/creative-plaza"
           :title="t('nav.creativePlaza')"
           :aria-label="t('nav.creativePlaza')"
+          data-test="header-creative-entry"
           class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
         >
           <Icon name="sparkles" size="sm" />
