@@ -1,5 +1,6 @@
 import { getHostContext, inferTextProtocol, resolveSub2ApiKey, type Sub2ApiKeyInfo } from "./sub2apiBridge";
 import { joinPath, kvGet, vfsWriteBytes } from "./vfs";
+import { translate } from "../upstream/packages/i18n/src/index";
 
 export interface CustomTextProvider {
   id: string;
@@ -110,6 +111,7 @@ export async function getStoredSettings(): Promise<Record<string, unknown>> {
 export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
   const host = getHostContext();
   const origin = host.origin || (typeof window !== "undefined" ? window.location.origin : "");
+  const siteApiLabel = translate("站内 API");
   const providers: CustomTextProvider[] = [];
 
   // Strictly enforce site-internal API gateway backed by the user's site API keys.
@@ -122,7 +124,7 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
     const modelIds = textIds.length ? textIds : DEFAULT_TEXT_MODELS;
     providers.push({
       id: "site-gateway",
-      label: primary.name ? `站内 API · ${primary.name}` : "站内 API",
+      label: primary.name ? `${siteApiLabel} · ${primary.name}` : siteApiLabel,
       apiUrl: `${origin}/v1`,
       protocol: inferTextProtocol(primary.platform),
       apiKey: primary.key,
@@ -139,7 +141,7 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
   } else {
     providers.push({
       id: "site-gateway",
-      label: "站内 API",
+      label: siteApiLabel,
       apiUrl: `${origin}/v1`,
       protocol: "openai-completions",
       apiKey: "",
@@ -201,18 +203,19 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   const discoveredVideos = filterModels(videoKey, /video|sora|veo|kling|seedance|runway|hailuo|minimax|wan|vidu|luma/i);
   const discoveredAudios = filterModels(audioKey, /tts|speech|audio|voice|minimax-speech/i);
 
+  const siteApiLabel = translate("站内 API");
   const imageRules: Record<string, unknown>[] = [
     {
       type: "select",
       field: "size",
-      title: "画面比例",
+      title: translate("画面比例"),
       value: "16:9",
       options: ["16:9", "9:16", "1:1", "4:3", "3:4"].map((v) => ({ label: v, value: v })),
     },
     {
       type: "inputNumber",
       field: "n",
-      title: "生成张数",
+      title: translate("生成张数"),
       value: 1,
       props: { min: 1, max: 4 },
     },
@@ -222,8 +225,8 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   ).map(
     (m): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: "站内 API",
-      providerName: "站内 API",
+      providerLabel: siteApiLabel,
+      providerName: siteApiLabel,
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -241,14 +244,14 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     {
       type: "select",
       field: "ratio",
-      title: "视频比例",
+      title: translate("视频比例"),
       value: "16:9",
       options: ["16:9", "9:16", "1:1"].map((v) => ({ label: v, value: v })),
     },
     {
       type: "select",
       field: "duration",
-      title: "时长（秒）",
+      title: translate("时长（秒）"),
       value: 5,
       options: [4, 5, 6, 8, 10].map((v) => ({ label: `${v}s`, value: v })),
     },
@@ -258,8 +261,8 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   ).map(
     (m): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: "站内 API",
-      providerName: "站内 API",
+      providerLabel: siteApiLabel,
+      providerName: siteApiLabel,
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -279,14 +282,14 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     {
       type: "select",
       field: "voice",
-      title: "音色",
+      title: translate("音色"),
       value: "alloy",
       options: ["alloy", "nova", "shimmer", "echo", "onyx", "fable"].map((v) => ({ label: v, value: v })),
     },
     {
       type: "inputNumber",
       field: "speed",
-      title: "语速",
+      title: translate("语速"),
       value: 1,
       props: { min: 0.5, max: 2, step: 0.1 },
     },
@@ -296,8 +299,8 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   ).map(
     (m): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: "站内 API",
-      providerName: "站内 API",
+      providerLabel: siteApiLabel,
+      providerName: siteApiLabel,
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -319,7 +322,7 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   return [
     {
       id: "site-media",
-      name: "站内 API",
+      name: siteApiLabel,
       description: "",
       builtin: true,
       enabled: true,
@@ -336,11 +339,11 @@ export async function listMediaModelsByType(mediaType?: string): Promise<MediaMo
 }
 
 export async function saveCustomMediaProvider(_provider: MediaProviderRecord): Promise<MediaProviderRecord[]> {
-  throw new Error("仅支持使用站内 API");
+  throw new Error(translate("仅支持使用站内 API"));
 }
 
 export async function deleteCustomMediaProvider(_id: string): Promise<MediaProviderRecord[]> {
-  throw new Error("仅支持使用站内 API");
+  throw new Error(translate("仅支持使用站内 API"));
 }
 
 export async function fetchRemoteProviderModels(
@@ -354,10 +357,10 @@ export async function fetchRemoteProviderModels(
   try {
     parsedBase = new URL(base, allowedOrigin || undefined);
   } catch {
-    throw new Error("仅支持使用站内 API");
+    throw new Error(translate("仅支持使用站内 API"));
   }
   if (allowedOrigin && parsedBase.origin !== allowedOrigin) {
-    throw new Error("仅支持使用站内 API");
+    throw new Error(translate("仅支持使用站内 API"));
   }
   const endpoint =
     input.protocol === "anthropic-messages"
@@ -387,7 +390,7 @@ export async function resolveProviderCredentials(
   const providers = await listAllTextProviders();
   const found = providers.find((p) => p.id === providerId) ?? providers[0];
   if (!found || !found.apiKey) {
-    throw new Error("请先在「设置 → 密钥与模型」中选择站内 API 密钥");
+    throw new Error(translate("请先在「设置 → 密钥与模型」中选择站内 API 密钥"));
   }
   return {
     apiUrl: found.apiUrl,
@@ -930,7 +933,7 @@ async function executeMediaGeneration(
 
   if (input.mediaType === "image") {
     const key = resolveSub2ApiKey("image");
-    if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择图像生成密钥");
+    if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择图像生成密钥"));
     const resp = await rawFetch(`${origin}/v1/images/generations`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
@@ -967,13 +970,13 @@ async function executeMediaGeneration(
       await vfsWriteBytes(joinPath(input.directory, relPath), bytes, { mimeType });
       saved.push({ path: relPath, mimeType, mediaType: "image" });
     }
-    if (!saved.length) throw new Error("未收到有效图像结果");
+    if (!saved.length) throw new Error(translate("未收到有效图像结果"));
     return saved;
   }
 
   if (input.mediaType === "audio") {
     const key = resolveSub2ApiKey("audio");
-    if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择音频生成密钥");
+    if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择音频生成密钥"));
     const resp = await rawFetch(`${origin}/v1/audio/speech`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
@@ -999,7 +1002,7 @@ async function executeMediaGeneration(
 
   // Video generation via site gateway
   const key = resolveSub2ApiKey("video");
-  if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择视频生成密钥");
+  if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择视频生成密钥"));
   const model = input.modelId || "grok-imagine-video";
   const isSeedance = /seedance|doubao/i.test(model);
   const endpoint = isSeedance ? `${origin}/api/v3/contents/generations/tasks` : `${origin}/v1/videos/generations`;
@@ -1050,7 +1053,7 @@ async function executeMediaGeneration(
       }
     }
   }
-  if (!videoUrl) throw new Error("视频生成超时或未返回下载地址");
+  if (!videoUrl) throw new Error(translate("视频生成超时或未返回下载地址"));
   const vidResp = await rawFetch(videoUrl, { signal });
   const bytes = new Uint8Array(await vidResp.arrayBuffer());
   const mimeType = vidResp.headers.get("content-type") || "video/mp4";

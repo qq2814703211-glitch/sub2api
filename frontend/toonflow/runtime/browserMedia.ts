@@ -1,4 +1,5 @@
 import { joinPath, vfsReadBytes, vfsWriteBytes } from "./vfs";
+import { translate } from "../upstream/packages/i18n/src/index";
 
 export function getBrowserFfmpegStatus() {
   return {
@@ -11,8 +12,8 @@ export function getBrowserFfmpegStatus() {
     sources: [
       {
         id: "browser-native",
-        label: "内置媒体引擎",
-        description: "内置媒体探测与视频抽帧处理。",
+        label: translate("内置媒体引擎"),
+        description: translate("内置媒体探测与视频抽帧处理。"),
         available: true,
       },
     ],

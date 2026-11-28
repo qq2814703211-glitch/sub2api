@@ -17,11 +17,15 @@ import {
 } from '../../../../toonflow/runtime/vfs'
 import {
   connectRemoteA2aAgent,
+  createMcpControlSseResponse,
+  handleMcpControlCall,
   listAgentTeams,
+  listControlConnections,
   listMcpServers,
   saveMcpServer,
   testMcpServer,
 } from '../../../../toonflow/runtime/mcpAndA2a'
+import { RETOUCH_CATEGORIES } from '../../imagegen/retouch'
 import {
   BUILTIN_TOOL_PACKAGES,
   installFromMarketOrFile,
@@ -696,6 +700,147 @@ describe('Toonflow browser-native local runtime', () => {
       expect(setItemSpy).not.toHaveBeenCalled()
     } finally {
       unsubscribe()
+    }
+  })
+
+  it('returns MCP control connections with id and nested state shape expected by Settings -> MCP', () => {
+    const controller = new AbortController()
+    const connId = 'mcp-conn-test-1'
+    createMcpControlSseResponse(connId, controller.signal)
+    try {
+      handleMcpControlCall('state', {
+        connectionId: connId,
+        state: {
+          directory: '/workspaces/demo',
+          panel: 'document',
+          canvasId: 'canvas-1',
+        },
+      })
+      const connections = listControlConnections()
+      const found = connections.find((c) => c.id === connId)
+      expect(found).toBeDefined()
+      expect(found?.id).toBe(connId)
+      expect(found?.state).toEqual({
+        directory: '/workspaces/demo',
+        panel: 'document',
+        canvasId: 'canvas-1',
+      })
+    } finally {
+      controller.abort()
+    }
+  })
+
+  it('localizes plugin market catalog, built-in nodes/tools/skills/agents, and retouch presets cleanly in EN and JA', async () => {
+    try {
+      setLocale('en')
+      const [nodesEn, extsEn, toolsEn, skillsEn, marketEn, teamsEn, textProvidersEn, mediaProvidersEn] = await Promise.all([
+        listInstalledNodes(),
+        listInstalledExtensions(),
+        listInstalledTools(),
+        listAllSkills(),
+        listMarketPlugins({ page: 1, limit: 20 }),
+        listAgentTeams(),
+        listAllTextProviders(),
+        listMediaProviders(),
+      ])
+
+      for (const provider of textProvidersEn) {
+        expect(provider.label).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+      for (const provider of mediaProvidersEn) {
+        expect(provider.name).not.toMatch(/[\u4e00-\u9fff]/)
+        for (const model of provider.models) {
+          expect(model.providerLabel).not.toMatch(/[\u4e00-\u9fff]/)
+          for (const rule of model.rules ?? []) {
+            if (typeof rule.title === 'string') {
+              expect(rule.title).not.toMatch(/[\u4e00-\u9fff]/)
+            }
+          }
+        }
+      }
+      const ffmpegEn = getBrowserFfmpegStatus()
+      for (const src of ffmpegEn.sources) {
+        expect(src.label).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(src.description).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+
+      for (const node of nodesEn) {
+        expect(node.displayName).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(node.description).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(node.author).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+      for (const ext of extsEn) {
+        expect(ext.displayName).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(ext.author).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+      for (const tool of toolsEn.tools) {
+        expect(tool.displayName).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(tool.description).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(tool.loadError).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+      for (const skill of skillsEn.filter((s) => s.builtin)) {
+        expect(skill.displayName).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(skill.description).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+      for (const item of marketEn.list) {
+        expect(item.name).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(item.desc).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(item.supplier).not.toMatch(/[\u4e00-\u9fff]/)
+        for (const tag of item.tags ?? []) {
+          expect(tag.text).not.toMatch(/[\u4e00-\u9fff]/)
+        }
+      }
+      for (const team of teamsEn.filter((t) => t.builtin)) {
+        expect(team.displayName).not.toMatch(/[\u4e00-\u9fff]/)
+        expect(team.description).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+
+      for (const extraKey of [
+        '安装',
+        '更新',
+        '访问未授权，请刷新页面后重试',
+        '当前环境不支持云端上传插件',
+        '选择站内 API 密钥即可开始创作。',
+        '当前浏览器运行环境版本过旧，请更新浏览器后重试。',
+        '当前移动端浏览器内核缺少所需能力，请更新系统浏览器后重试。',
+        '未返回图片数据',
+        '未返回改写结果',
+      ]) {
+        const translated = translate(extraKey)
+        expect(translated, `en key=${extraKey}`).not.toBe(extraKey)
+        expect(translated, `en key=${extraKey}`).not.toMatch(/[\u4e00-\u9fff]/)
+      }
+
+      for (const category of RETOUCH_CATEGORIES) {
+        expect(translate(category.title), `en cat=${category.id}`).not.toMatch(/[\u4e00-\u9fff]/)
+        for (const group of category.groups) {
+          expect(translate(group.title), `en group=${group.title}`).not.toMatch(/[\u4e00-\u9fff]/)
+          for (const preset of group.presets) {
+            expect(translate(preset.title), `en preset=${preset.id}`).not.toMatch(/[\u4e00-\u9fff]/)
+            if (preset.scenario) {
+              expect(translate(preset.scenario), `en scenario=${preset.id}`).not.toMatch(/[\u4e00-\u9fff]/)
+            }
+          }
+        }
+      }
+
+      setLocale('ja')
+      expect(translate('安装')).toBe('インストール')
+      expect(translate('肤色瑕疵')).toBe('肌・美肌補正')
+      expect(translate('肤色矫正')).toBe('肌色補正')
+      const [marketJa, nodesJa, textProvidersJa, mediaProvidersJa] = await Promise.all([
+        listMarketPlugins({ page: 1, limit: 20 }),
+        listInstalledNodes(),
+        listAllTextProviders(),
+        listMediaProviders(),
+      ])
+      expect(marketJa.list.find((p) => p.identifier === 'trumanMap')?.name).toBe('3D 白モデルプレビズ')
+      expect(nodesJa.find((n) => n.name === 'textNode')?.displayName).toBe('テキスト')
+      expect(textProvidersJa[0]?.label).toContain('サイト API')
+      expect(mediaProvidersJa[0]?.name).toBe('サイト API')
+      expect(getBrowserFfmpegStatus().sources[0]?.label).toBe('内蔵メディアエンジン')
+    } finally {
+      setLocale('zh-CN')
     }
   })
 })

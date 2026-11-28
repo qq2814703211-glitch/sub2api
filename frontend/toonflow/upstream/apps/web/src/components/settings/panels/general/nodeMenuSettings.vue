@@ -129,7 +129,7 @@
 
 <script setup lang="ts">
 import axios from "axios";
-import { translate } from "@toonflow/i18n/vue";
+import { locale, translate } from "@toonflow/i18n/vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from "vue";
 import { ElMessage, type InputInstance } from "element-plus";
 import { IconBox, IconFolder, IconFolderOpen, IconFolderMinus, IconRestore, IconChevronRight, IconEdit, IconEye, IconEyeOff, IconPlus, IconDragDrop, IconFileText, IconPhoto, IconVideo, IconMusic, IconMusicBolt, IconPhotoAi, IconCameraAi, IconArrowUp, IconArrowDown } from "@tabler/icons-vue";
@@ -390,6 +390,9 @@ function refreshInstalled(event: WindowEventMap["toonflow:plugin-installed"]) {
 onMounted(() => {
   void loadNodes();
   window.addEventListener("toonflow:plugin-installed", refreshInstalled);
+});
+watch(locale, () => {
+  void loadNodes();
 });
 onBeforeUnmount(() => {
   loadRequest++;

@@ -1,3 +1,4 @@
+import { translate } from "@toonflow/i18n/vue";
 import {
   getHostContext,
   inferTextProtocol,
@@ -217,7 +218,7 @@ export async function requestSiteImages(options: {
     .map((entry) => (entry.b64_json ? `data:image/${format};base64,${entry.b64_json}` : entry.url))
     .filter((src): src is string => Boolean(src));
 
-  if (!images.length) throw new Error("未返回图片数据");
+  if (!images.length) throw new Error(translate("未返回图片数据"));
   return images;
 }
 
@@ -230,7 +231,7 @@ export async function requestSiteRewrite(options: {
 }): Promise<string> {
   const keyInfo = getActiveTextKey();
   if (!keyInfo?.key) {
-    throw new Error("请先在「设置 → 密钥与模型」中选择站内 API 密钥");
+    throw new Error(translate("请先在「设置 → 密钥与模型」中选择站内 API 密钥"));
   }
   const model = options.model.trim() || "gpt-4o-mini";
   const inferred = inferTextProtocol(keyInfo.platform);
@@ -287,7 +288,7 @@ export async function requestSiteRewrite(options: {
     throw new Error(extractRewriteError(payload, response));
   }
   const text = parseRewriteResponse(protocol, payload).trim();
-  if (!text) throw new Error("未返回改写结果");
+  if (!text) throw new Error(translate("未返回改写结果"));
   return text;
 }
 

@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 import { computed, watch } from "vue";
 import { isRtlLocale } from "@toonflow/i18n";
 import { locale, setLocale, translate } from "@toonflow/i18n/vue";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
 import { getBrandName } from "@custom/i18nOverrides";
 import { resolveHostLocale, subscribeHostLocale } from "@custom/useStudioBrand";
 import { uiSettings } from "@/stores/settings";
@@ -44,10 +45,14 @@ export function registerLanguage() {
   const stopHostLocale = subscribeHostLocale(() => {
     if (uiSettings.value.language === "system") applyLanguage();
   });
-  const stopDocument = watch(locale, value => {
+  const stopDocument = watch(locale, (value, previous) => {
     document.documentElement.lang = value;
     document.documentElement.dir = isRtlLocale(value) ? "rtl" : "ltr";
     document.title = getBrandName(value);
+    if (previous && value !== previous) {
+      invalidateNodeModels("language");
+      invalidateNodeModels("media");
+    }
   }, { immediate: true });
   const stopRequests = registerApiLanguage(axios);
   window.addEventListener("languagechange", applyLanguage);

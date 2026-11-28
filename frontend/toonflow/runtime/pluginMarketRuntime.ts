@@ -1,4 +1,5 @@
 import { kvGet, kvSet } from "./vfs";
+import { translate } from "../upstream/packages/i18n/src/index";
 import extCanvasNodeMeta from "../upstream/packages/ext/canvasNode/src/metadata";
 import extImageMeta from "../upstream/packages/ext/image/src/metadata";
 import extMdMeta from "../upstream/packages/ext/md/src/metadata";
@@ -301,6 +302,22 @@ const CUSTOM_NODES_KEY = "toonflow.customNodes.v1";
 const MARKET_COLLECTIONS_KEY = "toonflow.marketCollections.v1";
 const CUSTOM_MARKET_KEY = "toonflow.customMarketPlugins.v1";
 
+function translateConfigRules(rules?: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (!Array.isArray(rules) || !rules.length) return [];
+  return rules.map((rule) => {
+    const next: Record<string, unknown> = { ...rule };
+    if (typeof next.title === "string") next.title = translate(next.title);
+    if (Array.isArray(next.options)) {
+      next.options = next.options.map((opt) =>
+        opt && typeof opt === "object" && typeof (opt as { label?: unknown }).label === "string"
+          ? { ...(opt as Record<string, unknown>), label: translate((opt as { label: string }).label) }
+          : opt
+      );
+    }
+    return next;
+  });
+}
+
 export async function listInstalledNodes() {
   const disabled = new Set(await kvGet<string[]>(DISABLED_PLUGINS_KEY, []));
   const configs = await kvGet<Record<string, Record<string, unknown>>>(PLUGIN_CONFIGS_KEY, {});
@@ -308,6 +325,9 @@ export async function listInstalledNodes() {
 
   const builtinItems = BUILTIN_NODES.map((node) => ({
     ...node,
+    displayName: translate(node.displayName),
+    description: translate(node.description),
+    author: translate(node.author),
     loadError: "",
     configRules: [],
     installedAt: 1700000000000,
@@ -345,11 +365,13 @@ export async function listInstalledExtensions() {
   const configs = await kvGet<Record<string, Record<string, unknown>>>(PLUGIN_CONFIGS_KEY, {});
   return BUILTIN_EXTENSIONS.map(({ name, version, meta }) => ({
     ...meta,
+    displayName: translate(meta.displayName),
+    configRules: translateConfigRules((meta as { configRules?: Record<string, unknown>[] }).configRules),
     name,
     version,
-    author: "内置",
+    author: translate("内置"),
     github: "",
-    readme: `# ${meta.displayName}\n\n内置文档区扩展。`,
+    readme: `# ${translate(meta.displayName)}\n\n${translate("内置文档区扩展。")}`,
     loadError: "",
     installedAt: 1700000000000,
     canManage: true,
@@ -573,18 +595,18 @@ export async function listInstalledTools() {
     canManage: true,
     tools: BUILTIN_TOOL_PACKAGES.map((tool) => ({
       name: tool.name,
-      displayName: tool.displayName,
-      description: tool.description,
+      displayName: translate(tool.displayName),
+      description: translate(tool.description),
       version: tool.version,
-      author: "内置",
+      author: translate("内置"),
       github: "",
       builtin: true,
       enabled: tool.browserSupported ? !disabled.has(`tool:${tool.name}`) : false,
       canManage: tool.browserSupported,
       canConfigure: Boolean(tool.browserSupported && tool.canConfigure),
       config: { ...(tool.defaultConfig ?? {}), ...(configs[`tool:${tool.name}`] ?? {}) },
-      configRules: tool.configRules ?? [],
-      loadError: tool.loadError ?? "",
+      configRules: translateConfigRules(tool.configRules),
+      loadError: tool.loadError ? translate(tool.loadError) : "",
       marketIdentifiers: [tool.name],
       installedAt: 1700000000000,
     })),
@@ -594,7 +616,13 @@ export async function listInstalledTools() {
 export async function listAllSkills(): Promise<StoredSkill[]> {
   const disabled = new Set(await kvGet<string[]>(DISABLED_PLUGINS_KEY, []));
   const custom = await kvGet<StoredSkill[]>(CUSTOM_SKILLS_KEY, []);
-  const builtins = BUILTIN_SKILLS.map((s) => ({ ...s, enabled: !disabled.has(`skill:${s.name}`) }));
+  const builtins = BUILTIN_SKILLS.map((s) => ({
+    ...s,
+    displayName: translate(s.displayName),
+    description: translate(s.description),
+    author: translate(s.author),
+    enabled: !disabled.has(`skill:${s.name}`),
+  }));
   const customs = custom.map((s) => ({ ...s, enabled: !disabled.has(`skill:${s.name}`) }));
   return [...builtins, ...customs];
 }
@@ -679,13 +707,27 @@ export async function listMarketPlugins(params: {
 }) {
   const collections = new Set(await kvGet<number[]>(MARKET_COLLECTIONS_KEY, []));
   const customMarket = await kvGet<MarketPluginItem[]>(CUSTOM_MARKET_KEY, []);
+  const customIds = new Set(customMarket.map((c) => c.id));
   const all = [...customMarket, ...CURATED_MARKET_PLUGINS].map((item) => {
     const marketLink = `browser-market://${item.type}/${item.identifier}`;
+    const isCustom = customIds.has(item.id);
+    const localizedName = isCustom ? item.name : translate(item.name);
+    const localizedDesc = isCustom ? item.desc : translate(item.desc);
+    const localizedSupplier = isCustom ? item.supplier : translate(item.supplier);
+    const localizedTags = item.tags?.map((tag) => ({
+      ...tag,
+      text: isCustom ? tag.text : translate(tag.text),
+    }));
     return {
       ...item,
+      name: localizedName,
+      desc: localizedDesc,
+      supplier: localizedSupplier,
+      tags: localizedTags,
       isCollected: collections.has(item.id),
       link: item.link || marketLink,
       url: marketLink,
+      _rawSearchText: `${item.name} ${item.desc} ${item.supplier}`,
     };
   });
 
@@ -695,13 +737,13 @@ export async function listMarketPlugins(params: {
       if (params.type === "collection") {
         if (!item.isCollected) return false;
       } else if (params.type === "my") {
-        if (!customMarket.some((c) => c.id === item.id)) return false;
+        if (!customIds.has(item.id)) return false;
       } else if (item.type !== params.type) {
         return false;
       }
     }
     if (keyword) {
-      const hay = `${item.name} ${item.identifier} ${item.desc} ${item.supplier}`.toLowerCase();
+      const hay = `${item.name} ${item.identifier} ${item.desc} ${item.supplier} ${item._rawSearchText}`.toLowerCase();
       if (!hay.includes(keyword)) return false;
     }
     return true;
@@ -711,7 +753,7 @@ export async function listMarketPlugins(params: {
   const limit = Math.max(1, Number(params.limit || 20));
   const start = (page - 1) * limit;
   return {
-    list: filtered.slice(start, start + limit),
+    list: filtered.slice(start, start + limit).map(({ _rawSearchText: _ignored, ...rest }) => rest),
     total: filtered.length,
     page,
     limit,
@@ -882,19 +924,20 @@ export function listExploreProjects(body?: { categoryId?: string; search?: strin
   const keyword = (body?.searchKeyword || body?.search || "").trim().toLowerCase();
   const filtered = EXPLORE_PROJECTS.filter((p) => {
     if (body?.categoryId && p.categoryId !== body.categoryId) return false;
-    if (keyword && !`${p.title} ${p.description} ${p.categoryName}`.toLowerCase().includes(keyword)) return false;
+    const localizedHay = `${translate(p.title)} ${translate(p.description)} ${translate(p.categoryName)} ${p.title} ${p.description} ${p.categoryName}`.toLowerCase();
+    if (keyword && !localizedHay.includes(keyword)) return false;
     return true;
   });
   return {
     categories: [
-      { id: "drama", name: "短剧分镜" },
-      { id: "character", name: "角色资产" },
+      { id: "drama", name: translate("短剧分镜") },
+      { id: "character", name: translate("角色资产") },
     ],
     list: filtered.map((p) => ({
       id: p.id,
-      title: p.title,
+      title: translate(p.title),
       coverUrl: p.coverUrl,
-      author: { id: "toonflow-studio", name: p.author },
+      author: { id: "creative-plaza", name: translate(p.author) },
       likeCount: p.likes,
       collectionCount: p.downloads,
     })),
@@ -906,7 +949,10 @@ export function getExploreProjectById(id: string) {
   const p = EXPLORE_PROJECTS.find((item) => item.id === id) ?? EXPLORE_PROJECTS[0]!;
   return {
     ...p,
-    author: { id: "toonflow-studio", name: p.author },
+    title: translate(p.title),
+    description: translate(p.description),
+    categoryName: translate(p.categoryName),
+    author: { id: "creative-plaza", name: translate(p.author) },
     likeCount: p.likes,
     collectionCount: p.downloads,
     videoUrl: "",
@@ -914,7 +960,7 @@ export function getExploreProjectById(id: string) {
     canvases: [
       {
         id: "main",
-        name: p.title,
+        name: translate(p.title),
         nodes: p.process.nodes.map((n) => ({
           id: n.id,
           label: String((n.data as { label?: string }).label || n.id),

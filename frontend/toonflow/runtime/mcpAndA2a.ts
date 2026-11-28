@@ -1,4 +1,5 @@
 import { kvGet, kvSet } from "./vfs";
+import { translate } from "../upstream/packages/i18n/src/index";
 import storyboardTeamJson from "../upstream/packages/teams/storyboardTeam/team.json";
 import storyboardDirectorMd from "../upstream/packages/teams/storyboardTeam/members/director.md?raw";
 import storyboardWriterMd from "../upstream/packages/teams/storyboardTeam/members/writer.md?raw";
@@ -11,6 +12,7 @@ interface ControlConnection {
   connectionId: string;
   directory: string;
   canvasId?: string;
+  panel?: string;
   connectedAt: number;
   push: (event: unknown) => void;
 }
@@ -81,7 +83,10 @@ export function handleMcpControlCall(path: string, body: Record<string, unknown>
     if (conn) {
       const state = body.state && typeof body.state === "object" ? (body.state as Record<string, unknown>) : body;
       if (typeof state.directory === "string") conn.directory = state.directory;
+      else if (state.directory === null) conn.directory = "";
       if (typeof state.canvasId === "string") conn.canvasId = state.canvasId;
+      else if (state.canvasId === null) conn.canvasId = "";
+      if (typeof state.panel === "string") conn.panel = state.panel;
     }
     return { ok: true, connectionId };
   }
@@ -137,9 +142,16 @@ export async function dispatchCanvasControlCommand(
 
 export function listControlConnections() {
   return [...controlConnections.values()].map((c) => ({
+    id: c.connectionId,
     connectionId: c.connectionId,
     directory: c.directory,
     canvasId: c.canvasId ?? "",
+    panel: c.panel ?? "",
+    state: {
+      directory: c.directory || undefined,
+      panel: c.panel || "canvas",
+      canvasId: c.canvasId || undefined,
+    },
     connectedAt: c.connectedAt,
   }));
 }
@@ -428,6 +440,13 @@ export async function listAgentTeams(): Promise<StoredAgentTeam[]> {
   const a2a = await getA2aSettings();
   return all.map((team) => ({
     ...team,
+    ...(team.builtin
+      ? {
+          displayName: translate(team.displayName),
+          description: translate(team.description),
+          author: translate(team.author),
+        }
+      : {}),
     ...(team.kind === "local" && team.enabled && a2a.enabled
       ? { cardUrl: `${a2a.url}/${team.name}/.well-known/agent-card.json` }
       : {}),

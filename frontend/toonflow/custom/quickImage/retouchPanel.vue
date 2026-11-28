@@ -55,7 +55,7 @@
         :class="{ active: group.id === activeGroup }"
         @click="selectGroup(group.id)"
       >
-        {{ group.title }}
+        {{ translate(group.title) }}
         <span v-if="countInGroup(group.id)" class="pillCount">{{ countInGroup(group.id) }}</span>
       </button>
     </div>
@@ -67,14 +67,14 @@
         type="button"
         class="presetItem"
         :class="{ selected: isSelected(preset.id) }"
-        :title="preset.prompt"
+        :title="translate(preset.scenario || preset.title)"
         @click="toggle(preset)"
       >
         <div class="presetHead">
-          <span class="presetTitle">{{ preset.title }}</span>
+          <span class="presetTitle">{{ translate(preset.title) }}</span>
           <icon-check v-if="isSelected(preset.id)" :size="14" class="checkIcon" aria-hidden="true" />
         </div>
-        <span v-if="preset.scenario" class="presetScenario">{{ preset.scenario }}</span>
+        <span v-if="preset.scenario" class="presetScenario">{{ translate(preset.scenario) }}</span>
       </button>
     </div>
 

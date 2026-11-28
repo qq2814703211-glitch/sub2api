@@ -1,4 +1,5 @@
 import axios, { AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
+import { translate } from "../upstream/packages/i18n/src/index";
 import { getHostContext } from "./sub2apiBridge";
 import {
   ASSETS_ROOT,
@@ -238,7 +239,7 @@ async function routeToonflowApi(
         toonflowProvider: null,
         mcp: {
           enabled: true,
-          port: 3000,
+          port: 10588,
           token: "creative-plaza-mcp",
           ...savedMcp,
         },
@@ -580,7 +581,7 @@ async function routeToonflowApi(
       return ok({ language: "site-gateway", media: "site-media" });
     }
     if (path === "/api/providers/account/install") {
-      return fail(403, "仅支持使用站内 API");
+      return fail(403, translate("仅支持使用站内 API"));
     }
     if (path === "/api/providers/builtin/list") {
       return ok([]);
@@ -590,10 +591,10 @@ async function routeToonflowApi(
       return ok(await listMediaModelsByType(q.get("mediaType") || q.get("type") || undefined));
     }
     if (path === "/api/providers/media/save" || path === "/api/providers/media/add") {
-      return fail(403, "仅支持使用站内 API");
+      return fail(403, translate("仅支持使用站内 API"));
     }
     if (path === "/api/providers/media/delete") {
-      return fail(403, "仅支持使用站内 API");
+      return fail(403, translate("仅支持使用站内 API"));
     }
     if (path === "/api/providers/media/validate") return ok({ valid: true });
 
@@ -733,9 +734,11 @@ async function routeToonflowApi(
       return ok({
         enabled: mcp.enabled !== false,
         running: true,
-        preferredPort: Number(mcp.port || 3000),
-        port: Number(mcp.port || 3000),
+        preferredPort: Number(mcp.port || 10588),
+        port: Number(mcp.port || 10588),
         endpoint: `${window.location.origin}/mcp`,
+        stdio: null,
+        error: null,
         connections: listControlConnections(),
         browserNative: true,
       });

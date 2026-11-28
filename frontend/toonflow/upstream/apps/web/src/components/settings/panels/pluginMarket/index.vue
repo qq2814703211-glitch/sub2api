@@ -240,7 +240,7 @@
                 </el-button>
               </el-badge>
               <el-popconfirm
-                v-if="(plugin.author !== '内置' && plugin.author !== 'Toonflow') || plugin.type === 'skill' || plugin.type === 'agent' || plugin.type === 'ext'"
+                v-if="(!plugin.builtin && plugin.author !== '内置' && plugin.author !== 'Toonflow') || plugin.type === 'skill' || plugin.type === 'agent' || plugin.type === 'ext'"
                 :title="`确定卸载“${plugin.displayName}”${plugin.type === 'skill' ? '及其附属文件' : ''}吗？`"
                 width="280"
                 confirmButtonText="卸载"
@@ -342,7 +342,7 @@
 </template>
 
 <script setup lang="ts">
-import { translate } from "@toonflow/i18n/vue";
+import { locale, translate } from "@toonflow/i18n/vue";
 import axios from "axios";
 import parse from "semver/functions/parse";
 import { computed, defineAsyncComponent, markRaw, onMounted, onBeforeUnmount, ref, watch } from "vue";
@@ -579,7 +579,7 @@ function hasMissingConfig(plugin: Plugin) {
 watch([activeTab, accountToken], () => { marketPage.value = 1; });
 
 watch(
-  () => [visible, activeTab.value, selectedTypes.value.discover, marketPage.value, appliedQuery.value, marketRefreshKey.value, accountToken.value],
+  () => [visible, activeTab.value, selectedTypes.value.discover, marketPage.value, appliedQuery.value, marketRefreshKey.value, accountToken.value, locale.value],
   async (_value, _previous, onCleanup) => {
     marketLoading.value = false;
     marketError.value = "";
@@ -639,7 +639,7 @@ watch(
   { immediate: true }
 );
 watch(
-  () => [visible, activeTab.value, refreshKey.value],
+  () => [visible, activeTab.value, refreshKey.value, locale.value],
   async (_value, _previous, onCleanup) => {
     if (!visible || (activeTab.value !== "discover" && activeTab.value !== "installed")) return;
     const controller = new AbortController();
@@ -896,7 +896,7 @@ async function updatePlugin(plugin: Plugin, action: "setEnabled" | "uninstall", 
     loading.value ||
     pendingPlugins.value.has(plugin.key) ||
     exportingPlugins.value.has(plugin.key) ||
-    (action === "uninstall" && (plugin.author === "内置" || plugin.author === "Toonflow") && (plugin.type === "node" || plugin.type === "tool"))
+    (action === "uninstall" && (plugin.builtin || plugin.author === "内置" || plugin.author === "Toonflow") && (plugin.type === "node" || plugin.type === "tool"))
   )
     return;
   pendingPlugins.value.add(plugin.key);
