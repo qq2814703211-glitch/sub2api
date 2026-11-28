@@ -1,4 +1,4 @@
-import { guessMimeType } from "./vfs";
+import { guessMimeType, normalizePath } from "./vfs";
 
 interface Call {
   method: string;
@@ -24,11 +24,12 @@ type Plan =
   | { kind: "exec"; inputs: [FileRef]; outputs: FileRef[]; args: string[] };
 
 export function workspaceMediaPath(value: unknown): string {
-  if (typeof value !== "string" || !value.trim() || /^[\\/]|^[a-z][a-z\d+.-]*:/i.test(value)
-    || Array.from(value).some(c => c.charCodeAt(0) < 32) || value.split(/[\\/]/).includes("..")) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || /^[\\/]|^[a-z][a-z\d+.-]*:/i.test(raw)
+    || Array.from(raw).some(c => c.charCodeAt(0) < 32) || raw.split(/[\\/]/).some(part => part.trim() === "..")) {
     throw new Error(`无效的工作区媒体路径：${value}`);
   }
-  const path = value.split(/[\\/]+/).filter(part => part && part !== ".").join("/");
+  const path = normalizePath(raw).slice(1).trimEnd();
   if (!path) throw new Error("工作区媒体路径不能为空");
   return path;
 }

@@ -87,6 +87,8 @@ worker.onmessage = async ({ data: job }) => {
         transfers = outputs.map(file => file.data);
       }
     } finally {
+      core.setProgress(() => {});
+      core.setLogger(() => {});
       core.reset();
       for (const name of fs.readdir(dir)) {
         if (name !== "." && name !== "..") fs.unlink(`${dir}/${name}`);

@@ -55,6 +55,11 @@ describe('video node FFmpeg requests', () => {
   })
 })
 
+it('rejects output aliases that resolve to the source in VFS', () => {
+  expect(() => compileFfmpegRequest(options, [call('output', 'assets//./input.mp4 ')], call('run'), '/job'))
+    .toThrow(/输出文件不能覆盖原视频/)
+})
+
 const directory = '/workspaces/ffmpeg-sse-spec'
 const request = { directory, requestId: 'test-job', options }
 
