@@ -32,7 +32,7 @@
         <el-button text :icon="IconX" aria-label="关闭音频预览" @click="previewAsset = undefined" />
       </div>
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" showIcon />
-      <audio v-else :src="mediaSrc" :aria-label="previewAsset.name" controls preload="auto" @loadeddata="handleLoaded" @error="handleError" />
+      <audio v-else-if="mediaSrc" :src="mediaSrc" :aria-label="previewAsset.name" controls preload="auto" @loadeddata="handleLoaded" @error="handleError" />
       <p v-if="preparing" role="status">正在生成兼容预览…</p>
     </div>
   </el-card>
@@ -40,12 +40,12 @@
   <input ref="fileInput" type="file" multiple hidden aria-label="选择本地素材" :disabled="uploading" @change="uploadFiles" />
   <assetMenu v-if="visible" ref="assetMenuRef" :entries="entries" :insert="canSelect ? undefined : insertCanvasAsset" @changed="refreshAssets" />
 
-  <el-image-viewer v-if="previewAsset?.kind === 'image'" :urlList="[mediaSrc]" teleported @error="handleError" @close="previewAsset = undefined" />
+  <el-image-viewer v-if="previewAsset?.kind === 'image' && mediaSrc" :urlList="[mediaSrc]" teleported @error="handleError" @close="previewAsset = undefined" />
 
   <el-dialog :modelValue="previewAsset?.kind === 'video'" :title="previewAsset?.name" width="min(800px, calc(100vw - 32px))" alignCenter appendToBody destroyOnClose @update:modelValue="previewAsset = undefined">
     <div v-if="previewAsset?.kind === 'video'" class="assetPreview">
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" showIcon />
-      <video v-else class="previewVideo" :src="mediaSrc" :aria-label="previewAsset.name" controls playsinline preload="auto" @loadeddata="handleLoaded" @error="handleError" />
+      <video v-else-if="mediaSrc" class="previewVideo" :src="mediaSrc" :aria-label="previewAsset.name" controls playsinline preload="auto" @loadeddata="handleLoaded" @error="handleError" />
       <p v-if="preparing" role="status">正在生成兼容预览…</p>
     </div>
   </el-dialog>
@@ -53,7 +53,7 @@
   <el-dialog v-if="expanded" :modelValue="previewAsset?.kind === 'audio'" :title="previewAsset?.name" width="min(560px, calc(100vw - 32px))" alignCenter appendToBody destroyOnClose @update:modelValue="previewAsset = undefined">
     <div v-if="previewAsset?.kind === 'audio'" class="assetPreview">
       <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" showIcon />
-      <audio v-else class="previewAudio" :src="mediaSrc" :aria-label="previewAsset.name" controls preload="auto" @loadeddata="handleLoaded" @error="handleError" />
+      <audio v-else-if="mediaSrc" class="previewAudio" :src="mediaSrc" :aria-label="previewAsset.name" controls preload="auto" @loadeddata="handleLoaded" @error="handleError" />
       <p v-if="preparing" role="status">正在生成兼容预览…</p>
     </div>
   </el-dialog>

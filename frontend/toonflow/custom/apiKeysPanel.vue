@@ -402,6 +402,7 @@ function onSelectKey(field: "textKeyId" | "imageKeyId" | "videoKeyId" | "audioKe
   if (role === "text" && nextModels.length) {
     if (defaultTextModel.value && !nextModels.includes(defaultTextModel.value)) {
       patch.defaultTextModel = nextModels[0] ?? "";
+      window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: patch.defaultTextModel }));
     }
     if (rewriteModel.value && !nextModels.includes(rewriteModel.value)) {
       patch.rewriteModel = "";
@@ -472,6 +473,7 @@ async function verifyKey(role: SiteKeyRole) {
       } else if (role === "text") {
         if (!defaultTextModel.value || !res.models.includes(defaultTextModel.value)) {
           patch.defaultTextModel = res.models[0] ?? "";
+          window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: patch.defaultTextModel }));
         }
         if (rewriteModel.value && !res.models.includes(rewriteModel.value)) {
           patch.rewriteModel = "";

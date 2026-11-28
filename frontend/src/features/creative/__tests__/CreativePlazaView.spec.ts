@@ -240,4 +240,50 @@ describe('CreativePlazaView', () => {
     expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}').theme).toBe('light')
     wrapper.unmount()
   })
+
+  it('reconciles stale default models when switching to a key with a distinct /v1/models list', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      const auth = new Headers(init?.headers).get('Authorization') || ''
+      const data = auth.includes('sk-test-image')
+        ? [{ id: 'flux-kontext-pro' }, { id: 'imagen-4' }]
+        : [{ id: 'gpt-4o' }, { id: 'gpt-image-1' }]
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const { wrapper } = await mountAt('/creative-plaza')
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: {
+          source: 'toonflow-web',
+          type: 'updateKeyBindings',
+          payload: { defaultImageModel: 'gpt-image-1' },
+        },
+      }),
+    )
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem(CREATIVE_KEY_BINDINGS_STORAGE_KEY) || '{}').defaultImageModel).toBe(
+      'gpt-image-1',
+    )
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: {
+          source: 'toonflow-web',
+          type: 'updateKeyBindings',
+          payload: { imageKeyId: 2 },
+        },
+      }),
+    )
+    await flushPromises()
+
+    const saved = JSON.parse(localStorage.getItem(CREATIVE_KEY_BINDINGS_STORAGE_KEY) || '{}')
+    expect(saved.imageKeyId).toBe(2)
+    expect(saved.defaultImageModel).toBe('flux-kontext-pro')
+    wrapper.unmount()
+  })
 })

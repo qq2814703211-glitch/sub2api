@@ -195,6 +195,11 @@ function normalizeOptionalKeyId(value: unknown): number | null {
 }
 
 function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
+  const prevTextKeyId = bindings.textKeyId
+  const prevImageKeyId = bindings.imageKeyId
+  const prevVideoKeyId = bindings.videoKeyId
+  const prevAudioKeyId = bindings.audioKeyId
+
   if ('textKeyId' in payload) bindings.textKeyId = normalizeOptionalKeyId(payload.textKeyId)
   if ('imageKeyId' in payload) bindings.imageKeyId = normalizeOptionalKeyId(payload.imageKeyId)
   if ('videoKeyId' in payload) bindings.videoKeyId = normalizeOptionalKeyId(payload.videoKeyId)
@@ -207,12 +212,47 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
   if (typeof payload.rewriteEffort === 'string') bindings.rewriteEffort = payload.rewriteEffort
   saveCreativeKeyBindings({ ...bindings })
   syncHostContextToStudio()
+
+  const textKeyChanged = bindings.textKeyId !== prevTextKeyId && typeof payload.defaultTextModel !== 'string'
+  const imageKeyChanged = bindings.imageKeyId !== prevImageKeyId && typeof payload.defaultImageModel !== 'string'
+  const videoKeyChanged = bindings.videoKeyId !== prevVideoKeyId && typeof payload.defaultVideoModel !== 'string'
+  const audioKeyChanged = bindings.audioKeyId !== prevAudioKeyId && typeof payload.defaultAudioModel !== 'string'
+
   void discoverModelsForKeyIds([
     bindings.textKeyId,
     bindings.imageKeyId,
     bindings.videoKeyId,
     bindings.audioKeyId,
   ]).then(() => {
+    let reconciled = false
+    const reconcileRole = (
+      changed: boolean,
+      keyId: number | null,
+      field: 'defaultTextModel' | 'defaultImageModel' | 'defaultVideoModel' | 'defaultAudioModel',
+    ) => {
+      if (!changed || !keyId) return
+      const models = discoveredModels[keyId] ?? []
+      if (!models.length) return
+      const current = (bindings[field] || '').trim()
+      if (current && !models.includes(current)) {
+        bindings[field] = models[0] ?? ''
+        reconciled = true
+      }
+      if (field === 'defaultTextModel') {
+        const currentRewrite = (bindings.rewriteModel || '').trim()
+        if (currentRewrite && !models.includes(currentRewrite)) {
+          bindings.rewriteModel = ''
+          reconciled = true
+        }
+      }
+    }
+    reconcileRole(textKeyChanged, bindings.textKeyId, 'defaultTextModel')
+    reconcileRole(imageKeyChanged, bindings.imageKeyId, 'defaultImageModel')
+    reconcileRole(videoKeyChanged, bindings.videoKeyId, 'defaultVideoModel')
+    reconcileRole(audioKeyChanged, bindings.audioKeyId, 'defaultAudioModel')
+    if (reconciled) {
+      saveCreativeKeyBindings({ ...bindings })
+    }
     syncHostContextToStudio()
   })
 }

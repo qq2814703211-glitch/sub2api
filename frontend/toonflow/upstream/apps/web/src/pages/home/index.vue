@@ -104,7 +104,6 @@ function syncSectionFromRoute() {
     return;
   }
   if (validSections.has(section)) {
-    if (section === "assets" && currentUser.value?.role === "user") return;
     if (section === "pluginMarket" && publicWeb.value) return;
     showSection(section);
   }
@@ -133,10 +132,6 @@ watch([creating, opening], ([creating, opening]) => {
     workspaceStore.projectLoading = false;
   }
 }, { flush: "sync" });
-// 在设置里切换为子账号后素材库入口会隐藏，停留在素材库会让右侧空白。
-watch(() => currentUser.value?.role, role => {
-  if (role === "user" && activeSection.value === "assets") showSection("home");
-});
 
 function showSection(section: string) {
   if (section === "quickImage") quickImageMounted.value = true;
@@ -388,15 +383,7 @@ async function createProject(request?: NonNullable<typeof workspaceStore.pending
 
     .homeSidebar {
       .sidebarPromotion { display: none; }
-      .sidebarHeader {
-        .sidebarBrand {
-          gap: 0;
-
-          .brandName { max-width: 0; opacity: 0; }
-        }
-
-        .sidebarToggle { display: none; }
-      }
+      .sidebarHeader { display: none; }
 
       .sidebarItem {
         gap: 0;

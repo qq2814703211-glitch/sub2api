@@ -1085,7 +1085,7 @@ async function loadInitialData() {
     hydrated.push({
       id: row.id,
       prompt: row.prompt,
-      model: row.model || "gpt-image-1",
+      model: row.model || "",
       size: row.size || "1024x1024",
       quality: row.quality || "auto",
       count: row.count || imgs.length || 1,
