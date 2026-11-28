@@ -133,8 +133,8 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		toonflowStatic := isToonflowStaticPath(c)
-		if toonflowStatic {
+		creativeStudioStatic := isCreativeStudioStaticPath(c)
+		if creativeStudioStatic {
 			c.Header("X-Frame-Options", "SAMEORIGIN")
 		} else {
 			c.Header("X-Frame-Options", "DENY")
@@ -147,8 +147,8 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 
 		if cfg.Enabled {
 			effectivePolicy := finalPolicy
-			if toonflowStatic {
-				effectivePolicy = adaptCSPForToonflowFrame(effectivePolicy)
+			if creativeStudioStatic {
+				effectivePolicy = adaptCSPForCreativeStudioFrame(effectivePolicy)
 			}
 			// Generate nonce for this request
 			nonce, err := GenerateNonce()
@@ -165,17 +165,17 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 	}
 }
 
-func isToonflowStaticPath(c *gin.Context) bool {
+func isCreativeStudioStaticPath(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
 		return false
 	}
 	path := c.Request.URL.Path
-	return path == "/toonflow" || strings.HasPrefix(path, "/toonflow/")
+	return path == "/creative-studio" || strings.HasPrefix(path, "/creative-studio/")
 }
 
-// adaptCSPForToonflowFrame 仅对同源嵌套的 /toonflow/ 静态应用放开同源 iframe 嵌套、
+// adaptCSPForCreativeStudioFrame 仅对同源嵌套的 /creative-studio/ 静态应用放开同源 iframe 嵌套、
 // 浏览器端自定义插件 blob 模块以及用户本机 MCP/A2A/本地模型地址连接。
-func adaptCSPForToonflowFrame(policy string) string {
+func adaptCSPForCreativeStudioFrame(policy string) string {
 	adapted := strings.ReplaceAll(policy, "frame-ancestors 'none'", "frame-ancestors 'self'")
 	if !directiveHasValue(adapted, "frame-ancestors", "'self'") {
 		adapted = addToDirective(adapted, "frame-ancestors", "'self'")

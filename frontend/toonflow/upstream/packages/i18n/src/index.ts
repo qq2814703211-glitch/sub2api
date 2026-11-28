@@ -1,7 +1,12 @@
 import { IntlMessageFormat } from "intl-messageformat";
 import { escapeMessageText } from "./messageText.ts";
 export { escapeMessageText } from "./messageText.ts";
-import { lookupStudioOverride, sanitizeBrandText } from "../../../../custom/i18nOverrides.ts";
+import {
+  lookupStudioFallbackOverride,
+  lookupStudioOverride,
+  resolveStudioAlias,
+  sanitizeBrandText,
+} from "../../../../custom/i18nOverrides.ts";
 import zhTw from "./locales/zhTw.json" with { type: "json" };
 import en from "./locales/en.json" with { type: "json" };
 import ja from "./locales/ja.json" with { type: "json" };
@@ -95,7 +100,13 @@ export function translate(message: string | MessageDescriptor, values?: Record<s
   const parameters = values ?? (typeof message === "string" ? undefined : message.values);
   const override = lookupStudioOverride(id, language);
   const catalog = Object.hasOwn(dictionaries, language) ? dictionaries[language] : undefined;
-  const rawTranslated = override ?? (catalog && Object.hasOwn(catalog, id) && typeof catalog[id] === "string" ? catalog[id] : id);
+  const catalogHit = catalog && Object.hasOwn(catalog, id) && typeof catalog[id] === "string" ? catalog[id] : undefined;
+  const aliased = override === undefined && catalogHit === undefined ? resolveStudioAlias(id, language, catalog) : undefined;
+  const fallbackOverride =
+    override === undefined && catalogHit === undefined && aliased === undefined
+      ? lookupStudioFallbackOverride(id, language)
+      : undefined;
+  const rawTranslated = override ?? catalogHit ?? aliased ?? fallbackOverride ?? id;
   const translated = sanitizeBrandText(rawTranslated, language);
   if (!parameters || !Object.keys(parameters).length) return translated;
   const format = (text: string) => {

@@ -11,7 +11,7 @@
           :class="{ active: option.id === modelValue.intensity }"
           @click="emit('update:intensity', option.id)"
         >
-          {{ option.label }}
+          {{ translate(option.label) }}
         </button>
       </div>
     </div>
@@ -27,7 +27,7 @@
           :class="{ active: option.id === modelValue.subject }"
           @click="emit('update:subject', option.id)"
         >
-          {{ option.label }}
+          {{ translate(option.label) }}
         </button>
       </div>
     </div>
@@ -41,7 +41,7 @@
         :class="{ active: category.id === activeCategory }"
         @click="selectCategory(category.id)"
       >
-        {{ category.title }}
+        {{ translate(category.title) }}
         <span v-if="countInCategory(category.id)" class="pillCount">{{ countInCategory(category.id) }}</span>
       </button>
     </div>

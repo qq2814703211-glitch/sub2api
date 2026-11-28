@@ -79,10 +79,10 @@ function injectPublicSettings(backendUrl: string): Plugin {
 }
 
 /**
- * 开发模式下直接挂载已构建的 /toonflow/ 静态子应用（与生产 Go embed 路径完全一致）
+ * 开发模式下直接挂载已构建的 /creative-studio/ 静态子应用（与生产 Go embed 路径完全一致）
  */
-function serveBuiltToonflow(): Plugin {
-  const toonflowDistDir = resolve(__dirname, '../backend/internal/web/dist/toonflow')
+function serveBuiltCreativeStudio(): Plugin {
+  const studioDistDir = resolve(__dirname, '../backend/internal/web/dist/creative-studio')
   const mimeMap: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
@@ -97,14 +97,14 @@ function serveBuiltToonflow(): Plugin {
     '.wasm': 'application/wasm',
   }
   return {
-    name: 'serve-built-toonflow',
+    name: 'serve-built-creative-studio',
     apply: 'serve',
     configureServer(server) {
-      server.middlewares.use('/toonflow', (req, res, next) => {
+      server.middlewares.use('/creative-studio', (req, res, next) => {
         const rawPath = (req.url || '/').split('?')[0] || '/'
         const rel = rawPath === '/' || rawPath === '' ? 'index.html' : rawPath.replace(/^\/+/, '')
-        const abs = join(toonflowDistDir, rel)
-        if (!abs.startsWith(toonflowDistDir) || !existsSync(abs) || statSync(abs).isDirectory()) {
+        const abs = join(studioDistDir, rel)
+        if (!abs.startsWith(studioDistDir) || !existsSync(abs) || statSync(abs).isDirectory()) {
           next()
           return
         }
@@ -130,7 +130,7 @@ export default defineConfig(({ mode }) => {
         vueTsc: true
       }),
       injectPublicSettings(backendUrl),
-      serveBuiltToonflow()
+      serveBuiltCreativeStudio()
     ],
   resolve: {
     alias: {

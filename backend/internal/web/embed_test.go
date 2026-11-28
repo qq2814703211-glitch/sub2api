@@ -967,11 +967,11 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 }
 
-func TestFrontendServerServesToonflowStaticHTML(t *testing.T) {
+func TestFrontendServerServesCreativeStudioStaticHTML(t *testing.T) {
 	memFS := fstest.MapFS{
-		"index.html":          {Data: []byte("<!doctype html><title>Sub2API</title>")},
-		"toonflow/index.html": {Data: []byte("<!doctype html><title>Toonflow — 创意广场</title>")},
-		"toonflow/app.js":     {Data: []byte("console.log('toonflow')")},
+		"index.html":                 {Data: []byte("<!doctype html><title>Sub2API</title>")},
+		"creative-studio/index.html": {Data: []byte("<!doctype html><title>创意广场</title>")},
+		"creative-studio/app.js":     {Data: []byte("console.log('creative-studio')")},
 	}
 	cache := NewHTMLCache()
 	cache.SetBaseHTML(memFS["index.html"].Data)
@@ -985,7 +985,7 @@ func TestFrontendServerServesToonflowStaticHTML(t *testing.T) {
 	router := gin.New()
 	router.Use(server.Middleware())
 
-	for _, path := range []string{"/toonflow", "/toonflow/", "/toonflow/index.html"} {
+	for _, path := range []string{"/creative-studio", "/creative-studio/", "/creative-studio/index.html"} {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		router.ServeHTTP(w, req)
@@ -993,14 +993,14 @@ func TestFrontendServerServesToonflowStaticHTML(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code, "path=%s", path)
 		assert.Contains(t, w.Header().Get("Content-Type"), "text/html", "path=%s", path)
 		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"), "path=%s", path)
-		assert.Contains(t, w.Body.String(), "Toonflow — 创意广场", "path=%s", path)
+		assert.Contains(t, w.Body.String(), "创意广场", "path=%s", path)
 	}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/toonflow/app.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/creative-studio/app.js", nil)
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "console.log('toonflow')")
+	assert.Contains(t, w.Body.String(), "console.log('creative-studio')")
 }
 
 // Tests for HTMLCache

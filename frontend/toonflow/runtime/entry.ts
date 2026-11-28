@@ -46,9 +46,9 @@ subscribeHostContext((ctx) => {
   applyHostTheme(ctx.theme);
   if (ctx.locale !== lastHostLocale) {
     lastHostLocale = ctx.locale;
-    applyDocumentTitle(ctx.locale);
     void hasExplicitStudioLanguage().then((explicit) => {
       if (explicit) return;
+      applyDocumentTitle(ctx.locale);
       return import("@toonflow/i18n/vue").then(({ setLocale }) => {
         setLocale(ctx.locale === "en" ? "en" : "zh-CN");
       });

@@ -109,11 +109,14 @@ describe('CreativePlazaView', () => {
     const { wrapper } = await mountAt('/creative-plaza')
     const iframe = wrapper.find('[data-test="studio-iframe"]')
     expect(iframe.exists()).toBe(true)
-    expect(iframe.attributes('src')).toBe('/toonflow/index.html#/home')
+    expect(iframe.attributes('src')).toBe('/creative-studio/#/home')
+    expect(iframe.attributes('src')).not.toMatch(/toonflow/i)
     expect(wrapper.text()).not.toMatch(/toonflow/i)
     expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="toggle-fullscreen"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="open-studio-standalone"]').attributes('href')).toBe('/toonflow/index.html#/home')
+    const standaloneHref = wrapper.find('[data-test="open-studio-standalone"]').attributes('href')
+    expect(standaloneHref).toBe('/creative-studio/#/home')
+    expect(standaloneHref).not.toMatch(/toonflow/i)
 
     const storedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
     expect(storedCtx.selectedTextKeyId).toBe(1)
@@ -129,7 +132,10 @@ describe('CreativePlazaView', () => {
     const { wrapper } = await mountAt('/image-studio')
     const iframe = wrapper.find('[data-test="studio-iframe"]')
     expect(iframe.exists()).toBe(true)
-    expect(iframe.attributes('src')).toBe('/toonflow/index.html#/home?section=quickImage')
+    expect(iframe.attributes('src')).toBe('/creative-studio/#/home?section=quickImage')
+    expect(wrapper.find('[data-test="open-studio-standalone"]').attributes('href')).toBe(
+      '/creative-studio/#/home?section=quickImage',
+    )
   })
 
   it('syncs key binding updates, key refreshes, and /keys navigation from Studio postMessage', async () => {

@@ -245,7 +245,7 @@ function toonflowPluginI18nPlugin(): Plugin {
       const manifest = ensureAssetManifest();
       server.middlewares.use((req, res, next) => {
         const cleanUrl = (req.url ?? "").split("?")[0] ?? "";
-        const relPath = cleanUrl.replace(/^\/toonflow\//, "").replace(/^\/+/, "");
+        const relPath = cleanUrl.replace(/^\/creative-studio\//, "").replace(/^\/+/, "");
         const hit = manifest.byAssetPath.get(relPath);
         if (!hit) {
           next();
@@ -277,7 +277,7 @@ function toonflowPluginI18nPlugin(): Plugin {
         return [
           `const CORE_ASSETS = ${JSON.stringify(manifest.core)};`,
           `const TRUMAN_MAP_ASSETS = ${JSON.stringify(manifest.trumanMap)};`,
-          `const base = (import.meta.env.BASE_URL || "/toonflow/").replace(/\\/+$/, "") + "/";`,
+          `const base = (import.meta.env.BASE_URL || "/creative-studio/").replace(/\\/+$/, "") + "/";`,
           `async function fetchJson(relPath) {`,
           `  if (!relPath) return undefined;`,
           `  const resp = await fetch(base + relPath);`,
@@ -320,7 +320,7 @@ function toonflowPluginI18nPlugin(): Plugin {
 
 export default defineConfig({
   root: rootDir,
-  base: "/toonflow/",
+  base: "/creative-studio/",
   css: {
     preprocessorOptions: {
       scss: {
@@ -531,7 +531,7 @@ export default defineConfig({
     ],
   },
   build: {
-    outDir: resolve(rootDir, "../../backend/internal/web/dist/toonflow"),
+    outDir: resolve(rootDir, "../../backend/internal/web/dist/creative-studio"),
     emptyOutDir: true,
     chunkSizeWarningLimit: 15000,
   },

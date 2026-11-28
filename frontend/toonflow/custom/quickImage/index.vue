@@ -148,11 +148,11 @@
 
             <template v-if="size === 'custom'">
               <div class="paramField">
-                <label>{{ translate("宽") }}</label>
+                <label>{{ translate("宽度") }}</label>
                 <el-input-number v-model="customWidth" :min="256" :max="4096" :step="64" controlsPosition="right" />
               </div>
               <div class="paramField">
-                <label>{{ translate("高") }}</label>
+                <label>{{ translate("高度") }}</label>
                 <el-input-number v-model="customHeight" :min="256" :max="4096" :step="64" controlsPosition="right" />
               </div>
             </template>

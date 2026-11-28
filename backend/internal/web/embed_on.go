@@ -99,10 +99,10 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
-		// Toonflow Web 端静态子应用入口（/toonflow、/toonflow/、/toonflow/index.html）：
-		// 直接返回 dist/toonflow/index.html，避免 http.FileServer 重定向或落回主站 SPA index.html。
-		if cleanPath == "toonflow" || cleanPath == "toonflow/" || cleanPath == "toonflow/index.html" {
-			if s.serveStaticHTML(c, "toonflow/index.html") {
+		// 创意广场 Web 端静态子应用入口（/creative-studio、/creative-studio/、/creative-studio/index.html）：
+		// 直接返回 dist/creative-studio/index.html，避免 http.FileServer 重定向或落回主站 SPA index.html。
+		if cleanPath == "creative-studio" || cleanPath == "creative-studio/" || cleanPath == "creative-studio/index.html" {
+			if s.serveStaticHTML(c, "creative-studio/index.html") {
 				return
 			}
 		}
@@ -356,8 +356,8 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
-		if cleanPath == "toonflow" || cleanPath == "toonflow/" || cleanPath == "toonflow/index.html" {
-			if file, err := distFS.Open("toonflow/index.html"); err == nil {
+		if cleanPath == "creative-studio" || cleanPath == "creative-studio/" || cleanPath == "creative-studio/index.html" {
+			if file, err := distFS.Open("creative-studio/index.html"); err == nil {
 				content, readErr := io.ReadAll(file)
 				_ = file.Close()
 				if readErr == nil {

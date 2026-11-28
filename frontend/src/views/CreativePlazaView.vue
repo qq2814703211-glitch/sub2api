@@ -131,8 +131,8 @@ function resolveTargetHash(): string {
 }
 
 const initialHash = resolveTargetHash()
-const studioInitialSrc = computed(() => `/toonflow/index.html${initialHash}`)
-const standaloneHref = computed(() => `/toonflow/index.html${resolveTargetHash()}`)
+const studioInitialSrc = computed(() => `/creative-studio/${initialHash}`)
+const standaloneHref = computed(() => `/creative-studio/${resolveTargetHash()}`)
 
 function detectCurrentTheme(): 'dark' | 'light' {
   return isDarkSurface() ? 'dark' : 'light'

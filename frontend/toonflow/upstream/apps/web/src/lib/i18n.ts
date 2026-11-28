@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 import { computed, watch } from "vue";
 import { isRtlLocale } from "@toonflow/i18n";
 import { locale, setLocale, translate } from "@toonflow/i18n/vue";
+import { getBrandName } from "@custom/i18nOverrides";
 import { resolveHostLocale, subscribeHostLocale } from "@custom/useStudioBrand";
 import { uiSettings } from "@/stores/settings";
 import type { LocaleConfig } from "vue-stream-markdown";
@@ -46,6 +47,7 @@ export function registerLanguage() {
   const stopDocument = watch(locale, value => {
     document.documentElement.lang = value;
     document.documentElement.dir = isRtlLocale(value) ? "rtl" : "ltr";
+    document.title = getBrandName(value);
   }, { immediate: true });
   const stopRequests = registerApiLanguage(axios);
   window.addEventListener("languagechange", applyLanguage);

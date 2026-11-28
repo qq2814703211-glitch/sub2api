@@ -527,21 +527,73 @@ describe('Toonflow browser-native local runtime', () => {
     expect(localModels.models.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('sanitizes Toonflow branding and serves custom Studio i18n overrides across locales', () => {
+  it('sanitizes Toonflow branding and serves custom Studio i18n overrides across all 22 locales', () => {
     try {
       setLocale('zh-CN')
       expect(sanitizeBrandText('登录 Toonflow 开始创作', 'zh-CN')).toBe('登录 创意广场 开始创作')
       expect(translate('快捷生图')).toBe('快捷生图')
+      expect(translate('你好，我是 AI 助手')).toBe('你好，我是 AI 助手')
+      expect(translate('扩展')).toBe('扩展')
 
       setLocale('en')
       expect(sanitizeBrandText('Welcome to Toonflow', 'en')).toBe('Welcome to Creative Plaza')
       expect(translate('快捷生图')).toBe('Quick Image')
       expect(translate('密钥与模型')).toBe('API Keys & Models')
       expect(translate('Toonflow')).toBe('Creative Plaza')
+      expect(translate('你好，我是 AI 助手')).toBe('Hello, I am AI Assistant')
+      expect(translate('扩展')).toBe('Extensions')
+      expect(translate('每一个灵感，都值得被看见')).toBe('Every inspiration deserves to be seen')
+      expect(translate('工作区 Skill')).toBe('Workspace Skill')
+      expect(translate('无')).toBe('None')
+      expect(translate('宽度')).toBe('Width')
+      expect(translate('高度')).toBe('Height')
 
       setLocale('ja')
       expect(sanitizeBrandText('Toonflow の設定', 'ja')).toBe('クリエイティブ広場 の設定')
       expect(translate('快捷生图')).toBe('クイック画像生成')
+      expect(translate('质量')).toBe('画質')
+      expect(translate('数量')).toBe('枚数')
+      expect(translate('格式')).toBe('形式')
+      expect(translate('风格')).toBe('スタイル')
+      expect(translate('高级参数')).toBe('詳細設定')
+      expect(translate('审核')).toBe('モデレーション')
+      expect(translate('压缩')).toBe('圧縮')
+      expect(translate('改写模型')).toBe('リライトモデル')
+      expect(translate('自动（不指定）')).toBe('自動（指定なし）')
+      expect(translate('暂无匹配模板')).toBe('一致するテンプレートがありません')
+      expect(translate('扩展')).toBe('拡張機能')
+      expect(translate('你好，我是 AI 助手')).toBe('こんにちは、私は AI アシスタントです')
+
+      const criticalKeys = [
+        '你好，我是 AI 助手',
+        '扩展',
+        '快捷生图',
+        '密钥与模型',
+        '质量',
+        '数量',
+        '格式',
+        '风格',
+        '高级参数',
+        '改写模型',
+        '自动（不指定）',
+        '暂无匹配模板',
+        'AI 助手',
+        '助手说明',
+        '助手记忆',
+        '每一个灵感，都值得被看见',
+      ]
+      for (const item of supportedLocales) {
+        if (item.code === 'zh-CN' || item.code === 'zh-TW') continue
+        setLocale(item.code)
+        for (const key of criticalKeys) {
+          const translated = translate(key)
+          expect(translated, `locale=${item.code} key=${key}`).not.toBe(key)
+          expect(translated, `locale=${item.code} key=${key}`).not.toMatch(/toonflow/i)
+          if (item.code !== 'ja') {
+            expect(translated, `locale=${item.code} key=${key}`).not.toMatch(/[\u4e00-\u9fff]/)
+          }
+        }
+      }
     } finally {
       setLocale('zh-CN')
     }

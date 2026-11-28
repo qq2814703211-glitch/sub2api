@@ -508,7 +508,7 @@ func TestAddToDirective(t *testing.T) {
 	})
 }
 
-func TestSecurityHeadersToonflowFrameAdaptation(t *testing.T) {
+func TestSecurityHeadersCreativeStudioFrameAdaptation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.CSPConfig{
 		Enabled: true,
@@ -516,8 +516,8 @@ func TestSecurityHeadersToonflowFrameAdaptation(t *testing.T) {
 	}
 	mw := SecurityHeaders(cfg, nil)
 
-	t.Run("allows_sameorigin_framing_and_local_mcp_on_toonflow_static_routes", func(t *testing.T) {
-		for _, path := range []string{"/toonflow", "/toonflow/", "/toonflow/index.html", "/toonflow/assets/app.js"} {
+	t.Run("allows_sameorigin_framing_and_local_mcp_on_creative_studio_static_routes", func(t *testing.T) {
+		for _, path := range []string{"/creative-studio", "/creative-studio/", "/creative-studio/index.html", "/creative-studio/assets/app.js"} {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
@@ -537,7 +537,7 @@ func TestSecurityHeadersToonflowFrameAdaptation(t *testing.T) {
 	})
 
 	t.Run("keeps_deny_and_frame_ancestors_none_on_main_app_routes", func(t *testing.T) {
-		for _, path := range []string{"/", "/creative-plaza", "/dashboard"} {
+		for _, path := range []string{"/", "/creative-plaza", "/dashboard", "/toonflow/index.html"} {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
