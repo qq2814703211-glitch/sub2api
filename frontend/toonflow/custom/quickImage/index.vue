@@ -126,7 +126,13 @@
           <div class="paramsGrid">
             <div class="paramField full">
               <label>{{ translate("模型") }}</label>
-              <el-select v-model="model" filterable allowCreate defaultFirstOption>
+              <el-select
+                v-model="model"
+                filterable
+                defaultFirstOption
+                :placeholder="translate('请先在「密钥与模型」校验密钥')"
+                :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
+              >
                 <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
               </el-select>
             </div>
@@ -490,7 +496,7 @@ const hostCtx = ref<Sub2ApiHostContext>(getHostContext());
 let unsubscribeHost: (() => void) | undefined;
 
 const prompt = ref("");
-const model = ref("gpt-image-1");
+const model = ref("");
 const size = ref("1024x1024");
 const customWidth = ref(1024);
 const customHeight = ref(1024);
@@ -551,21 +557,35 @@ const activeImageKeyLabel = computed(() => {
   return key?.name || translate("密钥配置");
 });
 
-const modelOptions = computed(() => {
-  const discovered = getDiscoveredImageModels(hostCtx.value.selectedImageKeyId);
-  const defaults = ["gpt-image-1", "gemini-2.5-flash-image-preview", "flux-pro"];
-  const merged = [...new Set([...discovered, ...defaults])];
-  return merged;
-});
+const modelOptions = computed(() => getDiscoveredImageModels(hostCtx.value.selectedImageKeyId));
 
 watch(
-  modelOptions,
-  (opts) => {
-    if (opts.length && !opts.includes(model.value)) {
+  [modelOptions, () => hostCtx.value.defaultImageModel],
+  ([opts, configuredDefault]) => {
+    const trimmedDefault = (configuredDefault || "").trim();
+    if (!opts.length) {
+      model.value = "";
+      return;
+    }
+    if (trimmedDefault && opts.includes(trimmedDefault) && (!model.value || !opts.includes(model.value))) {
+      model.value = trimmedDefault;
+      return;
+    }
+    if (!model.value || !opts.includes(model.value)) {
       model.value = opts[0]!;
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => hostCtx.value.defaultImageModel,
+  (nextDefault) => {
+    const trimmed = (nextDefault || "").trim();
+    if (trimmed && modelOptions.value.includes(trimmed)) {
+      model.value = trimmed;
+    }
+  }
 );
 
 watch(previewSize, (val) => savePreviewSize(val));
@@ -675,8 +695,9 @@ function resolvedSize(): string {
 
 function buildPayload(rawPrompt: string): ImageRequestPayload {
   const finalPrompt = buildPromptPayload(rawPrompt, style.value, retouchParams.value);
+  const resolvedModel = model.value.trim() || hostCtx.value.defaultImageModel?.trim() || modelOptions.value[0] || "";
   const payload: ImageRequestPayload = {
-    model: model.value.trim() || "gpt-image-1",
+    model: resolvedModel,
     prompt: finalPrompt,
     n: count.value,
     size: resolvedSize(),
@@ -726,6 +747,12 @@ async function submit() {
     openKeySettings();
     return;
   }
+  const selectedModel = model.value.trim() || hostCtx.value.defaultImageModel?.trim() || modelOptions.value[0] || "";
+  if (!selectedModel) {
+    ElMessage.warning(translate("请先在「密钥与模型」校验密钥并选择图像模型"));
+    openKeySettings();
+    return;
+  }
   const rawPrompt = prompt.value.trim();
   if (!rawPrompt) {
     ElMessage.warning(translate("请输入提示词"));
@@ -769,6 +796,12 @@ async function submit() {
 }
 
 function enqueue() {
+  const selectedModel = model.value.trim() || hostCtx.value.defaultImageModel?.trim() || modelOptions.value[0] || "";
+  if (!selectedModel) {
+    ElMessage.warning(translate("请先在「密钥与模型」校验密钥并选择图像模型"));
+    openKeySettings();
+    return;
+  }
   const rawPrompt = prompt.value.trim();
   if (!rawPrompt) {
     ElMessage.warning(translate("请输入提示词"));
@@ -777,7 +810,7 @@ function enqueue() {
   queue.value.push({
     id: newId(),
     prompt: rawPrompt,
-    model: model.value.trim() || "gpt-image-1",
+    model: selectedModel,
     size: resolvedSize(),
     quality: quality.value,
     count: count.value,

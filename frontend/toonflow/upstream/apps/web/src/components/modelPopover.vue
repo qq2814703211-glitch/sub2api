@@ -22,7 +22,7 @@
       </template>
       <el-form class="modelOptions" labelPosition="top">
         <el-form-item label="模型">
-          <el-select :modelValue="selectedModelChoice ? selectedModel : ''" filterable :disabled="disabled" :teleported="false" placeholder="选择模型" aria-label="选择模型" noDataText="请先在「密钥与模型」中选择站内 API 密钥" @update:modelValue="selectedModel = $event" @change="reasoningEffort = ''">
+          <el-select :modelValue="selectedModelChoice ? selectedModel : ''" filterable :disabled="disabled" :teleported="false" placeholder="选择模型" aria-label="选择模型" noDataText="当前密钥未返回可用模型，请先校验密钥" @update:modelValue="selectedModel = $event" @change="reasoningEffort = ''">
             <template #prefix><modelIcon v-if="selectedModelChoice" :model="selectedModelChoice.modelId" :size="18" /></template>
             <template #label="{ label }"><modelLabel :label="label" :providerId="selectedModelChoice?.providerId" /></template>
             <template v-if="!modelChoices.length && !multiTenantEnabled && !toonflowAccountToken && openSettingsPanel" #empty>
@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, useId, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
 import { modelIcon } from "@toonflow/model-icons";
 import { useNodeModelSelection } from "@toonflow/nodes-scaffold/nodeAi";
@@ -86,8 +86,35 @@ const reasoningOptions = computed(() => [{ label: "默认", value: "" }, ...reas
 const reasoningColumns = computed(() => Math.min(4, reasoningOptions.value.length > 4 ? Math.ceil(reasoningOptions.value.length / 2) : reasoningOptions.value.length));
 const reasoningLabel = computed(() => reasoningOptions.value.find(item => item.value === reasoningEffort.value)?.label ?? "默认");
 
+let pendingDefaultModelId = "";
+
+function applyDefaultTextModelEvent(event: Event) {
+  const modelId = String((event as CustomEvent<string>).detail ?? "").trim();
+  pendingDefaultModelId = modelId;
+  if (!modelId) return;
+  const matched = modelChoices.value.find(item => item.modelId === modelId);
+  if (matched) {
+    selectedModel.value = matched.value;
+    pendingDefaultModelId = "";
+  }
+}
+
+onMounted(() => window.addEventListener("toonflow:default-text-model-changed", applyDefaultTextModelEvent));
+onBeforeUnmount(() => window.removeEventListener("toonflow:default-text-model-changed", applyDefaultTextModelEvent));
+
 watch(modelChoices, items => {
-  if (!items.length) return;
+  if (!items.length) {
+    selectedModel.value = "";
+    return;
+  }
+  if (pendingDefaultModelId) {
+    const matched = items.find(item => item.modelId === pendingDefaultModelId);
+    if (matched) {
+      selectedModel.value = matched.value;
+      pendingDefaultModelId = "";
+      return;
+    }
+  }
   if (!selectedModel.value || !items.some(item => item.value === selectedModel.value)) {
     selectedModel.value = items[0]!.value;
   }

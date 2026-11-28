@@ -1,4 +1,4 @@
-import { translate } from "@toonflow/i18n/vue";
+import { translate } from "../../upstream/packages/i18n/src/index";
 import {
   getHostContext,
   inferTextProtocol,
@@ -23,8 +23,8 @@ import {
   effortOptionsForModel,
   type RewriteEffort,
   type RewriteProtocol,
-} from "@host/features/imagegen/rewriteConfig";
-import type { ImageRequestPayload } from "@host/features/imagegen/types";
+} from "../../../src/features/imagegen/rewriteConfig";
+import type { ImageRequestPayload } from "../../../src/features/imagegen/types";
 
 export { effortOptionsForModel, detectRewriteProtocol };
 export type { RewriteEffort, RewriteProtocol };
@@ -109,52 +109,95 @@ export function getActiveTextKey(): Sub2ApiKeyInfo | null {
   return resolveSub2ApiKey("text") ?? resolveSub2ApiKey("image");
 }
 
-export function getDiscoveredImageModels(keyId: number | null): string[] {
+export type SiteKeyRole = "image" | "text" | "video" | "audio";
+
+function normalizeEffortEntries(
+  raw: unknown,
+): { value: string; label?: string; default?: boolean }[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const list: { value: string; label?: string; default?: boolean }[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim()) {
+      list.push({ value: item.trim() });
+    } else if (item && typeof item === "object") {
+      const rec = item as { value?: unknown; label?: unknown; default?: unknown };
+      const value = String(rec.value ?? "").trim();
+      if (!value) continue;
+      list.push({
+        value,
+        ...(typeof rec.label === "string" ? { label: rec.label } : {}),
+        ...(rec.default === true ? { default: true } : {}),
+      });
+    }
+  }
+  return list.length ? list : undefined;
+}
+
+export function getDiscoveredModelsForKey(keyId: number | null, role?: SiteKeyRole): string[] {
   const host = getHostContext();
-  const resolvedId = keyId ?? resolveSub2ApiKey("image")?.id ?? null;
+  const resolvedId = keyId ?? (role ? resolveSub2ApiKey(role)?.id ?? null : null);
   if (!resolvedId) return [];
-  const list = host.discoveredModels[resolvedId] ?? [];
-  const imageModels = list.filter((id) => /image|imagen|flux|sdxl|dall-e|seedream|ideogram|recraft|gpt-image/i.test(id));
-  return imageModels.length ? imageModels : list;
+  const raw = host.discoveredModels[resolvedId] ?? [];
+  return [...new Set(raw.map((id) => String(id || "").trim()).filter(Boolean))];
+}
+
+export function getDiscoveredImageModels(keyId: number | null): string[] {
+  return getDiscoveredModelsForKey(keyId, "image");
+}
+
+export function getDiscoveredVideoModels(keyId: number | null): string[] {
+  return getDiscoveredModelsForKey(keyId, "video");
+}
+
+export function getDiscoveredAudioModels(keyId: number | null): string[] {
+  return getDiscoveredModelsForKey(keyId, "audio");
 }
 
 export function getDiscoveredTextModelMetas(keyId: number | null): DiscoveredModelMeta[] {
   const host = getHostContext();
   const resolvedId = keyId ?? resolveSub2ApiKey("text")?.id ?? null;
   if (!resolvedId) return [];
-  const nonText = /image|dall-?e|flux|midjourney|stable-diffusion|sd[-_]?xl|video|veo|sora|tts|whisper|embed/i;
   const metaList = host.discoveredModelMeta?.[resolvedId];
   if (Array.isArray(metaList) && metaList.length) {
-    return metaList.filter((m) => !nonText.test(m.id));
+    return metaList;
   }
-  const raw = host.discoveredModels[resolvedId] ?? [];
-  return raw.filter((id) => !nonText.test(id)).map((id) => ({ id }));
+  return getDiscoveredModelsForKey(resolvedId, "text").map((id) => ({ id }));
 }
 
 export async function verifySiteKey(
   rawKey: string,
-  role: "image" | "text",
+  _role: SiteKeyRole,
   signal?: AbortSignal
-): Promise<{ ok: boolean; modelCount: number }> {
+): Promise<{ ok: boolean; modelCount: number; models: string[]; meta: DiscoveredModelMeta[] }> {
   const key = rawKey.trim();
-  if (!key) return { ok: false, modelCount: 0 };
+  if (!key) return { ok: false, modelCount: 0, models: [], meta: [] };
   const resp = await fetch(siteGatewayUrl("/v1/models"), {
     method: "GET",
     headers: { Authorization: `Bearer ${key}` },
     signal,
   });
-  if (!resp.ok) return { ok: false, modelCount: 0 };
-  const payload = (await resp.json().catch(() => ({}))) as { data?: { id?: string; model?: string }[] };
-  const models = Array.isArray(payload.data)
-    ? payload.data.map((entry) => String(entry?.id || entry?.model || "").trim()).filter(Boolean)
-    : [];
-  if (role === "image") {
-    const imgModels = models.filter((m) => /image|imagen|flux|dall-e|seedream|ideogram|recraft/i.test(m));
-    return { ok: imgModels.length > 0, modelCount: imgModels.length };
+  if (!resp.ok) return { ok: false, modelCount: 0, models: [], meta: [] };
+  const payload = (await resp.json().catch(() => ({}))) as { data?: Array<Record<string, unknown>> };
+  const seen = new Set<string>();
+  const meta: DiscoveredModelMeta[] = [];
+  for (const entry of payload.data ?? []) {
+    const id = String(entry?.id ?? entry?.model ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const supportsRaw = entry?.supports_reasoning_effort ?? entry?.supportsReasoningEffort;
+    const effortRaw = entry?.reasoning_effort ?? entry?.reasoningEffort;
+    const effortsRaw = entry?.reasoning_efforts ?? entry?.reasoningEfforts;
+    const reasoningEfforts = normalizeEffortEntries(effortsRaw);
+    meta.push({
+      id,
+      ...(typeof supportsRaw === "boolean" ? { supportsReasoningEffort: supportsRaw } : {}),
+      ...(typeof effortRaw === "string" && effortRaw.trim() ? { reasoningEffort: effortRaw.trim() } : {}),
+      ...(reasoningEfforts ? { reasoningEfforts } : {}),
+    });
   }
-  const nonText = /image|dall-?e|flux|midjourney|stable-diffusion|sd[-_]?xl|video|veo|sora|tts|whisper|embed/i;
-  const textModels = models.filter((m) => !nonText.test(m));
-  return { ok: textModels.length > 0, modelCount: textModels.length };
+  meta.sort((a, b) => a.id.localeCompare(b.id));
+  const models = meta.map((item) => item.id);
+  return { ok: models.length > 0, modelCount: models.length, models, meta };
 }
 
 export async function requestSiteImages(options: {
@@ -233,7 +276,17 @@ export async function requestSiteRewrite(options: {
   if (!keyInfo?.key) {
     throw new Error(translate("请先在「设置 → 密钥与模型」中选择站内 API 密钥"));
   }
-  const model = options.model.trim() || "gpt-4o-mini";
+  const host = getHostContext();
+  const discoveredText = getDiscoveredModelsForKey(keyInfo.id, "text");
+  const model =
+    options.model.trim() ||
+    (host.rewriteModel || "").trim() ||
+    (host.defaultTextModel || "").trim() ||
+    discoveredText[0] ||
+    "";
+  if (!model) {
+    throw new Error(translate("请先在「设置 → 密钥与模型」校验文本密钥并选择默认模型"));
+  }
   const inferred = inferTextProtocol(keyInfo.platform);
   const protocol: RewriteProtocol =
     inferred === "anthropic-messages"

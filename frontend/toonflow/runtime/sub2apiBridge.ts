@@ -33,6 +33,10 @@ export interface Sub2ApiHostContext {
   selectedImageKeyId: number | null;
   selectedVideoKeyId: number | null;
   selectedAudioKeyId: number | null;
+  defaultTextModel?: string;
+  defaultImageModel?: string;
+  defaultVideoModel?: string;
+  defaultAudioModel?: string;
   rewriteModel?: string;
   rewriteEffort?: string;
   discoveredModels: Record<number, string[]>;
@@ -44,6 +48,10 @@ export interface StudioKeyBindingsPatch {
   imageKeyId?: number | null;
   videoKeyId?: number | null;
   audioKeyId?: number | null;
+  defaultTextModel?: string;
+  defaultImageModel?: string;
+  defaultVideoModel?: string;
+  defaultAudioModel?: string;
   rewriteModel?: string;
   rewriteEffort?: string;
 }
@@ -62,6 +70,10 @@ const DEFAULT_CONTEXT: Sub2ApiHostContext = {
   selectedImageKeyId: null,
   selectedVideoKeyId: null,
   selectedAudioKeyId: null,
+  defaultTextModel: "",
+  defaultImageModel: "",
+  defaultVideoModel: "",
+  defaultAudioModel: "",
   rewriteModel: "",
   rewriteEffort: "unset",
   discoveredModels: {},
@@ -111,6 +123,11 @@ export function updateHostContext(
     currentContext.selectedImageKeyId,
     currentContext.selectedVideoKeyId,
     currentContext.selectedAudioKeyId,
+    currentContext.defaultTextModel,
+    currentContext.defaultImageModel,
+    currentContext.defaultVideoModel,
+    currentContext.defaultAudioModel,
+    currentContext.rewriteModel,
     currentContext.discoveredModels,
   ]);
   currentContext = {
@@ -133,6 +150,11 @@ export function updateHostContext(
     currentContext.selectedImageKeyId,
     currentContext.selectedVideoKeyId,
     currentContext.selectedAudioKeyId,
+    currentContext.defaultTextModel,
+    currentContext.defaultImageModel,
+    currentContext.defaultVideoModel,
+    currentContext.defaultAudioModel,
+    currentContext.rewriteModel,
     currentContext.discoveredModels,
   ]);
   if (typeof window !== "undefined" && prevKeysSig !== nextKeysSig) {
@@ -203,6 +225,10 @@ export function updateKeyBindingsFromStudio(patch: StudioKeyBindingsPatch): void
   if (patch.imageKeyId !== undefined) nextPatch.selectedImageKeyId = patch.imageKeyId;
   if (patch.videoKeyId !== undefined) nextPatch.selectedVideoKeyId = patch.videoKeyId;
   if (patch.audioKeyId !== undefined) nextPatch.selectedAudioKeyId = patch.audioKeyId;
+  if (patch.defaultTextModel !== undefined) nextPatch.defaultTextModel = patch.defaultTextModel;
+  if (patch.defaultImageModel !== undefined) nextPatch.defaultImageModel = patch.defaultImageModel;
+  if (patch.defaultVideoModel !== undefined) nextPatch.defaultVideoModel = patch.defaultVideoModel;
+  if (patch.defaultAudioModel !== undefined) nextPatch.defaultAudioModel = patch.defaultAudioModel;
   if (patch.rewriteModel !== undefined) nextPatch.rewriteModel = patch.rewriteModel;
   if (patch.rewriteEffort !== undefined) nextPatch.rewriteEffort = patch.rewriteEffort;
   updateHostContext(nextPatch);
@@ -211,8 +237,36 @@ export function updateKeyBindingsFromStudio(patch: StudioKeyBindingsPatch): void
     imageKeyId: currentContext.selectedImageKeyId,
     videoKeyId: currentContext.selectedVideoKeyId,
     audioKeyId: currentContext.selectedAudioKeyId,
+    defaultTextModel: currentContext.defaultTextModel ?? "",
+    defaultImageModel: currentContext.defaultImageModel ?? "",
+    defaultVideoModel: currentContext.defaultVideoModel ?? "",
+    defaultAudioModel: currentContext.defaultAudioModel ?? "",
     rewriteModel: currentContext.rewriteModel ?? "",
     rewriteEffort: currentContext.rewriteEffort ?? "unset",
+  });
+}
+
+export function updateDiscoveredModelsFromStudio(
+  keyId: number,
+  models: string[],
+  meta?: DiscoveredModelMeta[],
+): void {
+  const cleanModels = [...new Set(models.map((m) => String(m || "").trim()).filter(Boolean))];
+  const cleanMeta = Array.isArray(meta) && meta.length ? meta : cleanModels.map((id) => ({ id }));
+  updateHostContext({
+    discoveredModels: {
+      ...currentContext.discoveredModels,
+      [keyId]: cleanModels,
+    },
+    discoveredModelMeta: {
+      ...(currentContext.discoveredModelMeta ?? {}),
+      [keyId]: cleanMeta,
+    },
+  });
+  postToSub2ApiHost("updateDiscoveredModels", {
+    keyId,
+    models: cleanModels,
+    meta: cleanMeta,
   });
 }
 

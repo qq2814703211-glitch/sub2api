@@ -46,6 +46,28 @@ export const settingsStorage = {
   },
 };
 
+if (typeof window !== "undefined") {
+  window.addEventListener("toonflow:default-media-model-changed", (event: Event) => {
+    const detail = (event as CustomEvent<{ mediaType?: string; modelId?: string }>).detail;
+    const mediaType = detail?.mediaType;
+    if (!mediaType) return;
+    try {
+      const raw = settingsStorage.getItem("toonflow.nodeModels");
+      const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      const next = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { ...parsed } : {};
+      const modelId = String(detail.modelId || "").trim();
+      if (modelId) {
+        next[mediaType] = JSON.stringify(["site-media", modelId]);
+      } else {
+        delete next[mediaType];
+      }
+      settingsStorage.setItem("toonflow.nodeModels", JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+  });
+}
+
 export const defaultUiSettings = { theme: "system", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
 export const uiSettings = computed(() => {
   const raw = settings.value.ui;

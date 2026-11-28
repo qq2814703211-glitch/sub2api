@@ -45,7 +45,7 @@
           @change="(value) => updateGeneralSettings({ agentNotificationsEnabled: value === true })" />
       </div>
     </section>
-    <section v-if="currentUser?.role !== 'user'" class="settingSection" aria-labelledby="assetFoldersExpandedTitle">
+    <section class="settingSection" aria-labelledby="assetFoldersExpandedTitle">
       <div class="settingHeader">
         <div class="settingInfo">
           <h3 id="assetFoldersExpandedTitle">素材库文件夹默认展开</h3>

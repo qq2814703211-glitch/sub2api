@@ -1,76 +1,30 @@
 <template>
-  <AppLayout>
-    <div
-      class="flex flex-col gap-2"
-      :class="fullscreen ? 'fixed inset-0 z-50 bg-white p-2 dark:bg-gray-950' : ''"
-      data-test="creative-plaza-view"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-2 px-1">
-        <div class="flex items-center gap-2 min-w-0">
-          <button
-            v-if="!loadingKeys && ownKeys.length === 0"
-            type="button"
-            class="badge badge-warning inline-flex items-center gap-1 text-[11px] hover:opacity-90"
-            data-test="creative-no-keys-link"
-            @click="router.push('/keys')"
-          >
-            <Icon name="key" size="xs" />
-            <span>{{ t('creative.keys.createKeyAction') }}</span>
-          </button>
-        </div>
-
-        <div class="flex items-center gap-1.5">
-          <button
-            type="button"
-            class="btn btn-secondary btn-xs inline-flex items-center gap-1"
-            data-test="toggle-fullscreen"
-            @click="fullscreen = !fullscreen"
-          >
-            <svg
-              class="h-3 w-3"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.75"
-            >
-              <path
-                v-if="fullscreen"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"
-              />
-              <path
-                v-else
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
-              />
-            </svg>
-            <span>{{ fullscreen ? t('creative.quickNav.fullscreenExit') : t('creative.quickNav.fullscreenEnter') }}</span>
-          </button>
-          <a
-            :href="standaloneHref"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="btn btn-secondary btn-xs inline-flex items-center gap-1"
-            data-test="open-studio-standalone"
-          >
-            <Icon name="externalLink" size="xs" />
-            <span>{{ t('creative.quickNav.openNewTab') }}</span>
-          </a>
-        </div>
+  <AppLayout full-bleed>
+    <div class="flex h-full w-full flex-col overflow-hidden" data-test="creative-plaza-view">
+      <div
+        v-if="!loadingKeys && ownKeys.length === 0"
+        class="flex shrink-0 items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-1.5 dark:border-dark-800 dark:bg-gray-950"
+      >
+        <button
+          type="button"
+          class="badge badge-warning inline-flex items-center gap-1 text-[11px] hover:opacity-90"
+          data-test="creative-no-keys-link"
+          @click="router.push('/keys')"
+        >
+          <Icon name="key" size="xs" />
+          <span>{{ t('creative.keys.createKeyAction') }}</span>
+        </button>
       </div>
 
       <section
-        class="relative w-full overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-gray-950"
-        :style="{ height: fullscreen ? 'calc(100vh - 48px)' : 'calc(100vh - 152px)', minHeight: '560px' }"
+        class="relative flex-1 min-h-0 w-full overflow-hidden bg-white dark:bg-gray-950"
         data-test="studio-iframe-container"
       >
         <iframe
           ref="studioFrameRef"
           :src="studioInitialSrc"
           :title="t('creative.title')"
-          class="h-full w-full border-0"
+          class="block h-full w-full border-0"
           allow="clipboard-read; clipboard-write; microphone"
           data-test="studio-iframe"
           @load="onStudioFrameLoad"
@@ -112,7 +66,6 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 
 const studioFrameRef = ref<HTMLIFrameElement | null>(null)
-const fullscreen = ref(false)
 const loadingKeys = ref(true)
 const ownKeys = ref<ApiKey[]>([])
 const discoveredModels = reactive<Record<number, string[]>>({})
@@ -132,7 +85,6 @@ function resolveTargetHash(): string {
 
 const initialHash = resolveTargetHash()
 const studioInitialSrc = computed(() => `/creative-studio/${initialHash}`)
-const standaloneHref = computed(() => `/creative-studio/${resolveTargetHash()}`)
 
 function detectCurrentTheme(): 'dark' | 'light' {
   return isDarkSurface() ? 'dark' : 'light'
@@ -163,6 +115,10 @@ function buildHostContext(): Sub2ApiToonflowContext {
     selectedImageKeyId: bindings.imageKeyId,
     selectedVideoKeyId: bindings.videoKeyId,
     selectedAudioKeyId: bindings.audioKeyId,
+    defaultTextModel: bindings.defaultTextModel ?? '',
+    defaultImageModel: bindings.defaultImageModel ?? '',
+    defaultVideoModel: bindings.defaultVideoModel ?? '',
+    defaultAudioModel: bindings.defaultAudioModel ?? '',
     rewriteModel: bindings.rewriteModel ?? '',
     rewriteEffort: bindings.rewriteEffort ?? 'unset',
     discoveredModels: Object.fromEntries(
@@ -243,6 +199,10 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
   if ('imageKeyId' in payload) bindings.imageKeyId = normalizeOptionalKeyId(payload.imageKeyId)
   if ('videoKeyId' in payload) bindings.videoKeyId = normalizeOptionalKeyId(payload.videoKeyId)
   if ('audioKeyId' in payload) bindings.audioKeyId = normalizeOptionalKeyId(payload.audioKeyId)
+  if (typeof payload.defaultTextModel === 'string') bindings.defaultTextModel = payload.defaultTextModel
+  if (typeof payload.defaultImageModel === 'string') bindings.defaultImageModel = payload.defaultImageModel
+  if (typeof payload.defaultVideoModel === 'string') bindings.defaultVideoModel = payload.defaultVideoModel
+  if (typeof payload.defaultAudioModel === 'string') bindings.defaultAudioModel = payload.defaultAudioModel
   if (typeof payload.rewriteModel === 'string') bindings.rewriteModel = payload.rewriteModel
   if (typeof payload.rewriteEffort === 'string') bindings.rewriteEffort = payload.rewriteEffort
   saveCreativeKeyBindings({ ...bindings })
@@ -257,6 +217,20 @@ function handleStudioBindingsUpdate(payload: Record<string, unknown>): void {
   })
 }
 
+function handleStudioDiscoveredModelsUpdate(payload: Record<string, unknown>): void {
+  const keyId = normalizeOptionalKeyId(payload.keyId)
+  if (!keyId) return
+  const models = Array.isArray(payload.models)
+    ? [...new Set(payload.models.map((item) => String(item || '').trim()).filter(Boolean))]
+    : []
+  const meta = Array.isArray(payload.meta)
+    ? (payload.meta as DiscoveredModelMeta[])
+    : models.map((id) => ({ id }))
+  discoveredModels[keyId] = models
+  discoveredModelMeta[keyId] = meta
+  syncHostContextToStudio()
+}
+
 function onStudioFrameLoad(): void {
   syncHostContextToStudio()
 }
@@ -269,6 +243,8 @@ function onWindowMessage(event: MessageEvent): void {
     syncHostContextToStudio()
   } else if (msg.type === 'updateKeyBindings' && msg.payload && typeof msg.payload === 'object') {
     handleStudioBindingsUpdate(msg.payload as Record<string, unknown>)
+  } else if (msg.type === 'updateDiscoveredModels' && msg.payload && typeof msg.payload === 'object') {
+    handleStudioDiscoveredModelsUpdate(msg.payload as Record<string, unknown>)
   } else if (msg.type === 'refreshKeys') {
     void refreshKeysAndModels()
   } else if (msg.type === 'openSiteKeys') {

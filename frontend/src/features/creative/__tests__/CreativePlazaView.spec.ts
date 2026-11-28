@@ -22,7 +22,8 @@ vi.mock('@/api', () => ({
 vi.mock('@/components/layout/AppLayout.vue', () => ({
   default: {
     name: 'AppLayout',
-    template: '<div class="stub-app-layout"><slot /></div>',
+    props: { fullBleed: Boolean },
+    template: '<div class="stub-app-layout" :data-full-bleed="String(Boolean(fullBleed))"><slot /></div>',
   },
 }))
 
@@ -105,18 +106,17 @@ describe('CreativePlazaView', () => {
     )
   })
 
-  it('mounts the unified Studio iframe cleanly at /creative-plaza without redundant host key panels or Toonflow copy', async () => {
+  it('mounts the unified full-bleed Studio iframe cleanly at /creative-plaza without fullscreen, standalone, or Toonflow copy', async () => {
     const { wrapper } = await mountAt('/creative-plaza')
+    expect(wrapper.find('.stub-app-layout').attributes('data-full-bleed')).toBe('true')
     const iframe = wrapper.find('[data-test="studio-iframe"]')
     expect(iframe.exists()).toBe(true)
     expect(iframe.attributes('src')).toBe('/creative-studio/#/home')
     expect(iframe.attributes('src')).not.toMatch(/toonflow/i)
     expect(wrapper.text()).not.toMatch(/toonflow/i)
     expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="toggle-fullscreen"]').exists()).toBe(true)
-    const standaloneHref = wrapper.find('[data-test="open-studio-standalone"]').attributes('href')
-    expect(standaloneHref).toBe('/creative-studio/#/home')
-    expect(standaloneHref).not.toMatch(/toonflow/i)
+    expect(wrapper.find('[data-test="toggle-fullscreen"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-studio-standalone"]').exists()).toBe(false)
 
     const storedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
     expect(storedCtx.selectedTextKeyId).toBe(1)
@@ -133,12 +133,10 @@ describe('CreativePlazaView', () => {
     const iframe = wrapper.find('[data-test="studio-iframe"]')
     expect(iframe.exists()).toBe(true)
     expect(iframe.attributes('src')).toBe('/creative-studio/#/home?section=quickImage')
-    expect(wrapper.find('[data-test="open-studio-standalone"]').attributes('href')).toBe(
-      '/creative-studio/#/home?section=quickImage',
-    )
+    expect(wrapper.find('[data-test="open-studio-standalone"]').exists()).toBe(false)
   })
 
-  it('syncs key binding updates, key refreshes, and /keys navigation from Studio postMessage', async () => {
+  it('syncs key binding updates, default models, discovered models, key refreshes, and /keys navigation from Studio postMessage', async () => {
     const { wrapper, router } = await mountAt('/creative-plaza')
     const initialCalls = mockKeysList.mock.calls.length
 
@@ -153,6 +151,10 @@ describe('CreativePlazaView', () => {
             imageKeyId: 2,
             videoKeyId: 2,
             audioKeyId: 1,
+            defaultTextModel: 'gpt-4o',
+            defaultImageModel: 'nano-banana-pro',
+            defaultVideoModel: 'veo-3-pro',
+            defaultAudioModel: 'fish-speech-v2',
             rewriteModel: 'gpt-4o',
             rewriteEffort: 'low',
           },
@@ -167,13 +169,38 @@ describe('CreativePlazaView', () => {
       imageKeyId: 2,
       videoKeyId: 2,
       audioKeyId: 1,
+      defaultTextModel: 'gpt-4o',
+      defaultImageModel: 'nano-banana-pro',
+      defaultVideoModel: 'veo-3-pro',
+      defaultAudioModel: 'fish-speech-v2',
       rewriteModel: 'gpt-4o',
       rewriteEffort: 'low',
     })
     const storedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
     expect(storedCtx.selectedImageKeyId).toBe(2)
+    expect(storedCtx.defaultImageModel).toBe('nano-banana-pro')
+    expect(storedCtx.defaultVideoModel).toBe('veo-3-pro')
+    expect(storedCtx.defaultAudioModel).toBe('fish-speech-v2')
     expect(storedCtx.rewriteModel).toBe('gpt-4o')
     expect(storedCtx.rewriteEffort).toBe('low')
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: {
+          source: 'toonflow-web',
+          type: 'updateDiscoveredModels',
+          payload: {
+            keyId: 2,
+            models: ['veo-3-pro', 'nano-banana-pro'],
+            meta: [{ id: 'veo-3-pro' }, { id: 'nano-banana-pro' }],
+          },
+        },
+      }),
+    )
+    await flushPromises()
+    const updatedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
+    expect(updatedCtx.discoveredModels['2']).toEqual(['veo-3-pro', 'nano-banana-pro'])
 
     window.dispatchEvent(
       new MessageEvent('message', {

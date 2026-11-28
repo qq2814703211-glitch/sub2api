@@ -18,14 +18,14 @@
     </div>
 
     <div v-else class="roleList">
-      <!-- Image Generation Key (shared by Quick Image Studio & Canvas Image Generation Node) -->
-      <section class="roleCard">
+      <!-- Image Generation Key & Default Model -->
+      <section class="roleCard" data-role="image">
         <div class="roleHeader">
           <h3>{{ translate("图像生成") }}</h3>
-          <span v-if="imageStatus !== 'idle'" class="statusIndicator" :class="imageStatus">
-            <icon-circle-check v-if="imageStatus === 'ok'" :size="15" aria-hidden="true" />
+          <span v-if="statusMap.image.state !== 'idle'" class="statusIndicator" :class="statusMap.image.state">
+            <icon-circle-check v-if="statusMap.image.state === 'ok'" :size="15" aria-hidden="true" />
             <icon-alert-circle v-else :size="15" aria-hidden="true" />
-            <span>{{ imageStatusText }}</span>
+            <span>{{ statusMap.image.text }}</span>
           </span>
         </div>
         <div class="roleControl">
@@ -42,20 +42,45 @@
               :value="item.id"
             />
           </el-select>
-          <el-button :loading="verifyingImage" :disabled="!selectedImageKeyId" @click="verifyKey('image')">
+          <el-button
+            data-test="verify-image-key"
+            :loading="verifyingMap.image"
+            :disabled="!selectedImageKeyId"
+            @click="verifyKey('image')"
+          >
             {{ translate("校验") }}
           </el-button>
         </div>
+        <div class="subControls singleColumn">
+          <div class="subField">
+            <label>{{ translate("默认模型") }}</label>
+            <el-select
+              :modelValue="defaultImageModel"
+              filterable
+              clearable
+              :placeholder="imageModelOptions[0] || translate('请先校验密钥获取模型列表')"
+              :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
+              @change="onUpdateDefaultModel('defaultImageModel', $event)"
+            >
+              <el-option
+                v-for="m in imageModelOptions"
+                :key="m"
+                :label="m"
+                :value="m"
+              />
+            </el-select>
+          </div>
+        </div>
       </section>
 
-      <!-- Text / AI Assistant & Prompt Rewrite Key -->
-      <section class="roleCard">
+      <!-- Text / AI Assistant & Prompt Rewrite Key & Default Models -->
+      <section class="roleCard" data-role="text">
         <div class="roleHeader">
           <h3>{{ translate("文本 / AI 助手与改写") }}</h3>
-          <span v-if="textStatus !== 'idle'" class="statusIndicator" :class="textStatus">
-            <icon-circle-check v-if="textStatus === 'ok'" :size="15" aria-hidden="true" />
+          <span v-if="statusMap.text.state !== 'idle'" class="statusIndicator" :class="statusMap.text.state">
+            <icon-circle-check v-if="statusMap.text.state === 'ok'" :size="15" aria-hidden="true" />
             <icon-alert-circle v-else :size="15" aria-hidden="true" />
-            <span>{{ textStatusText }}</span>
+            <span>{{ statusMap.text.text }}</span>
           </span>
         </div>
         <div class="roleControl">
@@ -72,20 +97,42 @@
               :value="item.id"
             />
           </el-select>
-          <el-button :loading="verifyingText" :disabled="!selectedTextKeyId" @click="verifyKey('text')">
+          <el-button
+            data-test="verify-text-key"
+            :loading="verifyingMap.text"
+            :disabled="!selectedTextKeyId"
+            @click="verifyKey('text')"
+          >
             {{ translate("校验") }}
           </el-button>
         </div>
-        <div class="subControls">
+        <div class="subControls threeColumns">
+          <div class="subField">
+            <label>{{ translate("默认模型") }}</label>
+            <el-select
+              :modelValue="defaultTextModel"
+              filterable
+              clearable
+              :placeholder="textModelOptions[0]?.id || translate('请先校验密钥获取模型列表')"
+              :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
+              @change="onUpdateDefaultModel('defaultTextModel', $event)"
+            >
+              <el-option
+                v-for="m in textModelOptions"
+                :key="m.id"
+                :label="m.id"
+                :value="m.id"
+              />
+            </el-select>
+          </div>
           <div class="subField">
             <label>{{ translate("改写模型") }}</label>
             <el-select
               :modelValue="rewriteModel"
               filterable
-              allowCreate
-              defaultFirstOption
               clearable
-              :placeholder="textModelOptions[0]?.id || 'gpt-4o-mini'"
+              :placeholder="defaultTextModel || textModelOptions[0]?.id || translate('跟随默认模型')"
+              :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
               @change="onUpdateRewriteModel($event)"
             >
               <el-option
@@ -110,10 +157,15 @@
         </div>
       </section>
 
-      <!-- Video Generation Key -->
-      <section class="roleCard">
+      <!-- Video Generation Key & Default Model -->
+      <section class="roleCard" data-role="video">
         <div class="roleHeader">
           <h3>{{ translate("视频生成") }}</h3>
+          <span v-if="statusMap.video.state !== 'idle'" class="statusIndicator" :class="statusMap.video.state">
+            <icon-circle-check v-if="statusMap.video.state === 'ok'" :size="15" aria-hidden="true" />
+            <icon-alert-circle v-else :size="15" aria-hidden="true" />
+            <span>{{ statusMap.video.text }}</span>
+          </span>
         </div>
         <div class="roleControl">
           <el-select
@@ -129,13 +181,46 @@
               :value="item.id"
             />
           </el-select>
+          <el-button
+            data-test="verify-video-key"
+            :loading="verifyingMap.video"
+            :disabled="!selectedVideoKeyId"
+            @click="verifyKey('video')"
+          >
+            {{ translate("校验") }}
+          </el-button>
+        </div>
+        <div class="subControls singleColumn">
+          <div class="subField">
+            <label>{{ translate("默认模型") }}</label>
+            <el-select
+              :modelValue="defaultVideoModel"
+              filterable
+              clearable
+              :placeholder="videoModelOptions[0] || translate('请先校验密钥获取模型列表')"
+              :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
+              @change="onUpdateDefaultModel('defaultVideoModel', $event)"
+            >
+              <el-option
+                v-for="m in videoModelOptions"
+                :key="m"
+                :label="m"
+                :value="m"
+              />
+            </el-select>
+          </div>
         </div>
       </section>
 
-      <!-- Audio Generation Key -->
-      <section class="roleCard">
+      <!-- Audio Generation Key & Default Model -->
+      <section class="roleCard" data-role="audio">
         <div class="roleHeader">
           <h3>{{ translate("音频生成") }}</h3>
+          <span v-if="statusMap.audio.state !== 'idle'" class="statusIndicator" :class="statusMap.audio.state">
+            <icon-circle-check v-if="statusMap.audio.state === 'ok'" :size="15" aria-hidden="true" />
+            <icon-alert-circle v-else :size="15" aria-hidden="true" />
+            <span>{{ statusMap.audio.text }}</span>
+          </span>
         </div>
         <div class="roleControl">
           <el-select
@@ -151,6 +236,34 @@
               :value="item.id"
             />
           </el-select>
+          <el-button
+            data-test="verify-audio-key"
+            :loading="verifyingMap.audio"
+            :disabled="!selectedAudioKeyId"
+            @click="verifyKey('audio')"
+          >
+            {{ translate("校验") }}
+          </el-button>
+        </div>
+        <div class="subControls singleColumn">
+          <div class="subField">
+            <label>{{ translate("默认模型") }}</label>
+            <el-select
+              :modelValue="defaultAudioModel"
+              filterable
+              clearable
+              :placeholder="audioModelOptions[0] || translate('请先校验密钥获取模型列表')"
+              :noDataText="translate('当前密钥未返回可用模型，请先校验密钥')"
+              @change="onUpdateDefaultModel('defaultAudioModel', $event)"
+            >
+              <el-option
+                v-for="m in audioModelOptions"
+                :key="m"
+                :label="m"
+                :value="m"
+              />
+            </el-select>
+          </div>
         </div>
       </section>
     </div>
@@ -158,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { IconAlertCircle, IconCircleCheck, IconExternalLink, IconRefresh } from "@tabler/icons-vue";
 import { translate } from "@toonflow/i18n/vue";
@@ -167,27 +280,39 @@ import {
   requestOpenSiteKeys,
   requestRefreshKeysFromHost,
   subscribeHostContext,
+  updateDiscoveredModelsFromStudio,
   updateKeyBindingsFromStudio,
+  type StudioKeyBindingsPatch,
   type Sub2ApiHostContext,
 } from "../runtime/sub2apiBridge";
 import {
   detectRewriteProtocol,
   effortOptionsForModel,
+  getDiscoveredAudioModels,
+  getDiscoveredImageModels,
   getDiscoveredTextModelMetas,
+  getDiscoveredVideoModels,
   verifySiteKey,
   type RewriteEffort,
+  type SiteKeyRole,
 } from "./quickImage/quickImageApi";
 
 defineProps<{ visible?: boolean }>();
 
 const hostCtx = ref<Sub2ApiHostContext>(getHostContext());
 const refreshing = ref(false);
-const verifyingImage = ref(false);
-const verifyingText = ref(false);
-const imageStatus = ref<"idle" | "ok" | "error">("idle");
-const textStatus = ref<"idle" | "ok" | "error">("idle");
-const imageStatusText = ref("");
-const textStatusText = ref("");
+const verifyingMap = reactive<Record<SiteKeyRole, boolean>>({
+  image: false,
+  text: false,
+  video: false,
+  audio: false,
+});
+const statusMap = reactive<Record<SiteKeyRole, { state: "idle" | "ok" | "error"; text: string }>>({
+  image: { state: "idle", text: "" },
+  text: { state: "idle", text: "" },
+  video: { state: "idle", text: "" },
+  audio: { state: "idle", text: "" },
+});
 
 let unsubscribe: (() => void) | undefined;
 
@@ -216,15 +341,24 @@ const selectedImageKeyId = computed(() => hostCtx.value.selectedImageKeyId ?? ho
 const selectedTextKeyId = computed(() => hostCtx.value.selectedTextKeyId ?? hostKeys.value[0]?.id ?? null);
 const selectedVideoKeyId = computed(() => hostCtx.value.selectedVideoKeyId ?? hostKeys.value[0]?.id ?? null);
 const selectedAudioKeyId = computed(() => hostCtx.value.selectedAudioKeyId ?? hostKeys.value[0]?.id ?? null);
+
+const defaultImageModel = computed(() => hostCtx.value.defaultImageModel || "");
+const defaultTextModel = computed(() => hostCtx.value.defaultTextModel || "");
+const defaultVideoModel = computed(() => hostCtx.value.defaultVideoModel || "");
+const defaultAudioModel = computed(() => hostCtx.value.defaultAudioModel || "");
 const rewriteModel = computed(() => hostCtx.value.rewriteModel || "");
 const rewriteEffort = computed<RewriteEffort>(() => (hostCtx.value.rewriteEffort as RewriteEffort) || "unset");
 
+const imageModelOptions = computed(() => getDiscoveredImageModels(selectedImageKeyId.value));
 const textModelOptions = computed(() => getDiscoveredTextModelMetas(selectedTextKeyId.value));
+const videoModelOptions = computed(() => getDiscoveredVideoModels(selectedVideoKeyId.value));
+const audioModelOptions = computed(() => getDiscoveredAudioModels(selectedAudioKeyId.value));
 
 const effortOptions = computed<RewriteEffort[]>(() => {
   const activeKey = hostKeys.value.find((k) => k.id === selectedTextKeyId.value);
-  const protocol = detectRewriteProtocol(activeKey?.platform || "", rewriteModel.value);
-  const meta = textModelOptions.value.find((m) => m.id === rewriteModel.value) ?? null;
+  const activeModelId = rewriteModel.value || defaultTextModel.value;
+  const protocol = detectRewriteProtocol(activeKey?.platform || "", activeModelId);
+  const meta = textModelOptions.value.find((m) => m.id === activeModelId) ?? null;
   const options = effortOptionsForModel(meta, protocol);
   return options.includes("unset") ? options : ["unset", ...options];
 });
@@ -235,13 +369,62 @@ function effortLabel(effort: RewriteEffort): string {
   return effort;
 }
 
-function onSelectKey(field: "textKeyId" | "imageKeyId" | "videoKeyId" | "audioKeyId", value: number | null) {
-  if (field === "imageKeyId") imageStatus.value = "idle";
-  if (field === "textKeyId") textStatus.value = "idle";
-  updateKeyBindingsFromStudio({ [field]: value });
+function syncNodeModelMemory(mediaType: "image" | "video" | "audio", modelId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("toonflow:default-media-model-changed", { detail: { mediaType, modelId } }));
 }
 
-function onUpdateRewriteModel(value: string) {
+function onSelectKey(field: "textKeyId" | "imageKeyId" | "videoKeyId" | "audioKeyId", value: number | null) {
+  const roleMap: Record<typeof field, SiteKeyRole> = {
+    imageKeyId: "image",
+    textKeyId: "text",
+    videoKeyId: "video",
+    audioKeyId: "audio",
+  };
+  const role = roleMap[field];
+  statusMap[role].state = "idle";
+  statusMap[role].text = "";
+
+  const patch: StudioKeyBindingsPatch = { [field]: value };
+  const nextModels = value ? hostCtx.value.discoveredModels[value] ?? [] : [];
+  if (role === "image" && defaultImageModel.value && nextModels.length && !nextModels.includes(defaultImageModel.value)) {
+    patch.defaultImageModel = nextModels[0] ?? "";
+    syncNodeModelMemory("image", patch.defaultImageModel);
+  }
+  if (role === "video" && defaultVideoModel.value && nextModels.length && !nextModels.includes(defaultVideoModel.value)) {
+    patch.defaultVideoModel = nextModels[0] ?? "";
+    syncNodeModelMemory("video", patch.defaultVideoModel);
+  }
+  if (role === "audio" && defaultAudioModel.value && nextModels.length && !nextModels.includes(defaultAudioModel.value)) {
+    patch.defaultAudioModel = nextModels[0] ?? "";
+    syncNodeModelMemory("audio", patch.defaultAudioModel);
+  }
+  if (role === "text" && nextModels.length) {
+    if (defaultTextModel.value && !nextModels.includes(defaultTextModel.value)) {
+      patch.defaultTextModel = nextModels[0] ?? "";
+    }
+    if (rewriteModel.value && !nextModels.includes(rewriteModel.value)) {
+      patch.rewriteModel = "";
+    }
+  }
+  updateKeyBindingsFromStudio(patch);
+}
+
+function onUpdateDefaultModel(
+  field: "defaultImageModel" | "defaultTextModel" | "defaultVideoModel" | "defaultAudioModel",
+  value: string | undefined
+) {
+  const clean = String(value || "").trim();
+  updateKeyBindingsFromStudio({ [field]: clean });
+  if (field === "defaultTextModel") {
+    window.dispatchEvent(new CustomEvent("toonflow:default-text-model-changed", { detail: clean }));
+  }
+  if (field === "defaultImageModel") syncNodeModelMemory("image", clean);
+  if (field === "defaultVideoModel") syncNodeModelMemory("video", clean);
+  if (field === "defaultAudioModel") syncNodeModelMemory("audio", clean);
+}
+
+function onUpdateRewriteModel(value: string | undefined) {
   updateKeyBindingsFromStudio({ rewriteModel: String(value || "").trim() });
 }
 
@@ -261,38 +444,57 @@ function openSiteKeys() {
   requestOpenSiteKeys();
 }
 
-async function verifyKey(role: "image" | "text") {
-  const keyId = role === "image" ? selectedImageKeyId.value : selectedTextKeyId.value;
+function getKeyIdForRole(role: SiteKeyRole): number | null {
+  if (role === "image") return selectedImageKeyId.value;
+  if (role === "text") return selectedTextKeyId.value;
+  if (role === "video") return selectedVideoKeyId.value;
+  return selectedAudioKeyId.value;
+}
+
+async function verifyKey(role: SiteKeyRole) {
+  const keyId = getKeyIdForRole(role);
   const keyObj = hostKeys.value.find((k) => k.id === keyId);
-  if (!keyObj?.key) return;
-  if (role === "image") verifyingImage.value = true;
-  else verifyingText.value = true;
+  if (!keyId || !keyObj?.key) return;
+  verifyingMap[role] = true;
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 15000);
   try {
     const res = await verifySiteKey(keyObj.key, role, controller.signal);
-    if (role === "image") {
-      imageStatus.value = res.ok ? "ok" : "error";
-      imageStatusText.value = res.ok ? `${res.modelCount}` : translate("不可用");
+    updateDiscoveredModelsFromStudio(keyId, res.models, res.meta);
+    statusMap[role].state = res.ok ? "ok" : "error";
+    statusMap[role].text = res.ok ? `${res.modelCount} ${translate("个模型")}` : translate("不可用");
+
+    if (res.ok) {
+      const patch: StudioKeyBindingsPatch = {};
+      if (role === "image" && (!defaultImageModel.value || !res.models.includes(defaultImageModel.value))) {
+        patch.defaultImageModel = res.models[0] ?? "";
+        syncNodeModelMemory("image", patch.defaultImageModel);
+      } else if (role === "text") {
+        if (!defaultTextModel.value || !res.models.includes(defaultTextModel.value)) {
+          patch.defaultTextModel = res.models[0] ?? "";
+        }
+        if (rewriteModel.value && !res.models.includes(rewriteModel.value)) {
+          patch.rewriteModel = "";
+        }
+      } else if (role === "video" && (!defaultVideoModel.value || !res.models.includes(defaultVideoModel.value))) {
+        patch.defaultVideoModel = res.models[0] ?? "";
+        syncNodeModelMemory("video", patch.defaultVideoModel);
+      } else if (role === "audio" && (!defaultAudioModel.value || !res.models.includes(defaultAudioModel.value))) {
+        patch.defaultAudioModel = res.models[0] ?? "";
+        syncNodeModelMemory("audio", patch.defaultAudioModel);
+      }
+      if (Object.keys(patch).length) {
+        updateKeyBindingsFromStudio(patch);
+      }
     } else {
-      textStatus.value = res.ok ? "ok" : "error";
-      textStatusText.value = res.ok ? `${res.modelCount}` : translate("不可用");
-    }
-    if (!res.ok) {
-      ElMessage.warning(role === "image" ? translate("该密钥未发现可用图像模型") : translate("该密钥未发现可用文本模型"));
+      ElMessage.warning(translate("该密钥未从 /models 返回可用模型"));
     }
   } catch {
-    if (role === "image") {
-      imageStatus.value = "error";
-      imageStatusText.value = translate("校验失败");
-    } else {
-      textStatus.value = "error";
-      textStatusText.value = translate("校验失败");
-    }
+    statusMap[role].state = "error";
+    statusMap[role].text = translate("校验失败");
   } finally {
     window.clearTimeout(timer);
-    if (role === "image") verifyingImage.value = false;
-    else verifyingText.value = false;
+    verifyingMap[role] = false;
   }
 }
 </script>
@@ -378,6 +580,14 @@ async function verifyKey(role: "image" | "text") {
       gap: 10px;
       padding-top: 4px;
 
+      &.singleColumn {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      &.threeColumns {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(130px, 180px);
+      }
+
       .subField {
         display: flex;
         flex-direction: column;
@@ -392,8 +602,9 @@ async function verifyKey(role: "image" | "text") {
     }
   }
 
-  @media (max-width: 600px) {
-    .roleCard .subControls {
+  @media (max-width: 680px) {
+    .roleCard .subControls,
+    .roleCard .subControls.threeColumns {
       grid-template-columns: 1fr;
     }
   }

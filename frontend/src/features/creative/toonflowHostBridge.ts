@@ -18,6 +18,10 @@ export interface CreativeKeyBindings {
   imageKeyId: number | null
   videoKeyId: number | null
   audioKeyId: number | null
+  defaultTextModel?: string
+  defaultImageModel?: string
+  defaultVideoModel?: string
+  defaultAudioModel?: string
   rewriteModel?: string
   rewriteEffort?: string
 }
@@ -65,6 +69,10 @@ export interface Sub2ApiToonflowContext {
   selectedImageKeyId: number | null
   selectedVideoKeyId: number | null
   selectedAudioKeyId: number | null
+  defaultTextModel?: string
+  defaultImageModel?: string
+  defaultVideoModel?: string
+  defaultAudioModel?: string
   rewriteModel?: string
   rewriteEffort?: string
   discoveredModels: Record<number, string[]>
@@ -117,6 +125,10 @@ export function loadCreativeKeyBindings(fallbackKeyId: number | null = null): Cr
         imageKeyId: typeof parsed.imageKeyId === 'number' ? parsed.imageKeyId : fallbackKeyId,
         videoKeyId: typeof parsed.videoKeyId === 'number' ? parsed.videoKeyId : fallbackKeyId,
         audioKeyId: typeof parsed.audioKeyId === 'number' ? parsed.audioKeyId : fallbackKeyId,
+        defaultTextModel: typeof parsed.defaultTextModel === 'string' ? parsed.defaultTextModel : '',
+        defaultImageModel: typeof parsed.defaultImageModel === 'string' ? parsed.defaultImageModel : '',
+        defaultVideoModel: typeof parsed.defaultVideoModel === 'string' ? parsed.defaultVideoModel : '',
+        defaultAudioModel: typeof parsed.defaultAudioModel === 'string' ? parsed.defaultAudioModel : '',
         rewriteModel: typeof parsed.rewriteModel === 'string' ? parsed.rewriteModel : legacy.rewriteModel,
         rewriteEffort: typeof parsed.rewriteEffort === 'string' && parsed.rewriteEffort ? parsed.rewriteEffort : legacy.rewriteEffort,
       }
@@ -129,6 +141,10 @@ export function loadCreativeKeyBindings(fallbackKeyId: number | null = null): Cr
     imageKeyId: fallbackKeyId,
     videoKeyId: fallbackKeyId,
     audioKeyId: fallbackKeyId,
+    defaultTextModel: '',
+    defaultImageModel: '',
+    defaultVideoModel: '',
+    defaultAudioModel: '',
     rewriteModel: legacy.rewriteModel,
     rewriteEffort: legacy.rewriteEffort,
   }

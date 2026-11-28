@@ -1375,7 +1375,31 @@ function readModelMemory(): Record<string, unknown> {
 provide("nodeModelMemory", {
   get: (type: string) => {
     const value = readModelMemory()[type];
-    return typeof value === "string" ? value : "";
+    if (typeof value === "string" && value) return value;
+    try {
+      const raw = localStorage.getItem("sub2api.creative.toonflow.hostContext.v1");
+      if (raw) {
+        const ctx = JSON.parse(raw) as {
+          defaultImageModel?: string;
+          defaultVideoModel?: string;
+          defaultAudioModel?: string;
+        };
+        const configured =
+          type === "image"
+            ? ctx.defaultImageModel
+            : type === "video"
+              ? ctx.defaultVideoModel
+              : type === "audio"
+                ? ctx.defaultAudioModel
+                : "";
+        if (typeof configured === "string" && configured.trim()) {
+          return JSON.stringify(["site-media", configured.trim()]);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return "";
   },
   set: (type: string, key: string) => {
     const memory = readModelMemory();

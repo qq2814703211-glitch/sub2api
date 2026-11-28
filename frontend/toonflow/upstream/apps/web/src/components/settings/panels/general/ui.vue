@@ -20,12 +20,6 @@
         @change="value => typeof value === 'number' && updateUiSettings({ mobileScale: value })" />
     </section>
 
-    <section class="settingSection" aria-labelledby="languageTitle">
-      <h3 id="languageTitle"><icon-language :size="18" />语言</h3>
-      <p class="description">界面语言立即生效，默认跟随电脑语言。</p>
-      <languageSelect class="languageCards" />
-    </section>
-
     <section class="settingSection" aria-labelledby="themeTitle">
       <h3 id="themeTitle">
         <icon-sun-moon :size="18" />
@@ -154,7 +148,6 @@ import {
 import { defaultUiSettings, generalSettings, uiSettings, updateGeneralSettings, updateUiSettings } from "@/stores/settings";
 import { isMobile } from "@/lib/platform";
 import canvasLayoutOptions from "@/components/canvasLayoutOptions.vue";
-import languageSelect from "@/components/languageSelect.vue";
 
 const mobileScale = ref(uiSettings.value.mobileScale);
 const fontScale = ref(uiSettings.value.fontScale);

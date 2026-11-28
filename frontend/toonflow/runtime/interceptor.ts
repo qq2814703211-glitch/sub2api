@@ -135,6 +135,18 @@ function isToonflowInternalApi(url: URL): boolean {
   return true;
 }
 
+function isArrayBufferLike(value: unknown): value is ArrayBuffer {
+  return value instanceof ArrayBuffer || Object.prototype.toString.call(value) === "[object ArrayBuffer]";
+}
+
+function isBlobLike(value: unknown): value is Blob {
+  return value instanceof Blob || (typeof value === "object" && value !== null && typeof (value as Blob).arrayBuffer === "function" && typeof (value as Blob).text === "function");
+}
+
+function isFormDataLike(value: unknown): value is FormData {
+  return value instanceof FormData || Object.prototype.toString.call(value) === "[object FormData]";
+}
+
 async function readJsonBody(body: BodyInit | null | undefined): Promise<Record<string, unknown>> {
   if (!body) return {};
   if (typeof body === "string") {
@@ -144,15 +156,18 @@ async function readJsonBody(body: BodyInit | null | undefined): Promise<Record<s
       return {};
     }
   }
-  if (body instanceof Uint8Array || body instanceof ArrayBuffer) {
-    const text = new TextDecoder().decode(body instanceof Uint8Array ? body : new Uint8Array(body));
+  if (ArrayBuffer.isView(body) || isArrayBufferLike(body)) {
+    const view = ArrayBuffer.isView(body)
+      ? new Uint8Array(body.buffer, body.byteOffset, body.byteLength)
+      : new Uint8Array(body);
+    const text = new TextDecoder().decode(view);
     try {
       return JSON.parse(text) as Record<string, unknown>;
     } catch {
       return {};
     }
   }
-  if (body instanceof Blob) {
+  if (isBlobLike(body)) {
     const text = await body.text();
     try {
       return JSON.parse(text) as Record<string, unknown>;
@@ -166,12 +181,14 @@ async function readJsonBody(body: BodyInit | null | undefined): Promise<Record<s
 async function readRawBytes(body: BodyInit | null | undefined): Promise<Uint8Array> {
   if (!body) return new Uint8Array();
   if (typeof body === "string") return new TextEncoder().encode(body);
-  if (body instanceof Uint8Array) return body;
-  if (body instanceof ArrayBuffer) return new Uint8Array(body);
-  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer());
-  if (body instanceof FormData) {
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
+  }
+  if (isArrayBufferLike(body)) return new Uint8Array(body.slice(0));
+  if (isBlobLike(body)) return new Uint8Array(await body.arrayBuffer());
+  if (isFormDataLike(body)) {
     const file = body.get("file");
-    if (file instanceof Blob) return new Uint8Array(await file.arrayBuffer());
+    if (isBlobLike(file)) return new Uint8Array(await file.arrayBuffer());
   }
   return new Uint8Array();
 }
@@ -245,13 +262,13 @@ async function routeToonflowApi(
         },
         ui: {
           theme: "system",
-          language: "system",
           primaryColor: "#409eff",
           fontScale: 100,
           mobileScale: 75,
           radius: 8,
           startupAnimation: false,
           ...ui,
+          language: "system",
         },
         stores,
         aiModels: await listAiModels(),
@@ -472,6 +489,14 @@ async function routeToonflowApi(
       return ok();
     }
     if (path === "/api/media/preview") {
+      if (m === "POST" && rawBody) {
+        const bytes = await readRawBytes(rawBody);
+        const kind = q.get("kind") || "image";
+        const mimeType = kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "image/png";
+        const copy = new Uint8Array(bytes.byteLength);
+        copy.set(bytes);
+        return new Response(copy, { status: 200, headers: { "Content-Type": mimeType } });
+      }
       const dir = q.get("directory") || ASSETS_ROOT;
       const rel = q.get("path") || "";
       const { bytes, mimeType } = await vfsReadBytes(joinPath(dir, rel));
@@ -1060,10 +1085,10 @@ export function installBrowserRuntimeInterceptor(): void {
     if (config.data !== undefined && config.data !== null) {
       if (
         typeof config.data === "string" ||
-        config.data instanceof Blob ||
-        config.data instanceof ArrayBuffer ||
-        config.data instanceof Uint8Array ||
-        config.data instanceof FormData
+        isBlobLike(config.data) ||
+        isArrayBufferLike(config.data) ||
+        ArrayBuffer.isView(config.data) ||
+        isFormDataLike(config.data)
       ) {
         body = config.data as BodyInit;
       } else {

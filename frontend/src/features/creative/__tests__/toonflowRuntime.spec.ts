@@ -64,6 +64,7 @@ import {
   getBrowserFfmpegStatus,
   getBrowserLocalModelsStatus,
 } from '../../../../toonflow/runtime/browserMedia'
+import { verifySiteKey } from '../../../../toonflow/custom/quickImage/quickImageApi'
 
 async function readNdjsonEvents(response: Response): Promise<Record<string, unknown>[]> {
   const text = await response.text()
@@ -185,25 +186,24 @@ describe('Toonflow browser-native local runtime', () => {
     )
   })
 
-  it('maintains 1-to-1 alignment between Plugin Market enabled tools and Agent Runtime tools', async () => {
+  it('maintains 1-to-1 alignment between Plugin Market browser tools and Agent Runtime tools without desktop CLI entries', async () => {
     const installed = await listInstalledTools()
     const activeToolNames = await getActiveWorkspaceToolNames(DEFAULT_WORKSPACE_DIR)
     const activeSet = new Set(activeToolNames)
 
-    // Every browser-supported enabled package must register ALL its declared tool names
+    // Every browser-supported enabled package must register ALL its declared tool names,
+    // and desktop-only CLI tools (ffmpeg, sandbox, browser, pluginDeveloper) must be hidden from browser UI.
     for (const pkg of BUILTIN_TOOL_PACKAGES) {
       const uiEntry = installed.tools.find((item) => item.name === pkg.name)
-      expect(uiEntry).toBeDefined()
       if (pkg.browserSupported) {
+        expect(uiEntry).toBeDefined()
         expect(uiEntry?.enabled).toBe(true)
         expect(uiEntry?.loadError).toBe('')
         for (const fnName of pkg.agentToolNames) {
           expect(activeSet.has(fnName)).toBe(true)
         }
       } else {
-        // Server/desktop-only packages must be honestly disabled with loadError
-        expect(uiEntry?.enabled).toBe(false)
-        expect(uiEntry?.loadError).toBeTruthy()
+        expect(uiEntry).toBeUndefined()
         await expect(setPluginEnabled('tool', pkg.name, true)).rejects.toThrow()
       }
     }
@@ -520,15 +520,15 @@ describe('Toonflow browser-native local runtime', () => {
     expect(teams.some((t) => t.name === 'remoteDirector' && t.kind === 'remote')).toBe(true)
   })
 
-  it('reports pure browser-native media and WebGL capabilities with zero server FFmpeg', () => {
+  it('honestly marks desktop ONNX local models unsupported in browser mode while keeping browser media probe/frame support', () => {
     const ffmpeg = getBrowserFfmpegStatus()
     expect(ffmpeg.platform).toBe('browser')
     expect(ffmpeg.supported).toBe(true)
     expect(ffmpeg.tools.ffmpeg.path).toMatch(/^browser:\/\//)
 
     const localModels = getBrowserLocalModelsStatus()
-    expect(localModels.supported).toBe(true)
-    expect(localModels.models.length).toBeGreaterThanOrEqual(2)
+    expect(localModels.supported).toBe(false)
+    expect(localModels.items).toEqual([])
   })
 
   it('sanitizes Toonflow branding and serves custom Studio i18n overrides across all 22 locales', () => {
@@ -600,6 +600,88 @@ describe('Toonflow browser-native local runtime', () => {
       }
     } finally {
       setLocale('zh-CN')
+    }
+  })
+
+  it('strictly uses /models lists with zero hardcoded fallbacks, orders configured default models first, and verifies all 4 roles uniformly', async () => {
+    // 1. Key with no discovered models must NOT synthesize hardcoded fallback models
+    updateHostContext({
+      origin: 'https://studio.example.com',
+      keys: [
+        { id: 201, name: 'Empty Key', key: 'sk-empty', platform: 'openai', groupName: 'Empty' },
+      ],
+      selectedTextKeyId: 201,
+      selectedImageKeyId: 201,
+      selectedVideoKeyId: 201,
+      selectedAudioKeyId: 201,
+      defaultTextModel: '',
+      defaultImageModel: '',
+      defaultVideoModel: '',
+      defaultAudioModel: '',
+      discoveredModels: { 201: [] },
+      discoveredModelMeta: { 201: [] },
+    })
+
+    const emptyText = await listAllTextProviders()
+    expect(emptyText[0]?.models).toEqual([])
+    const emptyMedia = await listMediaProviders()
+    expect(emptyMedia[0]?.models).toEqual([])
+
+    // 2. Non-standard model IDs returned by /models are preserved without hardcoded filtering,
+    //    and configured default models are ordered first for every role.
+    updateHostContext({
+      origin: 'https://studio.example.com',
+      keys: [
+        { id: 301, name: 'Text/Img Key', key: 'sk-ti', platform: 'openai', groupName: 'G1' },
+        { id: 302, name: 'Vid/Aud Key', key: 'sk-va', platform: 'openai', groupName: 'G2' },
+      ],
+      selectedTextKeyId: 301,
+      selectedImageKeyId: 301,
+      selectedVideoKeyId: 302,
+      selectedAudioKeyId: 302,
+      defaultTextModel: 'my-custom-writer',
+      defaultImageModel: 'nano-banana-pro',
+      defaultVideoModel: 'custom-vid-gen',
+      defaultAudioModel: 'custom-tts-v3',
+      discoveredModels: {
+        301: ['alpha-model', 'nano-banana-pro', 'my-custom-writer'],
+        302: ['custom-tts-v3', 'custom-vid-gen', 'other-model'],
+      },
+      discoveredModelMeta: {
+        301: [{ id: 'alpha-model' }, { id: 'nano-banana-pro' }, { id: 'my-custom-writer', supportsReasoningEffort: true }],
+        302: [{ id: 'custom-tts-v3' }, { id: 'custom-vid-gen' }, { id: 'other-model' }],
+      },
+    })
+
+    const textProviders = await listAllTextProviders()
+    expect(textProviders[0]?.models.map((m) => m.id)).toEqual(['my-custom-writer', 'alpha-model', 'nano-banana-pro'])
+    expect(textProviders[0]?.models[0]?.reasoning).toBe(true)
+
+    const mediaProviders = await listMediaProviders()
+    const allMedia = mediaProviders[0]?.models ?? []
+    expect(allMedia.filter((m) => m.type === 'image').map((m) => m.modelId)[0]).toBe('nano-banana-pro')
+    expect(allMedia.filter((m) => m.type === 'video').map((m) => m.modelId)[0]).toBe('custom-vid-gen')
+    expect(allMedia.filter((m) => m.type === 'audio').map((m) => m.modelId)[0]).toBe('custom-tts-v3')
+    expect(allMedia.filter((m) => m.type === 'video').map((m) => m.modelId)).toContain('other-model')
+
+    // 3. Uniform /v1/models verification across image, text, video, and audio roles
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'kling-v2-master' },
+            { id: 'nano-banana-pro' },
+            { id: 'fish-speech-v2' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    for (const role of ['image', 'text', 'video', 'audio'] as const) {
+      const verified = await verifySiteKey('sk-uniform-test', role)
+      expect(verified.ok).toBe(true)
+      expect(verified.modelCount).toBe(3)
+      expect(verified.models).toEqual(['fish-speech-v2', 'kling-v2-master', 'nano-banana-pro'])
     }
   })
 
@@ -805,6 +887,14 @@ describe('Toonflow browser-native local runtime', () => {
         '当前移动端浏览器内核缺少所需能力，请更新系统浏览器后重试。',
         '未返回图片数据',
         '未返回改写结果',
+        '本地导入',
+        '仅存浏览器本地，不上传服务器',
+        '默认模型',
+        '请先校验密钥获取模型列表',
+        '当前密钥未返回可用模型，请先校验密钥',
+        '该密钥未从 /models 返回可用模型',
+        '当前为纯浏览器本地运行模式，暂不支持桌面端 FFmpeg 音视频转码。',
+        '当前为纯浏览器本地运行模式，暂不支持桌面端 ONNX 本地模型推理。',
       ]) {
         const translated = translate(extraKey)
         expect(translated, `en key=${extraKey}`).not.toBe(extraKey)

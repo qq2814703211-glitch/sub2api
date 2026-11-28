@@ -593,7 +593,7 @@ export async function listInstalledTools() {
   const { disabled, configs } = await getToolRuntimeState();
   return {
     canManage: true,
-    tools: BUILTIN_TOOL_PACKAGES.map((tool) => ({
+    tools: BUILTIN_TOOL_PACKAGES.filter((tool) => tool.browserSupported).map((tool) => ({
       name: tool.name,
       displayName: translate(tool.displayName),
       description: translate(tool.description),
@@ -601,12 +601,12 @@ export async function listInstalledTools() {
       author: translate("内置"),
       github: "",
       builtin: true,
-      enabled: tool.browserSupported ? !disabled.has(`tool:${tool.name}`) : false,
-      canManage: tool.browserSupported,
-      canConfigure: Boolean(tool.browserSupported && tool.canConfigure),
+      enabled: !disabled.has(`tool:${tool.name}`),
+      canManage: true,
+      canConfigure: Boolean(tool.canConfigure),
       config: { ...(tool.defaultConfig ?? {}), ...(configs[`tool:${tool.name}`] ?? {}) },
       configRules: translateConfigRules(tool.configRules),
-      loadError: tool.loadError ? translate(tool.loadError) : "",
+      loadError: "",
       marketIdentifiers: [tool.name],
       installedAt: 1700000000000,
     })),

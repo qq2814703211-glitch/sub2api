@@ -2,14 +2,14 @@ import { getBrandName } from "@custom/i18nOverrides";
 import { installBrowserRuntimeInterceptor } from "./interceptor";
 import { initPluginI18n } from "./pluginI18n";
 import { getHostContext, initSub2ApiBridge, subscribeHostContext, subscribeIncomingMedia } from "./sub2apiBridge";
-import { ASSETS_ROOT, ensureSeeded, joinPath, kvGet, vfsWriteBytes } from "./vfs";
+import { ASSETS_ROOT, ensureSeeded, joinPath, vfsWriteBytes } from "./vfs";
 
 // 1. Install browser-native local API runtime BEFORE studio boots
 installBrowserRuntimeInterceptor();
 initSub2ApiBridge();
 initPluginI18n();
 
-// 2. Sync host theme, title, model caches & incoming media
+// 2. Sync host theme, locale, title, model caches & incoming media
 function applyHostTheme(theme: "dark" | "light") {
   const hostWindow = window as Window & {
     __sub2apiHostTheme?: "dark" | "light";
@@ -29,12 +29,12 @@ function applyDocumentTitle(locale: string) {
   document.title = getBrandName(locale === "en" ? "en" : "zh-CN");
 }
 
-async function hasExplicitStudioLanguage(): Promise<boolean> {
-  const saved = await kvGet<Record<string, unknown>>("toonflow.settings", {});
-  const ui = saved.ui && typeof saved.ui === "object" && !Array.isArray(saved.ui)
-    ? (saved.ui as Record<string, unknown>)
-    : undefined;
-  return typeof ui?.language === "string" && ui.language.trim() !== "" && ui.language !== "system";
+function syncStudioLocaleFromHost(hostLocale: string) {
+  const target = hostLocale === "en" ? "en" : "zh-CN";
+  applyDocumentTitle(target);
+  void import("@toonflow/i18n/vue").then(({ setLocale }) => {
+    setLocale(target);
+  });
 }
 
 let lastHostLocale = getHostContext().locale;
@@ -46,19 +46,18 @@ subscribeHostContext((ctx) => {
   applyHostTheme(ctx.theme);
   if (ctx.locale !== lastHostLocale) {
     lastHostLocale = ctx.locale;
-    void hasExplicitStudioLanguage().then((explicit) => {
-      if (explicit) return;
-      applyDocumentTitle(ctx.locale);
-      return import("@toonflow/i18n/vue").then(({ setLocale }) => {
-        setLocale(ctx.locale === "en" ? "en" : "zh-CN");
-      });
-    });
+    syncStudioLocaleFromHost(ctx.locale);
   }
   const nextKeysSig = JSON.stringify([
     ctx.selectedTextKeyId,
     ctx.selectedImageKeyId,
     ctx.selectedVideoKeyId,
     ctx.selectedAudioKeyId,
+    ctx.defaultTextModel,
+    ctx.defaultImageModel,
+    ctx.defaultVideoModel,
+    ctx.defaultAudioModel,
+    ctx.rewriteModel,
     ctx.keys.map((k) => k.id),
     ctx.discoveredModels,
   ]);
@@ -93,10 +92,5 @@ void ensureSeeded().then(async () => {
   await import("@toonflow-upstream/apps/web/src/main.ts");
   const ctx = getHostContext();
   applyHostTheme(ctx.theme);
-  const explicit = await hasExplicitStudioLanguage();
-  if (!explicit) {
-    void import("@toonflow/i18n/vue").then(({ setLocale }) => {
-      setLocale(ctx.locale === "en" ? "en" : "zh-CN");
-    });
-  }
+  syncStudioLocaleFromHost(ctx.locale);
 });

@@ -34,12 +34,15 @@
               <h2>{{ currentDirectory?.name ?? '全部素材' }}</h2>
               <el-button v-if="currentDirectory && !canSelect" class="directoryMore" text :icon="IconDots" :aria-label="'更多 ' + currentDirectory.name" title="目录操作" @click="emit('menu', $event, currentDirectory)" />
             </div>
-            <p>{{ scopeFiles.length }} 个素材<span v-if="scopeDirectories.length"> · {{ scopeDirectories.length }} 个文件夹</span></p>
+            <p>
+              {{ scopeFiles.length }} 个素材<span v-if="scopeDirectories.length"> · {{ scopeDirectories.length }} 个文件夹</span>
+              <span class="localStorageBadge"> · {{ translate("仅存浏览器本地，不上传服务器") }}</span>
+            </p>
           </div>
           <div class="headerActions">
             <el-input v-model="searchQuery" class="searchInput" :prefixIcon="IconSearch" :placeholder="folder === '.' ? '搜索全部素材' : '搜索当前文件夹'" aria-label="搜索素材" clearable @keydown.esc="clearSearch" />
             <el-button v-if="!canSelect" class="createButton" :icon="IconFolderPlus" :disabled="newFolderParent !== undefined || loading" @click="emit('startFolder')">新建文件夹</el-button>
-            <el-button v-if="!canSelect" class="uploadButton" type="primary" :icon="IconUpload" :loading="uploading" :disabled="newFolderParent !== undefined || loading || selecting" @click="emit('upload')">本地上传</el-button>
+            <el-button v-if="!canSelect" class="uploadButton" type="primary" :icon="IconUpload" :loading="uploading" :disabled="newFolderParent !== undefined || loading || selecting" @click="emit('upload')">{{ translate("本地导入") }}</el-button>
           </div>
         </div>
         <div v-if="!accept || filters.length > 2" class="filterRow" role="group" aria-label="素材类型">
@@ -499,6 +502,7 @@ watch(folder, path => {
               .assetImage {
                 width: 100%;
                 height: 100%;
+                border-radius: 0;
 
                 .imageError { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--el-text-color-placeholder); }
               }

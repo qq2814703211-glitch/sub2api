@@ -1520,7 +1520,7 @@ export function runWorkspaceAgentMessage(
           `当前工作区路径：${body.directory}`,
           body.canvas?.id ? `当前绑定画布：${body.canvas.id}` : "",
           `可用创作技能：${skills.map((s) => `${s.name}(${s.displayName})`).join("、")}`,
-          "你可以调用已启用的画布操作工具、工作区文件工具、全局资产管理工具、人机交互提问工具（askUser）、技能工具（skillOperator）、网页抓取/检索工具、媒体工具以及已启用的 MCP / A2A 工具协助完成剧本、分镜拆解与画布编排。",
+          "你可以调用已启用的画布操作工具、工作区文件工具、全局资产管理工具、人机交互提问工具（askUser）、技能工具（skillOperator）、网页抓取/检索工具与浏览器音视频抽帧探测工具协助完成剧本、分镜拆解与画布编排。",
         ]
           .filter(Boolean)
           .join("\n");

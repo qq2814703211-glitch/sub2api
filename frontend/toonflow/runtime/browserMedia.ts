@@ -220,15 +220,14 @@ export async function handleBrowserFfmpegExecute(body: {
                 const frame = await extractVideoFrameInBrowser(bytes, mimeType, timeSec);
                 await vfsWriteBytes(joinPath(body.directory, outArg), frame, { mimeType: "image/webp" });
               } else {
-                // Passthrough copy in browser VFS when output is media
-                await vfsWriteBytes(joinPath(body.directory, outArg), bytes, { mimeType });
+                throw new Error(translate("当前为纯浏览器本地运行模式，暂不支持桌面端 FFmpeg 音视频转码。"));
               }
             }
           }
           emit("progress", { percent: 100 });
           emit("end", { stdout: "", stderr: "" });
         } else {
-          emit("end", { stdout: "", stderr: "" });
+          throw new Error(translate("当前为纯浏览器本地运行模式，暂不支持桌面端 FFmpeg 音视频转码。"));
         }
       } catch (err) {
         emit("error", { message: err instanceof Error ? err.message : String(err) });
@@ -247,28 +246,16 @@ export async function handleBrowserFfmpegExecute(body: {
 export function getBrowserLocalModelsStatus() {
   const hasWebGpu = typeof navigator !== "undefined" && "gpu" in navigator;
   return {
-    supported: true,
+    supported: false,
     runtime: hasWebGpu ? "WebGPU" : "WebGL",
-    models: [
-      {
-        id: "browser-frame-extractor",
-        name: "视频抽帧引擎",
-        description: "视频关键帧提取与信息解析。",
-        category: "video",
-        installed: true,
-        ready: true,
-        sizeBytes: 0,
-      },
-      {
-        id: "browser-3d-webgl",
-        name: "3D 白模渲染引擎",
-        description: "3D 白模片场与多机位预演渲染。",
-        category: "video",
-        installed: true,
-        ready: true,
-        sizeBytes: 0,
-      },
-    ],
+    directory: "browser://unsupported",
+    target: "browser-web",
+    version: "",
+    fileName: "",
+    sources: [],
+    installed: false,
+    installing: false,
+    items: [],
   };
 }
 
@@ -305,7 +292,7 @@ export function createLocalModelsSse(signal?: AbortSignal): Response {
 }
 
 export async function handleLocalModelMediaProcess(
-  kind: "image" | "video" | "audio",
+  _kind: "image" | "video" | "audio",
   body: { directory: string; source: string; output: string; options?: Record<string, unknown>; cancel?: boolean }
 ): Promise<Response> {
   if (body.cancel) {
@@ -321,18 +308,7 @@ export async function handleLocalModelMediaProcess(
         controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
       try {
-        emit("progress", { completed: 1, total: 2 });
-        if (body.directory && body.source && body.output) {
-          const { bytes, mimeType } = await vfsReadBytes(joinPath(body.directory, body.source));
-          if (kind === "video" && /\.(png|jpg|jpeg|webp)$/i.test(body.output)) {
-            const frame = await extractVideoFrameInBrowser(bytes, mimeType, 0);
-            await vfsWriteBytes(joinPath(body.directory, body.output), frame, { mimeType: "image/webp" });
-          } else {
-            await vfsWriteBytes(joinPath(body.directory, body.output), bytes, { mimeType });
-          }
-        }
-        emit("progress", { completed: 2, total: 2 });
-        emit("done", { ok: true });
+        throw new Error(translate("当前为纯浏览器本地运行模式，暂不支持桌面端 ONNX 本地模型推理。"));
       } catch (err) {
         emit("error", { message: err instanceof Error ? err.message : String(err) });
       } finally {

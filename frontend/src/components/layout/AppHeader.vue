@@ -11,7 +11,29 @@
           <Icon name="menu" size="md" />
         </button>
 
-        <div class="hidden lg:block">
+        <div
+          v-if="isCreativePlaza"
+          class="hidden items-center gap-2.5 lg:flex"
+          data-test="header-creative-brand"
+        >
+          <img
+            v-if="creativeBrandLogo"
+            :src="creativeBrandLogo"
+            :alt="pageTitle"
+            class="h-[30px] w-[30px] shrink-0 rounded-lg object-contain"
+          />
+          <span
+            v-else
+            class="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-lg bg-primary-500/15 text-primary-600 dark:bg-primary-400/15 dark:text-primary-400"
+            aria-hidden="true"
+          >
+            <Icon name="sparkles" size="sm" />
+          </span>
+          <h1 class="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">
+            {{ pageTitle }}
+          </h1>
+        </div>
+        <div v-else class="hidden lg:block">
           <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
             {{ pageTitle }}
           </h1>
@@ -291,6 +313,10 @@ const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
+const isCreativePlaza = computed(() => route.name === 'CreativePlaza')
+const creativeBrandLogo = computed(() =>
+  sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true })
+)
 const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
 const avatarUrl = computed(() => user.value?.avatar_url?.trim() || '')
 const availableBalance = computed(() => Number(user.value?.balance || 0))

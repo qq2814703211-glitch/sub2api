@@ -3,13 +3,6 @@
     <bg class="pageBackground" :scrollTop="backgroundScrollTop" />
     <aside id="homeSidebar" class="homeSidebar" aria-label="首页侧栏">
       <div class="sidebarHeader">
-        <div class="sidebarBrand">
-          <img v-if="brandLogo" class="sidebarLogo customBrandLogo" :src="brandLogo" :alt="brandName" />
-          <span v-else class="sidebarLogo brandIconBadge" aria-hidden="true">
-            <icon-sparkles :size="18" />
-          </span>
-          <span class="brandName">{{ brandName }}</span>
-        </div>
         <button class="sidebarToggle" type="button" :aria-label="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'" :aria-expanded="!sidebarCollapsed" aria-controls="homeSidebar" @click="sidebarCollapsed = !sidebarCollapsed">
           <icon-layout-sidebar-left-expand v-if="sidebarCollapsed" :size="18" aria-hidden="true" />
           <icon-layout-sidebar-left-collapse v-else :size="18" aria-hidden="true" />
@@ -20,7 +13,7 @@
           <component :is="section.icon" :size="18" aria-hidden="true" />
           <span class="sidebarText">{{ translate(section.label) }}</span>
         </button>
-        <button v-if="currentUser?.role !== 'user'" class="sidebarItem" :class="{ active: activeSection === 'assets' }" type="button" :aria-current="activeSection === 'assets' ? 'page' : undefined" aria-label="素材库" title="素材库" data-section="assets" @click="showSection('assets')">
+        <button class="sidebarItem" :class="{ active: activeSection === 'assets' }" type="button" :aria-current="activeSection === 'assets' ? 'page' : undefined" aria-label="素材库" title="素材库" data-section="assets" @click="showSection('assets')">
           <icon-library-photo :size="18" aria-hidden="true" />
           <span class="sidebarText">素材库</span>
         </button>
@@ -28,7 +21,7 @@
           <icon-building-store :size="18" aria-hidden="true" />
           <span class="sidebarText">插件市场</span>
         </button>
-        <hr v-if="currentUser?.role !== 'user'" class="sidebarDivider" />
+        <hr class="sidebarDivider" />
         <button class="sidebarItem" :class="{ active: activeSection === 'trumanMap' }" type="button" :aria-current="activeSection === 'trumanMap' ? 'page' : undefined" aria-label="白模预演" title="白模预演" data-section="trumanMap" @click="showSection('trumanMap')">
           <icon-cube :size="18" aria-hidden="true" />
           <span class="sidebarText">白模预演</span>
@@ -53,7 +46,7 @@
       </div>
     </el-scrollbar>
     <!-- 素材库自带内部滚动，需要确定高度，所以与滚动区占同一格，而不放进滚动区。 -->
-    <assetsPage v-if="currentUser?.role !== 'user'" v-show="activeSection === 'assets'" :active="activeSection === 'assets'" />
+    <assetsPage v-show="activeSection === 'assets'" :active="activeSection === 'assets'" />
     <settings ref="settingsDialog" v-model="settingsVisible" />
     <workspacePicker ref="relocationPicker" hideTrigger />
   </div>
@@ -66,9 +59,8 @@ import { defineAsyncComponent, onMounted, onUnmounted, provide, ref, watch } fro
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type ScrollbarInstance } from "element-plus";
 import { IconHome, IconFolder, IconSparkles } from "@tabler/icons-vue";
-import { useStudioBrand } from "@custom/useStudioBrand";
 import { useWorkspaceStore, type Project } from "@/stores/workspace";
-import { currentUser, publicWeb } from "@/stores/multiTenant";
+import { publicWeb } from "@/stores/multiTenant";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { waitForControlValue } from "@/lib/mcpControl";
 import settings from "@/components/settings/index.vue";
@@ -84,7 +76,6 @@ const quickImagePage = defineAsyncComponent(() => import("@custom/quickImage/ind
 const settingsVisible = ref(false);
 const settingsDialog = ref<InstanceType<typeof settings>>();
 provide("openSettingsPanel", (id: string) => settingsDialog.value?.openPanel(id));
-const { brandName, brandLogo } = useStudioBrand();
 const sidebarCollapsed = ref(false);
 const pageScroll = ref<ScrollbarInstance>();
 const backgroundScrollTop = ref(0);
@@ -247,26 +238,7 @@ async function createProject(request?: NonNullable<typeof workspaceStore.pending
     .homeSidebar {
       .sidebarPromotion { display: none; }
       .sidebarHeader {
-        .sidebarBrand {
-          gap: 0;
-
-          .brandName { max-width: 0; opacity: 0; }
-        }
-
-        .sidebarToggle { inset-inline-start: 9px; opacity: 0; }
-
-        @media (min-width: 901px) {
-          &:hover, &:has(.sidebarToggle:focus-visible) {
-            .sidebarLogo { opacity: 0; }
-            .sidebarToggle { opacity: 1; }
-          }
-        }
-
-        // 触屏没有悬停，收起后直接显示展开按钮。
-        @media (min-width: 901px) and (any-pointer: coarse) {
-          .sidebarLogo { opacity: 0; }
-          .sidebarToggle { opacity: 1; }
-        }
+        justify-content: center;
       }
 
       .sidebarItem {
@@ -287,7 +259,7 @@ async function createProject(request?: NonNullable<typeof workspaceStore.pending
     flex: 0 0 var(--sidebarWidth);
     flex-direction: column;
     width: var(--sidebarWidth);
-    padding: 20px 12px 16px;
+    padding: 14px 12px 16px;
     overflow-x: hidden;
     overflow-y: auto;
     border-inline-end: 1px solid var(--el-border-color-lighter);
@@ -298,51 +270,13 @@ async function createProject(request?: NonNullable<typeof workspaceStore.pending
       position: relative;
       display: flex;
       align-items: center;
+      justify-content: flex-end;
       flex-shrink: 0;
       height: 30px;
-      gap: 8px;
-      margin-bottom: 24px;
-      padding: 0 8px;
-
-      .sidebarBrand {
-        display: flex;
-        align-items: center;
-        min-width: 0;
-        gap: 9px;
-        overflow: hidden;
-        transition: gap var(--sidebarMotion) ease;
-
-        .sidebarLogo {
-          flex-shrink: 0;
-          width: 30px;
-          height: 30px;
-          border-radius: 8px;
-          object-fit: contain;
-          transition: opacity var(--sidebarFade) ease;
-
-          &.brandIconBadge {
-            display: grid;
-            place-items: center;
-            background: var(--el-color-primary-light-9);
-            color: var(--el-color-primary);
-          }
-        }
-
-        .brandName {
-          max-width: 150px;
-          overflow: hidden;
-          font-size: 20px;
-          font-weight: 600;
-          letter-spacing: -0.5px;
-          white-space: nowrap;
-          transition: max-width var(--sidebarMotion) ease, opacity var(--sidebarFade) ease;
-        }
-      }
+      margin-bottom: 10px;
+      padding: 0 4px;
 
       .sidebarToggle {
-        position: absolute;
-        top: 1px;
-        inset-inline-start: calc(100% - 32px);
         display: grid;
         flex-shrink: 0;
         place-items: center;
@@ -354,7 +288,7 @@ async function createProject(request?: NonNullable<typeof workspaceStore.pending
         background: transparent;
         color: var(--el-text-color-secondary);
         cursor: pointer;
-        transition: inset-inline-start var(--sidebarMotion) ease, opacity var(--sidebarFade) ease;
+        transition: background-color 150ms ease, color 150ms ease;
 
         &:hover { background: var(--el-fill-color); color: var(--el-text-color-primary); }
         &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }

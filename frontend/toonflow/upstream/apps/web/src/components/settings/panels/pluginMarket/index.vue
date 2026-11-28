@@ -21,7 +21,6 @@
             <input ref="pluginFileInput" type="file" :accept="agentMarketEnabled ? '.ext.js,.umd.js,.tool.js,.agent.zip,.zip,.md,.tar,.tar.gz,.tgz' : '.ext.js,.umd.js,.tool.js,.zip,.md,.tar,.tar.gz,.tgz'" hidden @change="installFile" />
             <template v-if="agentMarketEnabled && selectedType === 'agent'">
               <el-button size="small" :icon="IconLink" :disabled="loading || !canManageAgents" @click="agentConnectVisible = true">连接远程 Agent</el-button>
-              <el-button size="small" :icon="IconSettings" :disabled="loading || !canManageAgents" @click="a2aSettingsVisible = true">A2A 服务</el-button>
             </template>
           </template>
         </div>
@@ -55,10 +54,7 @@
       </div>
     </div>
 
-    <ffmpeg v-if="activeTab === 'ffmpeg'" :visible />
-    <mcpServers v-else-if="activeTab === 'mcp'" :visible />
-    <localModels v-else-if="activeTab === 'localModels'" :visible />
-    <template v-else>
+    <template>
       <template v-if="activeTab === 'installed'">
         <el-alert v-for="message in visibleLoadErrors" :key="message" class="loadError" :title="message" type="error" :closable="false" showIcon />
         <el-alert v-if="pluginExistenceError" class="loadError" :title="pluginExistenceError" type="warning" :closable="false" showIcon>
@@ -286,7 +282,6 @@
         @closed="uploadVisible = false; selectedUploadPlugin = undefined; selectedMarketPlugin = undefined" />
       <agentEditorDialog v-if="selectedAgent" :key="selectedAgent.key" :agent="selectedAgent" :canManage="canManageAgents" @saved="refreshInstalled" @closed="selectedAgent = undefined" />
       <agentConnectDialog v-if="agentConnectVisible" @saved="refreshInstalled" @closed="agentConnectVisible = false" />
-      <a2aSettingsDialog v-if="a2aSettingsVisible" @saved="refreshInstalled" @closed="a2aSettingsVisible = false" />
       <skillEditorDialog
         v-if="selectedSkill"
         :key="selectedSkill.key"
@@ -346,7 +341,7 @@ import { locale, translate } from "@toonflow/i18n/vue";
 import axios from "axios";
 import parse from "semver/functions/parse";
 import { computed, defineAsyncComponent, markRaw, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import { IconBox, IconBook, IconTool, IconFileText, IconExternalLink, IconSparkles2, IconUpload, IconCloudUpload, IconShare, IconStar, IconStarFilled, IconLink, IconSettings, IconCopy } from "@tabler/icons-vue";
+import { IconBox, IconBook, IconTool, IconFileText, IconExternalLink, IconSparkles2, IconUpload, IconCloudUpload, IconShare, IconStar, IconStarFilled, IconLink, IconCopy } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { toonflowAccountToken as accountToken } from "@/stores/settings";
 import http from "@/lib/http";
@@ -358,12 +353,8 @@ import pluginConfigDialog from "./pluginConfigDialog.vue";
 import uploadPluginDialog from "./uploadPluginDialog.vue";
 import { getPluginExistence } from "./marketUpload";
 import skillEditorDialog from "./skillEditorDialog.vue";
-import ffmpeg from "./ffmpeg.vue";
-import mcpServers from "./mcpServers.vue";
-import localModels from "./localModels.vue";
 import agentEditorDialog from "./agentEditorDialog.vue";
 import agentConnectDialog from "./agentConnectDialog.vue";
-import a2aSettingsDialog from "./a2aSettingsDialog.vue";
 import type { Plugin, PluginType } from "./types";
 import { installPluginFile } from "../../installPluginFile";
 
@@ -380,9 +371,6 @@ const pluginTypes = {
 const tabs = {
   get discover() { return translate("发现插件"); },
   get installed() { return translate("已安装"); },
-  get mcp() { return translate("MCP连接器"); },
-  ffmpeg: "FFmpeg",
-  get localModels() { return translate("本地模型"); },
 } as const;
 const activeTab = ref<keyof typeof tabs>("discover");
 const isMarketTab = computed(() => activeTab.value === "discover");
@@ -429,7 +417,6 @@ const canManageTools = ref(false);
 const canManageAgents = ref(false);
 const selectedAgent = ref<Plugin>();
 const agentConnectVisible = ref(false);
-const a2aSettingsVisible = ref(false);
 const pendingPlugins = ref(new Set<string>());
 const collectingPlugins = ref(new Set<string>());
 const deletingPlugins = ref(new Set<string>());

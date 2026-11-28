@@ -10,6 +10,7 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { acquireGlobalAssetUrl } from "@/lib/globalAssets";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { useMediaPreview } from "@toonflow/node-shared/mediaPreview";
 
@@ -32,7 +33,15 @@ watch([inView, () => props.thumbnail?.url, () => props.thumbnail?.mimeType, () =
   failed.value = false;
   if (!visible || !path) return;
   if (globalAsset) {
-    previewUrl.value = `/api/assets/read?path=${encodeURIComponent(path)}`;
+    let cancelled = false;
+    const preview = acquireGlobalAssetUrl(path, mimeType);
+    onCleanup(() => { cancelled = true; preview.release(); });
+    try {
+      const url = await preview.url;
+      if (!cancelled) previewUrl.value = url;
+    } catch {
+      if (!cancelled) failed.value = true;
+    }
     return;
   }
   if (!directory) return;

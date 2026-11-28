@@ -20,12 +20,16 @@ describe('toonflowHostBridge', () => {
     vi.restoreAllMocks()
   })
 
-  it('persists and loads creative key bindings including rewrite settings', () => {
+  it('persists and loads creative key bindings including default models and rewrite settings', () => {
     saveCreativeKeyBindings({
       textKeyId: 10,
       imageKeyId: 11,
       videoKeyId: 12,
       audioKeyId: 13,
+      defaultTextModel: 'gpt-5-mini',
+      defaultImageModel: 'nano-banana-pro',
+      defaultVideoModel: 'veo-3-pro',
+      defaultAudioModel: 'fish-speech-v2',
       rewriteModel: 'gpt-4o-mini',
       rewriteEffort: 'low',
     })
@@ -35,6 +39,10 @@ describe('toonflowHostBridge', () => {
       imageKeyId: 11,
       videoKeyId: 12,
       audioKeyId: 13,
+      defaultTextModel: 'gpt-5-mini',
+      defaultImageModel: 'nano-banana-pro',
+      defaultVideoModel: 'veo-3-pro',
+      defaultAudioModel: 'fish-speech-v2',
       rewriteModel: 'gpt-4o-mini',
       rewriteEffort: 'low',
     })
@@ -50,6 +58,10 @@ describe('toonflowHostBridge', () => {
       imageKeyId: 1,
       videoKeyId: 1,
       audioKeyId: 1,
+      defaultTextModel: '',
+      defaultImageModel: '',
+      defaultVideoModel: '',
+      defaultAudioModel: '',
       rewriteModel: 'claude-sonnet-4-5',
       rewriteEffort: 'medium',
     })

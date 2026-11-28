@@ -247,7 +247,12 @@ export async function vfsReadBytes(path: string): Promise<{ bytes: Uint8Array; m
   if (!node || node.kind !== "file") {
     throw Object.assign(new Error(`文件不存在：${path}`), { status: 404, code: "ENOENT" });
   }
-  const bytes = node.content instanceof Uint8Array ? node.content : new Uint8Array(node.content ?? []);
+  const raw = node.content as unknown;
+  const bytes = ArrayBuffer.isView(raw)
+    ? new Uint8Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength))
+    : raw instanceof ArrayBuffer || Object.prototype.toString.call(raw) === "[object ArrayBuffer]"
+      ? new Uint8Array(raw as ArrayBuffer)
+      : new Uint8Array();
   return {
     bytes,
     mimeType: node.mimeType || guessMimeType(path),

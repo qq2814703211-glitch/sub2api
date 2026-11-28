@@ -5,7 +5,6 @@ import { locale, setLocale, translate } from "@toonflow/i18n/vue";
 import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
 import { getBrandName } from "@custom/i18nOverrides";
 import { resolveHostLocale, subscribeHostLocale } from "@custom/useStudioBrand";
-import { uiSettings } from "@/stores/settings";
 import type { LocaleConfig } from "vue-stream-markdown";
 import "dayjs/locale/zh-cn";
 import "dayjs/locale/zh-tw";
@@ -40,11 +39,9 @@ export function registerApiLanguage(client: AxiosInstance) {
 }
 
 export function registerLanguage() {
-  const applyLanguage = () => setLocale(uiSettings.value.language === "system" ? resolveHostLocale() : uiSettings.value.language);
-  const stopSettings = watch(() => uiSettings.value.language, applyLanguage, { immediate: true, flush: "sync" });
-  const stopHostLocale = subscribeHostLocale(() => {
-    if (uiSettings.value.language === "system") applyLanguage();
-  });
+  const applyLanguage = () => setLocale(resolveHostLocale());
+  applyLanguage();
+  const stopHostLocale = subscribeHostLocale(applyLanguage);
   const stopDocument = watch(locale, (value, previous) => {
     document.documentElement.lang = value;
     document.documentElement.dir = isRtlLocale(value) ? "rtl" : "ltr";
@@ -55,13 +52,10 @@ export function registerLanguage() {
     }
   }, { immediate: true });
   const stopRequests = registerApiLanguage(axios);
-  window.addEventListener("languagechange", applyLanguage);
   return () => {
-    stopSettings();
     stopHostLocale();
     stopDocument();
     stopRequests();
-    window.removeEventListener("languagechange", applyLanguage);
   };
 }
 

@@ -1,6 +1,5 @@
 <template>
   <main class="hello" :class="{ configuring: !multiTenantEnabled && view !== 'welcome' }">
-    <div class="pageLanguage"><languageSelect popover /></div>
     <section class="welcomePanel" aria-labelledby="welcomeTitle">
       <div v-if="!multiTenantEnabled && view !== 'welcome'" class="providerContent">
         <header class="providerHeader">
@@ -59,7 +58,6 @@ import { customProviders, multiTenantEnabled, toonflowAccountToken } from "@/sto
 import { useHelloStore } from "@/stores/hello";
 import anonymousData from "@/lib/anonymousData";
 import bg from "./bg.vue";
-import languageSelect from "@/components/languageSelect.vue";
 import { mobileConnectionLabel } from "@/lib/mobile";
 
 const accountPanel = defineAsyncComponent(() => import("@/components/settings/panels/account/index.vue"));

@@ -39,7 +39,6 @@ import {
   IconKey,
   IconSettings,
   IconBuildingStore,
-  IconPlugConnected,
   IconUserCog,
 } from "@tabler/icons-vue";
 
@@ -53,7 +52,6 @@ const allSettingsPanels = markMessages([
     groupLabel: "扩展",
     component: defineAsyncComponent(() => import("./panels/pluginMarket/index.vue")),
   },
-  { id: "mcp", label: "MCP", icon: IconPlugConnected, groupLabel: "通讯", component: defineAsyncComponent(() => import("./panels/mcp/index.vue")) },
   {
     id: "personalization",
     label: "个性化",

@@ -79,30 +79,20 @@ export interface MediaTaskRecord {
 
 const mediaTasks = new Map<string, MediaTaskRecord>();
 
-const DEFAULT_TEXT_MODELS = [
-  "gpt-4o",
-  "gpt-4.1",
-  "claude-sonnet-4-5-20250929",
-  "gemini-2.5-pro",
-  "deepseek-chat",
-];
-
-const DEFAULT_IMAGE_MODELS = [
-  { id: "gpt-image-1", label: "gpt-image-1" },
-  { id: "gemini-2.5-flash-image-preview", label: "gemini-2.5-flash-image-preview" },
-  { id: "flux-pro", label: "flux-pro" },
-];
-
-const DEFAULT_VIDEO_MODELS = [
-  { id: "grok-imagine-video", label: "grok-imagine-video" },
-  { id: "sora-2", label: "sora-2" },
-  { id: "doubao-seedance-1-0-pro-250528", label: "doubao-seedance-1-0-pro-250528" },
-];
-
-const DEFAULT_AUDIO_MODELS = [
-  { id: "gpt-4o-mini-tts", label: "gpt-4o-mini-tts" },
-  { id: "tts-1-hd", label: "tts-1-hd" },
-];
+function orderModelsWithDefault(models: string[], preferredDefault?: string, priorityHint?: RegExp): string[] {
+  const unique = [...new Set(models.map((id) => String(id || "").trim()).filter(Boolean))];
+  const sorted = priorityHint
+    ? [
+        ...unique.filter((id) => priorityHint.test(id)),
+        ...unique.filter((id) => !priorityHint.test(id)),
+      ]
+    : unique;
+  const trimmedDefault = (preferredDefault || "").trim();
+  if (trimmedDefault && sorted.includes(trimmedDefault)) {
+    return [trimmedDefault, ...sorted.filter((id) => id !== trimmedDefault)];
+  }
+  return sorted;
+}
 
 export async function getStoredSettings(): Promise<Record<string, unknown>> {
   return kvGet<Record<string, unknown>>("toonflow.settings", {});
@@ -114,29 +104,38 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
   const siteApiLabel = translate("站内 API");
   const providers: CustomTextProvider[] = [];
 
-  // Strictly enforce site-internal API gateway backed by the user's site API keys.
+  // Strictly enforce site-internal API gateway backed by the user's site API keys and actual /v1/models response.
   if (host.keys.length) {
     const primary = resolveSub2ApiKey("text") ?? host.keys[0]!;
     const discovered = host.discoveredModels[primary.id] ?? primary.models ?? [];
-    const textIds = discovered.length
-      ? discovered.filter((m) => !/image|dall-e|sora|video|tts|whisper|embedding/i.test(m))
-      : DEFAULT_TEXT_MODELS;
-    const modelIds = textIds.length ? textIds : DEFAULT_TEXT_MODELS;
+    const metaById = new Map((host.discoveredModelMeta?.[primary.id] ?? []).map((m) => [m.id, m]));
+    const modelIds = orderModelsWithDefault(discovered, host.defaultTextModel);
     providers.push({
       id: "site-gateway",
       label: primary.name ? `${siteApiLabel} · ${primary.name}` : siteApiLabel,
       apiUrl: `${origin}/v1`,
       protocol: inferTextProtocol(primary.platform),
       apiKey: primary.key,
-      models: modelIds.map((id) => ({
-        id,
-        label: id,
-        reasoning: /o1|o3|o4|reasoner|r1|claude|gemini-2\.5|gpt-5/i.test(id),
-        reasoningEfforts: /o1|o3|o4|gpt-5|claude/i.test(id) ? ["low", "medium", "high"] : [],
-        contextWindow: 128000,
-        maxOutputTokens: 8192,
-        input: ["text", "image"],
-      })),
+      models: modelIds.map((id) => {
+        const meta = metaById.get(id);
+        const discoveredEfforts = (meta?.reasoningEfforts ?? []).map((e) => e.value).filter(Boolean);
+        return {
+          id,
+          label: id,
+          reasoning:
+            typeof meta?.supportsReasoningEffort === "boolean"
+              ? meta.supportsReasoningEffort
+              : discoveredEfforts.length > 0 || /o1|o3|o4|reasoner|r1|claude|gemini-2\.5|gpt-5/i.test(id),
+          reasoningEfforts: discoveredEfforts.length
+            ? discoveredEfforts
+            : /o1|o3|o4|gpt-5|claude/i.test(id)
+              ? ["low", "medium", "high"]
+              : [],
+          contextWindow: 128000,
+          maxOutputTokens: 8192,
+          input: ["text", "image"],
+        };
+      }),
     });
   } else {
     providers.push({
@@ -145,15 +144,7 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
       apiUrl: `${origin}/v1`,
       protocol: "openai-completions",
       apiKey: "",
-      models: DEFAULT_TEXT_MODELS.map((id) => ({
-        id,
-        label: id,
-        reasoning: /claude|gemini-2\.5/i.test(id),
-        reasoningEfforts: [],
-        contextWindow: 128000,
-        maxOutputTokens: 8192,
-        input: ["text", "image"],
-      })),
+      models: [],
     });
   }
 
@@ -193,17 +184,33 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
   const videoKey = resolveSub2ApiKey("video");
   const audioKey = resolveSub2ApiKey("audio");
 
-  const filterModels = (key: Sub2ApiKeyInfo | null, pattern: RegExp) => {
+  const getKeyModels = (key: Sub2ApiKeyInfo | null) => {
     if (!key) return [];
-    const list = host.discoveredModels[key.id] ?? key.models ?? [];
-    return list.filter((id) => pattern.test(id));
+    return host.discoveredModels[key.id] ?? key.models ?? [];
   };
 
-  const discoveredImages = filterModels(imageKey, /image|imagen|flux|sdxl|dall-e|seedream|ideogram|recraft/i);
-  const discoveredVideos = filterModels(videoKey, /video|sora|veo|kling|seedance|runway|hailuo|minimax|wan|vidu|luma/i);
-  const discoveredAudios = filterModels(audioKey, /tts|speech|audio|voice|minimax-speech/i);
+  // Strictly use each bound key's actual /v1/models response; soft-order configured default first and likely modality matches next without dropping any returned model.
+  const discoveredImages = orderModelsWithDefault(
+    getKeyModels(imageKey),
+    host.defaultImageModel,
+    /image|imagen|flux|sdxl|dall-e|seedream|ideogram|recraft|banana|kolors|mj/i
+  );
+  const discoveredVideos = orderModelsWithDefault(
+    getKeyModels(videoKey),
+    host.defaultVideoModel,
+    /video|sora|veo|kling|seedance|runway|hailuo|minimax|wan|vidu|luma/i
+  );
+  const discoveredAudios = orderModelsWithDefault(
+    getKeyModels(audioKey),
+    host.defaultAudioModel,
+    /tts|speech|audio|voice|cosyvoice|fish|minimax-speech/i
+  );
 
   const siteApiLabel = translate("站内 API");
+  const imageProviderLabel = imageKey?.name ? `${siteApiLabel} · ${imageKey.name}` : siteApiLabel;
+  const videoProviderLabel = videoKey?.name ? `${siteApiLabel} · ${videoKey.name}` : siteApiLabel;
+  const audioProviderLabel = audioKey?.name ? `${siteApiLabel} · ${audioKey.name}` : siteApiLabel;
+
   const imageRules: Record<string, unknown>[] = [
     {
       type: "select",
@@ -220,16 +227,14 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
       props: { min: 1, max: 4 },
     },
   ];
-  const imageModels = (
-    discoveredImages.length ? discoveredImages.map((id) => ({ id, label: id })) : DEFAULT_IMAGE_MODELS
-  ).map(
-    (m): MediaModelDescriptor => ({
+  const imageModels = discoveredImages.map(
+    (id): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: siteApiLabel,
-      providerName: siteApiLabel,
-      modelId: m.id,
-      id: m.id,
-      label: m.label,
+      providerLabel: imageProviderLabel,
+      providerName: imageProviderLabel,
+      modelId: id,
+      id,
+      label: id,
       type: "image",
       imageRatios: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
       imageSizes: ["1K", "2K"],
@@ -256,16 +261,14 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
       options: [4, 5, 6, 8, 10].map((v) => ({ label: `${v}s`, value: v })),
     },
   ];
-  const videoModels = (
-    discoveredVideos.length ? discoveredVideos.map((id) => ({ id, label: id })) : DEFAULT_VIDEO_MODELS
-  ).map(
-    (m): MediaModelDescriptor => ({
+  const videoModels = discoveredVideos.map(
+    (id): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: siteApiLabel,
-      providerName: siteApiLabel,
-      modelId: m.id,
-      id: m.id,
-      label: m.label,
+      providerLabel: videoProviderLabel,
+      providerName: videoProviderLabel,
+      modelId: id,
+      id,
+      label: id,
       type: "video",
       aspectRatios: ["16:9", "9:16", "1:1"],
       resolutions: ["720p", "1080p"],
@@ -294,16 +297,14 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
       props: { min: 0.5, max: 2, step: 0.1 },
     },
   ];
-  const audioModels = (
-    discoveredAudios.length ? discoveredAudios.map((id) => ({ id, label: id })) : DEFAULT_AUDIO_MODELS
-  ).map(
-    (m): MediaModelDescriptor => ({
+  const audioModels = discoveredAudios.map(
+    (id): MediaModelDescriptor => ({
       providerId: "site-media",
-      providerLabel: siteApiLabel,
-      providerName: siteApiLabel,
-      modelId: m.id,
-      id: m.id,
-      label: m.label,
+      providerLabel: audioProviderLabel,
+      providerName: audioProviderLabel,
+      modelId: id,
+      id,
+      label: id,
       type: "audio",
       voices: [
         { title: "Alloy", voice: "alloy" },
@@ -934,11 +935,14 @@ async function executeMediaGeneration(
   if (input.mediaType === "image") {
     const key = resolveSub2ApiKey("image");
     if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择图像生成密钥"));
+    const keyModels = host.discoveredModels[key.id] ?? key.models ?? [];
+    const model = input.modelId?.trim() || host.defaultImageModel?.trim() || keyModels[0] || "";
+    if (!model) throw new Error(translate("请先在「设置 → 密钥与模型」校验图像密钥并配置默认模型"));
     const resp = await rawFetch(`${origin}/v1/images/generations`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
       body: JSON.stringify({
-        model: input.modelId || "gpt-image-1",
+        model,
         prompt: input.prompt || "",
         n: input.n || 1,
         size: input.size && input.size.includes("x") ? input.size : "1024x1024",
@@ -977,11 +981,14 @@ async function executeMediaGeneration(
   if (input.mediaType === "audio") {
     const key = resolveSub2ApiKey("audio");
     if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择音频生成密钥"));
+    const keyModels = host.discoveredModels[key.id] ?? key.models ?? [];
+    const model = input.modelId?.trim() || host.defaultAudioModel?.trim() || keyModels[0] || "";
+    if (!model) throw new Error(translate("请先在「设置 → 密钥与模型」校验音频密钥并配置默认模型"));
     const resp = await rawFetch(`${origin}/v1/audio/speech`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
       body: JSON.stringify({
-        model: input.modelId || "gpt-4o-mini-tts",
+        model,
         input: input.prompt || "",
         voice: input.voice || "alloy",
         speed: input.speed || 1,
@@ -1003,7 +1010,9 @@ async function executeMediaGeneration(
   // Video generation via site gateway
   const key = resolveSub2ApiKey("video");
   if (!key?.key) throw new Error(translate("请先在「设置 → 密钥与模型」中选择视频生成密钥"));
-  const model = input.modelId || "grok-imagine-video";
+  const keyModels = host.discoveredModels[key.id] ?? key.models ?? [];
+  const model = input.modelId?.trim() || host.defaultVideoModel?.trim() || keyModels[0] || "";
+  if (!model) throw new Error(translate("请先在「设置 → 密钥与模型」校验视频密钥并配置默认模型"));
   const isSeedance = /seedance|doubao/i.test(model);
   const endpoint = isSeedance ? `${origin}/api/v3/contents/generations/tasks` : `${origin}/v1/videos/generations`;
   const payload = isSeedance

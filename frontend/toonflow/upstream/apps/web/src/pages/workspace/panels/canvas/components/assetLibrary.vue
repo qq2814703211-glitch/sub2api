@@ -3,7 +3,7 @@
   <el-card v-else-if="visible" class="assetLibrary" shadow="never" :bodyStyle="{ padding: '8px' }" role="region" aria-label="素材库" @dblclick.stop>
     <div class="libraryToolbar">
       <el-input v-model="searchQuery" class="searchInput" :prefixIcon="IconSearch" placeholder="搜索素材" aria-label="搜索素材" clearable @keydown.esc.stop="searchQuery = ''" />
-      <el-button class="toolbarButton" text :icon="IconUpload" title="本地上传" aria-label="本地上传" :loading="uploading" :disabled="loading || newFolderParent !== undefined" @click="fileInput?.click()" />
+      <el-button class="toolbarButton" text :icon="IconUpload" title="本地导入" aria-label="本地导入" :loading="uploading" :disabled="loading || newFolderParent !== undefined" @click="fileInput?.click()" />
       <el-button class="toolbarButton" text :icon="IconFolderPlus" title="新建文件夹" aria-label="新建文件夹" :disabled="newFolderParent !== undefined" @click="startFolder" />
       <el-button class="toolbarButton" text :icon="IconX" title="关闭素材库" aria-label="关闭素材库" @click="visible = false" />
     </div>
@@ -105,6 +105,7 @@ import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
 import { mentionAssetType } from "@toonflow/server/agent/mentionSources";
 import mentionThumbnail from "@/components/agent/mentionThumbnail.vue";
 import { startAssetDrag } from "../canvasDrop";
+import { acquireGlobalAssetUrl, invalidateGlobalAssetUrls } from "@/lib/globalAssets";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { generalSettings } from "@/stores/settings";
 import assetMenu from "./assetMenu.vue";
@@ -141,14 +142,31 @@ const newFolderName = ref("");
 const folderSaving = ref(false);
 const assetMenuRef = ref<InstanceType<typeof assetMenu>>();
 const insertCanvasAsset = inject<((path: string) => Promise<void>) | undefined>("insertCanvasAsset", undefined);
-const previewAsset = ref<{ name: string; url: string; kind: "image" | "audio" | "video" }>();
-const { src: mediaSrc, preparing, error: previewError, handleError, handleLoaded } = useMediaPreview(() => previewAsset.value?.url, () => previewAsset.value?.kind ?? "image");
+const previewAsset = ref<{ name: string; path: string; kind: "image" | "audio" | "video" }>();
+const previewBlobUrl = ref("");
+watch(previewAsset, async (asset, _old, onCleanup) => {
+  previewBlobUrl.value = "";
+  if (!asset) return;
+  let cancelled = false;
+  const handle = acquireGlobalAssetUrl(asset.path);
+  onCleanup(() => {
+    cancelled = true;
+    handle.release();
+  });
+  try {
+    const url = await handle.url;
+    if (!cancelled) previewBlobUrl.value = url;
+  } catch {
+    if (!cancelled) previewBlobUrl.value = "";
+  }
+});
+const { src: mediaSrc, preparing, error: previewError, handleError, handleLoaded } = useMediaPreview(() => previewBlobUrl.value || undefined, () => previewAsset.value?.kind ?? "image");
 watch(previewError, error => { if (error && previewAsset.value?.kind === "image") ElMessage.error(error); });
 let loadRequest = 0;
 onBeforeUnmount(() => { loadRequest++; });
 
 function assetUrl(path: string) {
-  return `/api/assets/read?path=${encodeURIComponent(path)}`;
+  return path;
 }
 
 function mediaKind(entry: AssetEntry) {
@@ -163,7 +181,7 @@ function openPreview(entry: AssetEntry) {
   const kind = mediaKind(entry);
   if (!kind) return;
   previewError.value = "";
-  previewAsset.value = { name: entry.name, url: assetUrl(entry.path), kind };
+  previewAsset.value = { name: entry.name, path: entry.path, kind };
 }
 
 function openItemMenu(event: MouseEvent, entry: AssetEntry) {
@@ -174,6 +192,8 @@ function openItemMenu(event: MouseEvent, entry: AssetEntry) {
 }
 
 async function refreshAssets(path?: string, target?: string) {
+  invalidateGlobalAssetUrls(path);
+  if (target) invalidateGlobalAssetUrls(target);
   if (path && (folder.value === path || folder.value.startsWith(path + "/"))) {
     folder.value = target ? target + folder.value.slice(path.length) : ".";
   }
@@ -313,7 +333,8 @@ async function uploadFiles(event: Event) {
       }
     }
     if (uploaded) {
-      ElMessage.success(t`已上传 ${uploaded} 个素材`);
+      invalidateGlobalAssetUrls();
+      ElMessage.success(t`已导入 ${uploaded} 个素材到浏览器本地`);
       await refreshAssets();
     }
   } finally {
