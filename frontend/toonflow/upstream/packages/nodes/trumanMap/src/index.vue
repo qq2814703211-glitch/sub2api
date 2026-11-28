@@ -273,7 +273,7 @@ async function openEditor() {
   try {
     workspace = files.getWorkspaceFiles();
     persistence = getPersistence?.();
-    if (!persistence) throw new Error("当前宿主未提供画布保存能力，请更新 Toonflow 后重试");
+    if (!persistence) throw new Error("当前宿主未提供画布保存能力，请刷新页面后重试");
     await loadScene();
     if (!disposed) editing.value = true;
   } catch (error) { reportError(error); }
@@ -332,7 +332,7 @@ async function listSkills(signal: AbortSignal) {
 }
 async function generateText(input: { modelKey: string; systemPrompt: string; prompt: string; signal: AbortSignal }) {
   const selectedModel = aiModels.value.find(model => JSON.stringify([model.providerId, model.modelId]) === input.modelKey);
-  if (!selectedModel) throw new Error("请先选择已配置的 Toonflow 文本模型");
+  if (!selectedModel) throw new Error("请先选择已配置的文本模型");
   const signal = AbortSignal.any([input.signal, controller.signal, AbortSignal.timeout(120000)]);
   const result = await ai.generate({ providerId: selectedModel.providerId, modelId: selectedModel.modelId, systemPrompt: input.systemPrompt, prompt: input.prompt, signal });
   signal.throwIfAborted();
@@ -515,7 +515,7 @@ async function saveWorldRevision(scene: SceneDocument, context: WorldContext, si
 async function generateAi(input: AiCreationInput) {
   if (agentRunning || publicBusy) throw new Error("当前世界已有Agent任务，请等待或停止后重试");
   const selectedModel = aiModels.value.find(model => JSON.stringify([model.providerId, model.modelId]) === input.modelKey);
-  if (!selectedModel) throw new Error("请先选择已配置的 Toonflow 文本模型");
+  if (!selectedModel) throw new Error("请先选择已配置的文本模型");
   const images: NonNullable<AiCreationInput["images"]> = [];
   function imageLabels(attachments?: AiCreationInput["images"]) {
     return attachments?.length ? `\n附图：${attachments.map(image => { images.push(image); return `图片 ${images.length}（${JSON.stringify(image.name)}）`; }).join("、")}` : "";

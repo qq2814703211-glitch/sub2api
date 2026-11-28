@@ -11,10 +11,9 @@ export function getBrowserFfmpegStatus() {
     sources: [
       {
         id: "browser-native",
-        label: "浏览器本机媒体引擎（零服务端算力）",
-        description: "基于用户浏览器原生 HTML5 Video / Canvas / WebAudio 执行抽帧与元信息解析，无需下载服务端 FFmpeg。",
+        label: "内置媒体引擎",
+        description: "内置媒体探测与视频抽帧处理。",
         available: true,
-        homepage: "https://developer.mozilla.org/docs/Web/API/Web_Audio_API",
       },
     ],
     config: { mode: "auto", source: "browser-native" },
@@ -248,12 +247,12 @@ export function getBrowserLocalModelsStatus() {
   const hasWebGpu = typeof navigator !== "undefined" && "gpu" in navigator;
   return {
     supported: true,
-    runtime: hasWebGpu ? "WebGPU + HTML5 Canvas / WebAudio (浏览器本机)" : "WebGL + HTML5 Canvas / WebAudio (浏览器本机)",
+    runtime: hasWebGpu ? "WebGPU" : "WebGL",
     models: [
       {
         id: "browser-frame-extractor",
-        name: "浏览器本机抽帧与拉片引擎",
-        description: "基于 HTML5 Video + Canvas 在本机完成视频关键帧提取，零服务器负载。",
+        name: "视频抽帧引擎",
+        description: "视频关键帧提取与信息解析。",
         category: "video",
         installed: true,
         ready: true,
@@ -261,8 +260,8 @@ export function getBrowserLocalModelsStatus() {
       },
       {
         id: "browser-3d-webgl",
-        name: "TrumanMap 3D WebGL 渲染引擎",
-        description: "使用用户本机 GPU 渲染 Three.js 3D 白模片场与多机位预演。",
+        name: "3D 白模渲染引擎",
+        description: "3D 白模片场与多机位预演渲染。",
         category: "video",
         installed: true,
         ready: true,

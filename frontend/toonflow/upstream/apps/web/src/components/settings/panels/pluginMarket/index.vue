@@ -7,14 +7,6 @@
             {{ label }}
           </button>
         </nav>
-        <div class="marketLinks">
-          <el-button tag="a" href="https://api.toonflow.net/console/plugIn" target="_blank" rel="noopener noreferrer" size="small" text :icon="IconExternalLink">
-            网页版市场
-          </el-button>
-          <el-button tag="a" href="https://qcn7xdsqgc4z.feishu.cn/docx/KNBNd9naqolsy6xjAOCcEAkqnRd" target="_blank" rel="noopener noreferrer" size="small" text :icon="IconBook">
-            开发者文档
-          </el-button>
-        </div>
       </div>
       <div v-if="isMarketTab || activeTab === 'installed'" class="marketControls">
         <form class="marketSearch" role="search" @submit.prevent="applySearch">
@@ -22,14 +14,6 @@
           <el-button size="small" nativeType="submit">搜索</el-button>
         </form>
         <div class="marketActions">
-          <el-button
-            size="small"
-            type="primary"
-            plain
-            :icon="IconCloudUpload"
-            :disabled="!accountToken"
-            :title="accountToken ? '上传插件到市场' : '请先在账号与余额中登录'"
-            @click="openUpload()">上传插件</el-button>
           <template v-if="activeTab === 'installed'">
             <el-button size="small" type="primary" :icon="IconUpload" :loading="installing" aria-label="安装本地插件" @click="pluginFileInput?.click()">
               安装插件
@@ -62,7 +46,7 @@
           </button>
         </div>
         <div class="filterOptions">
-          <div class="personalFilters" role="group" aria-label="我的插件">
+          <div v-if="isMarketTab && accountToken" class="personalFilters" role="group" aria-label="我的插件">
             <button class="filterButton" type="button" :aria-pressed="selectedType === 'collection'" @click="selectedType = 'collection'">收藏</button>
             <button class="filterButton" type="button" :aria-pressed="selectedType === 'my'" @click="selectedType = 'my'">我的</button>
           </div>
@@ -82,7 +66,6 @@
         </el-alert>
         <p v-if="checkingPluginExistence" class="listStatus" role="status">正在检查插件是否已在市场中…</p>
       </template>
-      <el-alert v-else-if="!accountToken" class="loadError" title="请先在账号与余额中登录 Toonflow 账号，再浏览和收藏插件。" type="info" :closable="false" showIcon />
       <el-alert v-else-if="marketError" class="loadError" :title="marketError" type="error" :closable="false" showIcon>
         <el-button size="small" @click="marketRefreshKey++">重试</el-button>
       </el-alert>
@@ -257,7 +240,7 @@
                 </el-button>
               </el-badge>
               <el-popconfirm
-                v-if="plugin.author !== 'Toonflow' || plugin.type === 'skill' || plugin.type === 'agent' || plugin.type === 'ext'"
+                v-if="(plugin.author !== '内置' && plugin.author !== 'Toonflow') || plugin.type === 'skill' || plugin.type === 'agent' || plugin.type === 'ext'"
                 :title="`确定卸载“${plugin.displayName}”${plugin.type === 'skill' ? '及其附属文件' : ''}吗？`"
                 width="280"
                 confirmButtonText="卸载"
@@ -280,11 +263,11 @@
         </el-card>
       </div>
       <p v-if="activeTab === 'installed' ? loading : marketLoading" class="listStatus" role="status">正在加载插件…</p>
-      <p v-else-if="!visiblePlugins.length && (isMarketTab ? accountToken && !marketError : !visibleLoadErrors.length)" class="listStatus">
+      <p v-else-if="!visiblePlugins.length && (isMarketTab ? !marketError : !visibleLoadErrors.length)" class="listStatus">
         {{ activeTab === "installed" ? "暂无符合条件的已安装插件" : selectedType === "collection" ? "暂无符合条件的收藏插件" : selectedType === "my" ? "暂无符合条件的已上传插件" : "未找到相关插件" }}
       </p>
       <el-pagination
-        v-if="isMarketTab && accountToken && !marketError"
+        v-if="isMarketTab && !marketError"
         v-model:currentPage="marketPage"
         class="marketPagination"
         :pageSize="marketPageSize"
@@ -525,10 +508,8 @@ const visiblePlugins = computed(() => {
       )
   );
 });
-function canUploadLocalPlugin(plugin: Plugin) {
-  return !!accountToken.value && !plugin.builtin && !plugin.loadError && canManageTools.value
-    && (plugin.type !== "ext" || plugin.canManage === true)
-    && (plugin.type !== "agent" || (agentMarketEnabled && plugin.kind === "local" && canManageAgents.value));
+function canUploadLocalPlugin(_plugin: Plugin) {
+  return false;
 }
 
 function openUpload(plugin?: Plugin) {
@@ -603,8 +584,7 @@ watch(
     marketLoading.value = false;
     marketError.value = "";
     marketPlugins.value = [];
-    const token = accountToken.value;
-    if (!visible || !isMarketTab.value || !token) {
+    if (!visible || !isMarketTab.value) {
       marketTotal.value = 0;
       return;
     }
@@ -620,9 +600,9 @@ watch(
           type: selectedTypes.value.discover,
           ...(appliedQuery.value ? { searchKeyword: appliedQuery.value } : {}),
         },
-        signal: controller.signal, headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
-      if (controller.signal.aborted || accountToken.value !== token) return;
+      if (controller.signal.aborted) return;
       marketTotal.value = pageData.total;
       const lastPage = Math.max(1, Math.ceil(pageData.total / marketPageSize));
       if (marketPage.value > lastPage) {
@@ -648,12 +628,12 @@ watch(
         version: item.version,
       }));
     } catch (error) {
-      if (!controller.signal.aborted && accountToken.value === token) {
+      if (!controller.signal.aborted) {
         marketTotal.value = 0;
         marketError.value = errorMessage(error, "加载插件市场失败，请重试");
       }
     } finally {
-      if (!controller.signal.aborted && accountToken.value === token) marketLoading.value = false;
+      if (!controller.signal.aborted) marketLoading.value = false;
     }
   },
   { immediate: true }
@@ -738,7 +718,7 @@ function applySearch() {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && "status" in error && error.status === 401) return translate("账号登录已失效，请到账号与余额重新登录");
+  if (error instanceof Error && "status" in error && error.status === 401) return translate("访问未授权，请刷新页面后重试");
   if (axios.isAxiosError(error)) return typeof error.response?.data?.message === "string" ? error.response.data.message : fallback;
   return error instanceof Error ? error.message : fallback;
 }
@@ -782,30 +762,28 @@ function installLabel(plugin: Plugin) {
 }
 
 async function toggleCollection(plugin: Plugin) {
-  const token = accountToken.value;
-  if (!visible || !isMarketTab.value || !token || plugin.id === undefined || plugin.state !== 1 || collectingPlugins.value.has(plugin.key) || deletingPlugins.value.has(plugin.key)) return;
+  if (!visible || !isMarketTab.value || plugin.id === undefined || plugin.state !== 1 || collectingPlugins.value.has(plugin.key) || deletingPlugins.value.has(plugin.key)) return;
   const controller = marketMutationController;
   collectingPlugins.value.add(plugin.key);
   try {
     const { collected } = await http<{ collected: boolean }>({
       method: "POST", url: "/api/channel/plugin/toggleCollection", data: { pluginId: plugin.id },
-      signal: controller.signal, headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
-    if (controller.signal.aborted || accountToken.value !== token) return;
+    if (controller.signal.aborted) return;
     const current = marketPlugins.value.find(item => item.id === plugin.id);
     if (current) current.isCollected = collected;
     if (selectedType.value === "collection" || marketLoading.value) marketRefreshKey.value++;
     ElMessage.success(collected ? "收藏成功" : "已取消收藏");
   } catch (error) {
-    if (!controller.signal.aborted && accountToken.value === token) ElMessage.error(errorMessage(error, "修改收藏失败，请重试"));
+    if (!controller.signal.aborted) ElMessage.error(errorMessage(error, "修改收藏失败，请重试"));
   } finally {
     if (marketMutationController === controller) collectingPlugins.value.delete(plugin.key);
   }
 }
 
 async function deletePlugin(plugin: Plugin) {
-  const token = accountToken.value;
-  if (!visible || !isMarketTab.value || selectedType.value !== "my" || !token || plugin.id === undefined
+  if (!visible || !isMarketTab.value || selectedType.value !== "my" || plugin.id === undefined
     || !marketPlugins.value.includes(plugin) || deletingPlugins.value.has(plugin.key)
     || collectingPlugins.value.has(plugin.key) || pendingPlugins.value.has(plugin.key)) return;
   const controller = marketMutationController;
@@ -813,14 +791,14 @@ async function deletePlugin(plugin: Plugin) {
   try {
     const message = await http<string>({
       method: "POST", url: "/api/channel/plugin/deletePlugin", data: { id: plugin.id },
-      signal: controller.signal, headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
-    if (controller.signal.aborted || accountToken.value !== token) return;
+    if (controller.signal.aborted) return;
     marketRefreshKey.value++;
     pluginExistenceRefreshKey.value++;
     ElMessage.success(message || "插件已从市场删除");
   } catch (error) {
-    if (!controller.signal.aborted && accountToken.value === token) ElMessage.error(errorMessage(error, "删除插件失败，请重试"));
+    if (!controller.signal.aborted) ElMessage.error(errorMessage(error, "删除插件失败，请重试"));
   } finally {
     if (marketMutationController === controller) deletingPlugins.value.delete(plugin.key);
   }
@@ -918,7 +896,7 @@ async function updatePlugin(plugin: Plugin, action: "setEnabled" | "uninstall", 
     loading.value ||
     pendingPlugins.value.has(plugin.key) ||
     exportingPlugins.value.has(plugin.key) ||
-    (action === "uninstall" && plugin.author === "Toonflow" && (plugin.type === "node" || plugin.type === "tool"))
+    (action === "uninstall" && (plugin.author === "内置" || plugin.author === "Toonflow") && (plugin.type === "node" || plugin.type === "tool"))
   )
     return;
   pendingPlugins.value.add(plugin.key);

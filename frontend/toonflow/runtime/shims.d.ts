@@ -45,6 +45,23 @@ declare module "@/stores/settings" {
   ): Promise<boolean>;
 }
 
+declare module "@/stores/workspace" {
+  export interface Project {
+    directory: string;
+    name: string;
+    lastOpenedAt: number;
+  }
+  export function useWorkspaceStore(): {
+    project: Project | null;
+    projectList: Project[];
+    openProject(directory: string, previousDirectory?: string): Promise<void>;
+  };
+}
+
+declare module "@toonflow/nodes-scaffold/nodeAi" {
+  export function invalidateNodeModels(type?: "language" | "media"): void;
+}
+
 declare module "@toonflow/plugin-server" {
   export interface PluginServer {
     id?: string;

@@ -4,17 +4,29 @@ import { uiSettings } from "@/stores/settings";
 export function registerAppearance() {
   const hostWindow = window as Window & {
     __electrobunSendToHost?: (message: { type: "appearance"; dark: boolean; backgroundColor: string; textColor: string }) => void;
+    __sub2apiHostTheme?: "dark" | "light";
+    __toonflowAppearanceReady?: boolean;
   };
+  hostWindow.__toonflowAppearanceReady = true;
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   const systemDark = ref(systemTheme.matches);
+  const hostTheme = ref<"dark" | "light" | null>(hostWindow.__sub2apiHostTheme ?? null);
   const updateSystemTheme = (event: MediaQueryListEvent) => { systemDark.value = event.matches; };
+  const updateHostTheme = (event: Event) => {
+    const detail = (event as CustomEvent<"dark" | "light">).detail;
+    if (detail === "dark" || detail === "light") hostTheme.value = detail;
+  };
   systemTheme.addEventListener("change", updateSystemTheme);
+  window.addEventListener("toonflow:host-theme-changed", updateHostTheme);
   const stop = watchEffect(() => {
     const { theme, primaryColor, fontScale, radius } = uiSettings.value;
-    const dark = theme === "system" ? systemDark.value : theme === "dark";
+    const dark = theme === "system"
+      ? (hostTheme.value !== null ? hostTheme.value === "dark" : systemDark.value)
+      : theme === "dark";
     const root = document.documentElement;
     root.classList.toggle("dark", dark);
     root.setAttribute("theme-mode", dark ? "dark" : "light");
+    root.setAttribute("data-theme", dark ? "dark" : "light");
     root.style.colorScheme = dark ? "dark" : "light";
     root.style.fontSize = `${(16 * fontScale) / 100}px`;
     root.style.setProperty("--ui-radius", `${radius}px`);
@@ -36,6 +48,8 @@ export function registerAppearance() {
   });
   return () => {
     stop();
+    hostWindow.__toonflowAppearanceReady = false;
     systemTheme.removeEventListener("change", updateSystemTheme);
+    window.removeEventListener("toonflow:host-theme-changed", updateHostTheme);
   };
 }

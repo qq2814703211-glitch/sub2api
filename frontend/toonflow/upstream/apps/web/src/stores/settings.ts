@@ -8,9 +8,7 @@ import { resolveCanvasLayout } from "@/lib/canvasLayouts";
 import { normalizeNodeMenu, type StoredNodeMenuItem } from "@toonflow/server/nodeMenu";
 import { nodeToolPermissionsSchema } from "@toonflow/tool-canvas/runtime";
 import type { ReasoningEfforts, ThinkingLevel } from "@toonflow/server/modelReasoning";
-import type { ProviderSources } from "@toonflow/server/channel";
-import http from "@/lib/http";
-import { currentUser, publicWeb } from "@/stores/multiTenant";
+import { publicWeb } from "@/stores/multiTenant";
 import "element-plus/es/components/message/style/css";
 
 export const settings = ref<Record<string, unknown>>({});
@@ -48,7 +46,7 @@ export const settingsStorage = {
   },
 };
 
-export const defaultUiSettings = { theme: "dark", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
+export const defaultUiSettings = { theme: "system", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
 export const uiSettings = computed(() => {
   const raw = settings.value.ui;
   const ui = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
@@ -145,53 +143,19 @@ export const privacySettings = computed(() => {
 
 export type CustomProviderModel = { id: string; label: string; contextWindow?: number; maxOutputTokens?: number; reasoningEfforts?: ReasoningEfforts };
 export type CustomProvider = { id: string; label: string; icon?: string; version?: string; apiUrl: string; apiKey: string; headers?: Record<string, string>; protocol: string; models: CustomProviderModel[] };
-export const toonflowAccountToken = computed(() => {
-  const account = settings.value.toonflowAccount as { token?: unknown } | null | undefined;
-  return typeof account?.token === "string" ? account.token.trim() : "";
-});
+export const toonflowAccountToken = computed(() => "");
 export const customProviders = computed<CustomProvider[]>(() => {
   const providers = Array.isArray(settings.value.customProviders) ? [...settings.value.customProviders] : [];
-  const accountProvider = settings.value.toonflowProvider as CustomProvider | null | undefined;
-  if (toonflowAccountToken.value && (accountProvider?.id === "Toonflow" || accountProvider?.id === "toonflow")) providers.unshift(accountProvider);
   return providers.filter((item): item is CustomProvider => !!item && typeof item.id === "string" && typeof item.label === "string" && Array.isArray(item.models)
     && item.models.every((model: CustomProviderModel) => !!model && typeof model.id === "string" && typeof model.label === "string"));
 });
 
 export const toonflowProviderLoading = ref(false);
 export const toonflowProviderError = ref("");
-let providerRequest: AbortController | undefined;
 
 export async function refreshToonflowProvider() {
-  providerRequest?.abort();
   toonflowProviderError.value = "";
   toonflowProviderLoading.value = false;
-  const token = toonflowAccountToken.value;
-  if (multiTenantEnabled.value || !token) { providerRequest = undefined; return; }
-  const request = new AbortController();
-  providerRequest = request;
-  toonflowProviderLoading.value = true;
-  try {
-    const sources = await http<ProviderSources>({
-      method: "GET", url: "/api/channel/provider/getSource", signal: request.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    request.signal.throwIfAborted();
-    const { data } = await axios.post<{ code: number; data: { provider: CustomProvider }; message?: string }>(
-      "/api/providers/account/install", { sources, token },
-      { signal: request.signal, headers: { "x-toonflow-workspace": "1", Authorization: `Bearer ${token}` }, timeout: 45000 },
-    );
-    if (data.code !== 200 || data.data?.provider?.id !== "Toonflow") throw new Error(data.message || "安装账号供应商失败");
-    await saveSettings(() => request.signal.aborted || multiTenantEnabled.value || toonflowAccountToken.value !== token
-      ? undefined : { toonflowProvider: data.data.provider }, request.signal);
-  } catch (error) {
-    if (!request.signal.aborted && !multiTenantEnabled.value && toonflowAccountToken.value === token) {
-      toonflowProviderError.value = axios.isAxiosError<{ message?: string }>(error)
-        ? error.response?.data?.message || "安装账号供应商失败，请刷新重试"
-        : error instanceof Error ? error.message : "安装账号供应商失败，请刷新重试";
-    }
-  } finally {
-    if (providerRequest === request) { providerRequest = undefined; toonflowProviderLoading.value = false; }
-  }
 }
 
 type ResolvedAiModel = { providerId: string; providerLabel: string; modelId: string; routeId?: string; label: string; contextWindow: number; reasoningLevels: ThinkingLevel[] };

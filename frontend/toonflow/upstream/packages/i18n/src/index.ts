@@ -1,6 +1,7 @@
 import { IntlMessageFormat } from "intl-messageformat";
 import { escapeMessageText } from "./messageText.ts";
 export { escapeMessageText } from "./messageText.ts";
+import { lookupStudioOverride, sanitizeBrandText } from "../../../../custom/i18nOverrides.ts";
 import zhTw from "./locales/zhTw.json" with { type: "json" };
 import en from "./locales/en.json" with { type: "json" };
 import ja from "./locales/ja.json" with { type: "json" };
@@ -92,8 +93,10 @@ export function msg(strings: TemplateStringsArray, ...values: unknown[]): Messag
 export function translate(message: string | MessageDescriptor, values?: Record<string, unknown>, language: Locale = activeLocale, dictionaries: Catalogs = catalogs): string {
   const id = typeof message === "string" ? message : message.id;
   const parameters = values ?? (typeof message === "string" ? undefined : message.values);
+  const override = lookupStudioOverride(id, language);
   const catalog = Object.hasOwn(dictionaries, language) ? dictionaries[language] : undefined;
-  const translated = catalog && Object.hasOwn(catalog, id) && typeof catalog[id] === "string" ? catalog[id] : id;
+  const rawTranslated = override ?? (catalog && Object.hasOwn(catalog, id) && typeof catalog[id] === "string" ? catalog[id] : id);
+  const translated = sanitizeBrandText(rawTranslated, language);
   if (!parameters || !Object.keys(parameters).length) return translated;
   const format = (text: string) => {
     const cacheKey = `${language}\0${text}`;
@@ -112,8 +115,9 @@ export function translate(message: string | MessageDescriptor, values?: Record<s
   try { return format(translated); }
   catch {
     // ACT: 损坏或缺参数的外部语言包回退原文；参数只替换一次，不再解析用户输入。
-    try { return format(id); }
-    catch { return id.replace(/\{(\d+)\}/g, (token, key) => Object.hasOwn(parameters, key) ? String(parameters[key]) : token); }
+    const sanitizedFallback = sanitizeBrandText(id, language);
+    try { return format(sanitizedFallback); }
+    catch { return sanitizedFallback.replace(/\{(\d+)\}/g, (token, key) => Object.hasOwn(parameters, key) ? String(parameters[key]) : token); }
   }
 }
 

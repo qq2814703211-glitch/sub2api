@@ -2,12 +2,10 @@
   <span class="modelLabel">
     <modelIcon v-if="modelId && modelIcon" :model="modelId" aria-hidden="true" />
     <span class="labelText">{{ label }}</span>
-    <el-tag v-if="providerId?.toLowerCase() === 'toonflow'" class="officialTag" type="info" size="small" effect="plain">官方</el-tag>
   </span>
 </template>
 
 <script setup lang="ts">
-import { ElTag } from "element-plus";
 import * as modelIcons from "@toonflow/model-icons";
 
 defineProps<{ label: string; providerId?: string; modelId?: string }>();

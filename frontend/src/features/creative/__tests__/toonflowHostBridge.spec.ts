@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   CREATIVE_KEY_BINDINGS_STORAGE_KEY,
   TOONFLOW_BRIDGE_STORAGE_KEY,
+  discoverModelDetailsForKey,
   discoverModelsForKey,
   findInheritedImageGenKeyId,
   loadCreativeKeyBindings,
@@ -18,18 +19,42 @@ describe('toonflowHostBridge', () => {
     vi.restoreAllMocks()
   })
 
-  it('persists and loads creative key bindings', () => {
-    saveCreativeKeyBindings({ textKeyId: 10, imageKeyId: 11, videoKeyId: 12, audioKeyId: 13 })
+  it('persists and loads creative key bindings including rewrite settings', () => {
+    saveCreativeKeyBindings({
+      textKeyId: 10,
+      imageKeyId: 11,
+      videoKeyId: 12,
+      audioKeyId: 13,
+      rewriteModel: 'gpt-4o-mini',
+      rewriteEffort: 'low',
+    })
     expect(localStorage.getItem(CREATIVE_KEY_BINDINGS_STORAGE_KEY)).toBeTruthy()
     expect(loadCreativeKeyBindings()).toEqual({
       textKeyId: 10,
       imageKeyId: 11,
       videoKeyId: 12,
       audioKeyId: 13,
+      rewriteModel: 'gpt-4o-mini',
+      rewriteEffort: 'low',
     })
   })
 
-  it('serializes active API keys with group metadata for Toonflow runtime', () => {
+  it('inherits legacy ig_rewriteConfig when creative key bindings are not yet stored', () => {
+    localStorage.setItem(
+      'ig_rewriteConfig',
+      JSON.stringify({ keyId: 7, model: 'claude-sonnet-4-5', effort: 'medium' }),
+    )
+    expect(loadCreativeKeyBindings(1)).toEqual({
+      textKeyId: 7,
+      imageKeyId: 1,
+      videoKeyId: 1,
+      audioKeyId: 1,
+      rewriteModel: 'claude-sonnet-4-5',
+      rewriteEffort: 'medium',
+    })
+  })
+
+  it('serializes active API keys with group metadata for Studio runtime', () => {
     const sample = [
       {
         id: 7,
@@ -51,15 +76,36 @@ describe('toonflowHostBridge', () => {
     ])
   })
 
-  it('discovers and sorts unique models from /v1/models', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+  it('discovers unique sorted models and reasoning metadata from /v1/models', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response(
         JSON.stringify({
-          data: [{ id: 'gpt-4o' }, { id: 'claude-sonnet-4-5' }, { id: 'gpt-4o' }],
+          data: [
+            {
+              id: 'gpt-4o',
+              supports_reasoning_effort: true,
+              reasoning_effort: 'medium',
+              reasoning_efforts: [{ value: 'low' }, { value: 'medium', default: true }, { value: 'high' }],
+            },
+            { id: 'claude-sonnet-4-5', supports_reasoning_effort: false },
+            { id: 'gpt-4o' },
+          ],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     )
+    const details = await discoverModelDetailsForKey('sk-valid')
+    expect(details.models).toEqual(['claude-sonnet-4-5', 'gpt-4o'])
+    expect(details.meta).toEqual([
+      { id: 'claude-sonnet-4-5', supportsReasoningEffort: false },
+      {
+        id: 'gpt-4o',
+        supportsReasoningEffort: true,
+        reasoningEffort: 'medium',
+        reasoningEfforts: [{ value: 'low' }, { value: 'medium', default: true }, { value: 'high' }],
+      },
+    ])
+
     const models = await discoverModelsForKey('sk-valid')
     expect(models).toEqual(['claude-sonnet-4-5', 'gpt-4o'])
   })
@@ -78,22 +124,27 @@ describe('toonflowHostBridge', () => {
       origin: 'http://localhost:3000',
       locale: 'zh-CN' as const,
       theme: 'dark' as const,
-      user: { id: 1, email: 'creator@example.com', username: 'creator', role: 'user', balance: 42 },
+      siteName: '',
+      siteLogo: '/logo.svg',
+      user: { id: 1, email: 'creator@example.com', username: 'creator', role: 'user' },
       keys: [],
       selectedTextKeyId: null,
       selectedImageKeyId: null,
       selectedVideoKeyId: null,
       selectedAudioKeyId: null,
+      rewriteModel: '',
+      rewriteEffort: 'unset',
       discoveredModels: {},
+      discoveredModelMeta: {},
     }
     writeToonflowHostContext(ctx)
     expect(JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')).toEqual(ctx)
 
     const postMessage = vi.fn()
     const fakeFrame = { contentWindow: { postMessage } } as unknown as HTMLIFrameElement
-    postToonflowMessage(fakeFrame, 'navigate', '#/home?section=trumanMap')
+    postToonflowMessage(fakeFrame, 'navigate', '#/home?section=quickImage')
     expect(postMessage).toHaveBeenCalledWith(
-      { source: 'sub2api-host', type: 'navigate', payload: '#/home?section=trumanMap' },
+      { source: 'sub2api-host', type: 'navigate', payload: '#/home?section=quickImage' },
       window.location.origin,
     )
   })

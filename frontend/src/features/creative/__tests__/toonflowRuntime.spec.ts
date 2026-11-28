@@ -45,7 +45,14 @@ import {
   runWorkspaceAgentMessage,
   submitAgentCanvasResult,
 } from '../../../../toonflow/runtime/agentRuntime'
-import { updateHostContext } from '../../../../toonflow/runtime/sub2apiBridge'
+import {
+  getHostContext,
+  updateHostContext,
+  updateKeyBindingsFromStudio,
+} from '../../../../toonflow/runtime/sub2apiBridge'
+import { listAllTextProviders, listMediaProviders } from '../../../../toonflow/runtime/aiGateway'
+import { kvSet } from '../../../../toonflow/runtime/vfs'
+import { sanitizeBrandText } from '../../../../toonflow/custom/i18nOverrides'
 import {
   getBrowserFfmpegStatus,
   getBrowserLocalModelsStatus,
@@ -482,7 +489,7 @@ describe('Toonflow browser-native local runtime', () => {
     expect(testResult.tools[0]?.name).toBe('storyboard_check')
 
     // Reject stdio in pure web mode
-    await expect(testMcpServer(mockFetch, { transport: 'stdio', command: 'npx' })).rejects.toThrow(/浏览器/)
+    await expect(testMcpServer(mockFetch, { transport: 'stdio', command: 'npx' })).rejects.toThrow(/网页端|浏览器/)
 
     // A2A remote agent card connect + built-in storyboardTeam
     const a2aFetch = vi.fn(async () =>
@@ -515,5 +522,98 @@ describe('Toonflow browser-native local runtime', () => {
     const localModels = getBrowserLocalModelsStatus()
     expect(localModels.supported).toBe(true)
     expect(localModels.models.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('sanitizes Toonflow branding and serves custom Studio i18n overrides across locales', () => {
+    try {
+      setLocale('zh-CN')
+      expect(sanitizeBrandText('登录 Toonflow 开始创作', 'zh-CN')).toBe('登录 创意广场 开始创作')
+      expect(translate('快捷生图')).toBe('快捷生图')
+
+      setLocale('en')
+      expect(sanitizeBrandText('Welcome to Toonflow', 'en')).toBe('Welcome to Creative Plaza')
+      expect(translate('快捷生图')).toBe('Quick Image')
+      expect(translate('密钥与模型')).toBe('API Keys & Models')
+      expect(translate('Toonflow')).toBe('Creative Plaza')
+
+      setLocale('ja')
+      expect(sanitizeBrandText('Toonflow の設定', 'ja')).toBe('クリエイティブ広場 の設定')
+      expect(translate('快捷生图')).toBe('クイック画像生成')
+    } finally {
+      setLocale('zh-CN')
+    }
+  })
+
+  it('enforces site-only API providers and ignores stored third-party customProviders', async () => {
+    await kvSet('toonflow.settings', {
+      customProviders: [
+        {
+          id: 'evil-third-party',
+          label: 'External Provider',
+          apiUrl: 'https://third-party.example.com/v1',
+          protocol: 'openai-completions',
+          apiKey: 'sk-external',
+          models: [{ id: 'external-model', label: 'external-model' }],
+        },
+      ],
+    })
+    updateHostContext({
+      origin: 'https://studio.example.com',
+      keys: [
+        { id: 101, name: 'Site Key', key: 'sk-site-only', platform: 'openai', groupName: 'OpenAI' },
+      ],
+      selectedTextKeyId: 101,
+      selectedImageKeyId: 101,
+      discoveredModels: { 101: ['gpt-4o', 'gpt-image-1'] },
+    })
+
+    const textProviders = await listAllTextProviders()
+    expect(textProviders.length).toBeGreaterThan(0)
+    expect(textProviders.every((p) => p.apiUrl.startsWith('https://studio.example.com'))).toBe(true)
+    expect(textProviders.some((p) => p.id === 'evil-third-party')).toBe(false)
+
+    const mediaProviders = await listMediaProviders()
+    expect(mediaProviders.length).toBeGreaterThan(0)
+    expect(mediaProviders.every((p) => !p.apiUrl || p.apiUrl.startsWith('https://studio.example.com'))).toBe(true)
+  })
+
+  it('updates host context and notifies parent window when Studio changes key bindings', () => {
+    const parentPostMessage = vi.fn()
+    const origParent = window.parent
+    Object.defineProperty(window, 'parent', {
+      configurable: true,
+      value: { postMessage: parentPostMessage },
+    })
+    try {
+      updateKeyBindingsFromStudio({
+        textKeyId: 101,
+        imageKeyId: 102,
+        rewriteModel: 'gpt-4o-mini',
+        rewriteEffort: 'low',
+      })
+      const ctx = getHostContext()
+      expect(ctx.selectedTextKeyId).toBe(101)
+      expect(ctx.selectedImageKeyId).toBe(102)
+      expect(ctx.rewriteModel).toBe('gpt-4o-mini')
+      expect(ctx.rewriteEffort).toBe('low')
+      expect(parentPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'toonflow-web',
+          type: 'updateKeyBindings',
+          payload: expect.objectContaining({
+            textKeyId: 101,
+            imageKeyId: 102,
+            rewriteModel: 'gpt-4o-mini',
+            rewriteEffort: 'low',
+          }),
+        }),
+        window.location.origin,
+      )
+    } finally {
+      Object.defineProperty(window, 'parent', {
+        configurable: true,
+        value: origParent,
+      })
+    }
   })
 })

@@ -4,30 +4,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createI18n } from 'vue-i18n'
 import CreativePlazaView from '@/views/CreativePlazaView.vue'
+import {
+  CREATIVE_KEY_BINDINGS_STORAGE_KEY,
+  TOONFLOW_BRIDGE_STORAGE_KEY,
+} from '@/features/creative/toonflowHostBridge'
 import zhCreative from '@/i18n/locales/zh/creative'
 import enCreative from '@/i18n/locales/en/creative'
 
+const mockKeysList = vi.fn()
+
 vi.mock('@/api', () => ({
   keysAPI: {
-    list: vi.fn().mockResolvedValue({
-      items: [
-        {
-          id: 1,
-          name: 'Default Key',
-          key: 'sk-test-demo',
-          status: 'active',
-          group: { id: 1, name: 'OpenAI', platform: 'openai' },
-        },
-      ],
-    }),
-  },
-}))
-
-vi.mock('@/views/ImageGenView.vue', () => ({
-  default: {
-    name: 'ImageGenView',
-    props: { embedded: Boolean },
-    template: '<div data-test="stub-imagegen-view">Quick Image Studio</div>',
+    list: (...args: unknown[]) => mockKeysList(...args),
   },
 }))
 
@@ -63,6 +51,7 @@ async function mountAt(path: string) {
     history: createMemoryHistory(),
     routes: [
       { path: '/creative-plaza', alias: ['/image-studio', '/imagegen'], component: CreativePlazaView },
+      { path: '/keys', component: { template: '<div>Keys</div>' } },
     ],
   })
   await router.push(path)
@@ -79,39 +68,122 @@ async function mountAt(path: string) {
 describe('CreativePlazaView', () => {
   beforeEach(() => {
     localStorage.clear()
+    mockKeysList.mockReset()
+    mockKeysList.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          name: 'Default Key',
+          key: 'sk-test-demo',
+          status: 'active',
+          group: { id: 1, name: 'OpenAI', platform: 'openai' },
+        },
+        {
+          id: 2,
+          name: 'Image Key',
+          key: 'sk-test-image',
+          status: 'active',
+          group: { id: 2, name: 'Image', platform: 'openai' },
+        },
+      ],
+    })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-image-1' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'gpt-4o', supports_reasoning_effort: true, reasoning_efforts: [{ value: 'low' }, { value: 'high' }] },
+            { id: 'gpt-image-1' },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     )
   })
 
-  it('opens on the real Toonflow Web Studio iframe by default at /creative-plaza', async () => {
+  it('mounts the unified Studio iframe cleanly at /creative-plaza without redundant host key panels or Toonflow copy', async () => {
     const { wrapper } = await mountAt('/creative-plaza')
-    const iframe = wrapper.find('[data-test="toonflow-iframe"]')
+    const iframe = wrapper.find('[data-test="studio-iframe"]')
     expect(iframe.exists()).toBe(true)
     expect(iframe.attributes('src')).toBe('/toonflow/index.html#/home')
-    expect(wrapper.find('[data-test="local-compute-badge"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="toonflow-nav-trumanMap"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(false)
-  })
-
-  it('defaults legacy /image-studio bookmark directly to Quick Image Studio tab', async () => {
-    const { wrapper } = await mountAt('/image-studio')
-    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="creative-tab-imagegen"]').attributes('aria-selected')).toBe('true')
-  })
-
-  it('toggles gateway key selector panel and switches tabs cleanly', async () => {
-    const { wrapper } = await mountAt('/creative-plaza')
+    expect(wrapper.text()).not.toMatch(/toonflow/i)
     expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(false)
-    await wrapper.find('[data-test="toggle-key-panel"]').trigger('click')
-    expect(wrapper.find('[data-test="creative-key-panel"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="key-select-text"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="toggle-fullscreen"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="open-studio-standalone"]').attributes('href')).toBe('/toonflow/index.html#/home')
 
-    await wrapper.find('[data-test="creative-tab-imagegen"]').trigger('click')
+    const storedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
+    expect(storedCtx.selectedTextKeyId).toBe(1)
+    expect(storedCtx.selectedImageKeyId).toBe(1)
+    expect(storedCtx.discoveredModels['1']).toEqual(['gpt-4o', 'gpt-image-1'])
+    expect(storedCtx.discoveredModelMeta['1'][0]).toMatchObject({
+      id: 'gpt-4o',
+      supportsReasoningEffort: true,
+    })
+  })
+
+  it('routes legacy /image-studio and /imagegen bookmarks directly to Studio Quick Image section', async () => {
+    const { wrapper } = await mountAt('/image-studio')
+    const iframe = wrapper.find('[data-test="studio-iframe"]')
+    expect(iframe.exists()).toBe(true)
+    expect(iframe.attributes('src')).toBe('/toonflow/index.html#/home?section=quickImage')
+  })
+
+  it('syncs key binding updates, key refreshes, and /keys navigation from Studio postMessage', async () => {
+    const { wrapper, router } = await mountAt('/creative-plaza')
+    const initialCalls = mockKeysList.mock.calls.length
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: {
+          source: 'toonflow-web',
+          type: 'updateKeyBindings',
+          payload: {
+            textKeyId: 1,
+            imageKeyId: 2,
+            videoKeyId: 2,
+            audioKeyId: 1,
+            rewriteModel: 'gpt-4o',
+            rewriteEffort: 'low',
+          },
+        },
+      }),
+    )
     await flushPromises()
-    expect(wrapper.find('[data-test="stub-imagegen-view"]').exists()).toBe(true)
+
+    const savedBindings = JSON.parse(localStorage.getItem(CREATIVE_KEY_BINDINGS_STORAGE_KEY) || '{}')
+    expect(savedBindings).toMatchObject({
+      textKeyId: 1,
+      imageKeyId: 2,
+      videoKeyId: 2,
+      audioKeyId: 1,
+      rewriteModel: 'gpt-4o',
+      rewriteEffort: 'low',
+    })
+    const storedCtx = JSON.parse(localStorage.getItem(TOONFLOW_BRIDGE_STORAGE_KEY) || '{}')
+    expect(storedCtx.selectedImageKeyId).toBe(2)
+    expect(storedCtx.rewriteModel).toBe('gpt-4o')
+    expect(storedCtx.rewriteEffort).toBe('low')
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { source: 'toonflow-web', type: 'refreshKeys' },
+      }),
+    )
+    await flushPromises()
+    expect(mockKeysList.mock.calls.length).toBeGreaterThan(initialCalls)
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { source: 'toonflow-web', type: 'openSiteKeys' },
+      }),
+    )
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/keys')
+    wrapper.unmount()
   })
 })

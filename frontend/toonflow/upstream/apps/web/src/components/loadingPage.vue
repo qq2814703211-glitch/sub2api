@@ -13,14 +13,15 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
-import logoRaw from "@toonflow/assets/logo.svg?raw";
-import logoUrl from "@toonflow/assets/logo.svg";
+
+const emblemRaw = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><path fill="#000000" d="M 128 24 C 142 86 170 114 232 128 C 170 142 142 170 128 232 C 114 170 86 142 24 128 C 86 114 114 86 128 24 Z"/><path fill="#000000" d="M 198 34 C 202 52 210 60 228 64 C 210 68 202 76 198 94 C 194 76 186 68 168 64 C 186 60 194 52 198 34 Z"/></svg>`;
+const logoUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(emblemRaw)}`;
 
 const props = defineProps<{ active: boolean }>();
 const visible = defineModel<boolean>("visible", { default: false });
 const drawn = defineModel<boolean>("drawn", { default: false });
-const logoDocument = new DOMParser().parseFromString(logoRaw, "image/svg+xml");
-// ACT: 仅拆分当前 Logo 的绝对 M 轮廓；相对路径需解析命令，填充始终复用原图。
+const logoDocument = new DOMParser().parseFromString(emblemRaw, "image/svg+xml");
+// ACT: 仅拆分当前图形的绝对 M 轮廓；填充复用中性创意图形。
 for (const [index, path] of [...logoDocument.querySelectorAll("path")].entries()) {
   const contours = path.getAttribute("d")!.match(/M[^M]*/g)!;
   path.replaceWith(...contours.map(contour => {
@@ -111,7 +112,7 @@ function finishFilling() {
       :deep(svg) { display: block; width: 100%; height: auto; overflow: visible; }
       :deep(path) {
         stroke: #000;
-        stroke-width: 14;
+        stroke-width: 6;
         stroke-linecap: round;
         stroke-linejoin: round;
         fill: none;

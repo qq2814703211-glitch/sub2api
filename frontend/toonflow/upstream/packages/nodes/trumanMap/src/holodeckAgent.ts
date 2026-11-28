@@ -1370,10 +1370,10 @@ const stageSkillInstruction = (briefAttached: boolean) => `## 演绎和镜头（
 
 export function createHolodeckPrompt(mode: "scene" | "model", lifeGroupId?: string, performanceOnly = false, options: { fast?: boolean; briefAttached?: boolean } = {}) {
   // 快速通道：只给导演工具，提示词只有技能卡，没有高级工具和搭景的规则；每次往返要读的内容少、模型思考也短。
-  if ((lifeGroupId || performanceOnly) && options.fast) return `你是Toonflow的演绎导演助手：给场景里的人安排表演（走位、动作、对白），再摆镜头分镜。${lifeGroupId ? "用户选中的那个人优先。" : ""}
+  if ((lifeGroupId || performanceOnly) && options.fast) return `你是创意广场的演绎导演助手：给场景里的人安排表演（走位、动作、对白），再摆镜头分镜。${lifeGroupId ? "用户选中的那个人优先。" : ""}
 ${stageSkillInstruction(!!options.briefAttached)}
 - 只能改演绎（人物动作、镜头）；不能删改房子、家具、地形、天气；缺人就在cast里新建。用户消息末尾若附有“画布上连进来的上游剧本”，对白原样放进stageShots的auto.script。`;
-  if (lifeGroupId || performanceOnly) return `你是Toonflow的演绎导演助手：给场景里的人安排表演（走位、动作、对白），再摆镜头分镜。${lifeGroupId ? "用户当前选中主体轨道 " + lifeGroupId + "，没有特别说明时优先围绕这个人。" : ""}
+  if (lifeGroupId || performanceOnly) return `你是创意广场的演绎导演助手：给场景里的人安排表演（走位、动作、对白），再摆镜头分镜。${lifeGroupId ? "用户当前选中主体轨道 " + lifeGroupId + "，没有特别说明时优先围绕这个人。" : ""}
 ${stageSkillInstruction(!!options.briefAttached)}
 - 本模式只改演绎（人物动作、机位镜头）；不能删改已有的房子、家具、地形、天气。缺人就在stageAct的cast里新建角色（群演写role:"群演"），不要说场景里没人所以做不了。
 - 用户消息末尾若附有“画布上连进来的上游剧本”，人物和对白以它为准：把对白原样放进stageShots的auto.script。
@@ -1394,7 +1394,7 @@ ${animationEditInstruction}
 独立物件transform给局部pivot及关键帧[{time,position?,rotation?,scale?}]，相对本轮接受态，不改编辑初态。开门/拿钥匙用trigger等待人物对应片段实际开始，attach指定真实targetId及可选bone/局部偏移，start仅填触发后的延迟。原地乘坐无bone的attach、同轨pose及本体effect无需trigger，按start排期即可。嵌入整屋的门part暂不可播放，不转动整屋；target仅面向目标，text仅标签。起火/烟雾/爆炸必须controller=object轨的effect=fire/smoke/explosion；需要飞散部件先worldRead({section:"life",inspect:true})取得effectParts精确id写入parts，不能猜测或重建车型。多个效果按start排期或叠加，不用同轨trigger；不含物理火势蔓延或真实网格碎裂。
 局部motion与animation按同一源时间叠加；自编motion读取skeletalMotion真实骨名和局部XYZ角度约定；2至32帧首time=0严格递增。hips正X前俯、约80到90度为胸朝下趴姿，负X为仰卧；肘负X屈，小腿正X屈。根据父骨合成后手足坐标安排支撑，不机械抬手。按本轮动作阶段编排，未要求动作不要添加。检查工具motionReviews中的chestForwardY、骨点、minY及worstPenetration异常时刻，需要时在相邻关键帧中补过渡后再提交。它只是角色局部平面采样，terrainValidated=false、visuallyApproved=false不能说成实际地形或画面通过；不得抬高整个模型掩盖姿势穿插。
 worldPerform仅兼容旧points/events，旧事件文字不会自动执行目标交互或火烟爆炸；用户要求这些效果时必须提交effect片段，不再返回只有标签的动线。明确需要定时时才给startAt午夜起整数秒，默认立即且一次；不要设置loop=true，动线固定为开放路径到末点结束。默认保留其他轨道与对象，移除仅用worldPerformanceRemove。每批校验成功即预览，runtimeVerified=false表示仍需真实播放；最后用一两句说明实际片段和未执行原因，不默认输出内部骨名、坐标或协议，不声称没有验证的成功。`;
-  return `你是运行在 Toonflow 自己 Agent 底座上的 Holodeck 世界作者。你实际使用移植自 Holodeck 的世界读取、私有提案、目的地观察和核对协议；已有本地资产可直接复用，需要新增模型源码和出图时使用服务器 Kiln 1.6.0。模型、会话、工具循环、计费、停止与持久化由 Toonflow 管理。
+  return `你是运行在创意广场 Agent 底座上的 Holodeck 世界作者。你实际使用移植自 Holodeck 的世界读取、私有提案、目的地观察和核对协议；已有本地资产可直接复用，需要新增模型源码和出图时使用服务器 Kiln 1.6.0。模型、会话、工具循环、计费、停止与持久化由宿主应用管理。
 ${mode === "scene" ? `${stageSkillInstruction(false)}
 - 用户要人物表演、走位、对白、拍镜头、分镜时，用上面的stageRead/stageAct/stageShots；搭景用useSetTemplate等布景工具。只做演绎和镜头时，做完直接总结即可，提交、观察和核对由系统自动补齐。
 - 下面是搭景、建模和高级演绎工具的完整规则。

@@ -20,14 +20,14 @@
       </div>
       <div v-else class="welcomeContent">
         <h1 id="welcomeTitle">快速开始</h1>
-        <p class="description">登录 Toonflow 即可免配置快速开始，直接开启创作。</p>
+        <p class="description">选择站内 API 密钥即可开始创作。</p>
         <accountPanel v-if="!loggedIn" class="accountContent" @loggedIn="startWithAccount" />
         <el-button v-else class="startButton" type="primary" :loading="saving" @click="completeSetup">开始使用</el-button>
         <div class="secondaryActions">
           <template v-if="!multiTenantEnabled">
             <el-button class="secondaryButton" round :disabled="saving" @click="view = 'custom'">
               <icon-key class="buttonIcon" />
-              配置第三方模型
+              配置模型
             </el-button>
             <span class="separator">或</span>
           </template>
@@ -37,14 +37,13 @@
 
       <footer class="pageFooter">
         <el-button class="deviceLink" size="small" :icon="IconDevices" @click="mobileConnectVisible = true">{{ mobileConnectionLabel }}</el-button>
-        <p>© {{ new Date().getFullYear() }} Toonflow · 保留所有权利。</p>
+        <p>© {{ new Date().getFullYear() }} 创意广场</p>
       </footer>
     </section>
     <div class="artPanel" aria-hidden="true">
       <bg class="artBg" />
       <div class="artBrand">
-        <span class="artLogo" v-html="logoSvg" />
-        <span class="artName">Toonflow</span>
+        <span class="artName">创意广场</span>
       </div>
     </div>
     <mobileConnect v-model="mobileConnectVisible" />
@@ -59,7 +58,6 @@ import { IconArrowLeft, IconDevices } from "@tabler/icons-vue";
 import { customProviders, multiTenantEnabled, toonflowAccountToken } from "@/stores/settings";
 import { useHelloStore } from "@/stores/hello";
 import anonymousData from "@/lib/anonymousData";
-import logoSvg from "@toonflow/assets/logo.svg?raw";
 import bg from "./bg.vue";
 import languageSelect from "@/components/languageSelect.vue";
 import { mobileConnectionLabel } from "@/lib/mobile";

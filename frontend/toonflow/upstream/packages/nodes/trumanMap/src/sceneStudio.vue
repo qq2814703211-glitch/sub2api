@@ -314,7 +314,7 @@
           <button type="submit" class="sendPrompt" :disabled="sendDisabled" :aria-label="aiController ? '排队发送' : editingMessageId ? '重发消息' : '发送给 Agent'" :title="sendTitle"><icon-arrow-up :size="17" /></button>
           </div>
         </div>
-        <p v-if="!modelsLoading && !aiModels?.length" class="modelHint">{{ generateAi ? '请先在 Toonflow 设置中配置文本模型。' : '独立预览不连接 AI，请在 Toonflow 节点中使用。' }}</p>
+        <p v-if="!modelsLoading && !aiModels?.length" class="modelHint">{{ generateAi ? '请先在设置 → 密钥与模型中选择站内 API 密钥。' : '独立预览不连接 AI，请在画布节点中使用。' }}</p>
         <p v-if="voiceActive" class="voiceStatus" role="status">{{ voiceState === 'stopping' ? '正在完成识别…' : '正在听，点击停止后发送' }}</p>
         <p v-if="imagesReading" class="imageStatus" role="status">正在读取图片…</p>
       </form>
@@ -4036,7 +4036,7 @@ async function runNextQueued() {
 }
 function notifyDone() {
   if (!window.document.hidden || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try { new Notification("Toonflow", { body: "Agent 已完成回复" }); }
+  try { new Notification(translate("创意广场"), { body: translate("Agent 已完成回复") }); }
   catch { /* 有的环境只允许 Service Worker 发通知 */ }
 }
 function formatFileSize(bytes: number) {
@@ -5665,7 +5665,7 @@ async function hostPrevis({ script }: StudioEventInput<"editorPrevisScript">) {
 }
 async function hostExport({ items, longEdge, to }: StudioEventInput<"editorExport">) {
   const destination = to ?? (props.exportCanvas ? "canvas" : "files");
-  if (destination === "canvas" && !props.exportCanvas) throw new Error("导出到画布要在 Toonflow 画布的节点里用；改用to:\"files\"存进工作区");
+  if (destination === "canvas" && !props.exportCanvas) throw new Error("导出到画布要在画布节点里用；改用to:\"files\"存进工作区");
   const files: File[] = [];
   fileSink = file => files.push(file);
   let result: Awaited<ReturnType<typeof runExport>>;
@@ -5686,7 +5686,7 @@ async function hostAgentChat(args: StudioEventInput<"editorAgentChat">): Promise
   if (performanceDraft.value) throw new Error("编辑器里正在画演绎路线，先完成或取消再发");
   if (locked.value) throw hostBusyError();
   const models = await hostEnsureModels();
-  if (!models.length) throw new Error("还没有可用的文本模型：先在 Toonflow 设置里添加模型");
+  if (!models.length) throw new Error("还没有可用的文本模型：请先在设置 → 密钥与模型中配置站内 API 密钥");
   const model = args.model ? hostFindModel(args.model, models) : selectedAiModel.value ?? models[0]!;
   // 先校验再切换，校验失败不改用户对话框里选的模型。
   const levels = model.reasoningLevels?.filter(level => Object.hasOwn(thinkingLabels, level)) ?? [];

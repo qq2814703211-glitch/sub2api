@@ -17,6 +17,8 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
+      "@custom/*": ["./custom/*"],
+      "@host/*": ["../src/*"],
       "@toonflow/i18n": ["./upstream/packages/i18n/src/index.ts"],
       "@toonflow/i18n/vue": ["./upstream/packages/i18n/src/vue.ts"],
       "@toonflow/i18n/elementPlus": ["./upstream/packages/i18n/src/elementPlus.ts"],
@@ -30,5 +32,5 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["runtime/**/*.ts", "runtime/**/*.d.ts"]
+  "include": ["runtime/**/*.ts", "runtime/**/*.d.ts", "custom/**/*.ts", "custom/**/*.vue"]
 }

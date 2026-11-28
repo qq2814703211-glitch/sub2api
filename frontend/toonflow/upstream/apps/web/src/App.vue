@@ -6,44 +6,13 @@
           <component :is="currentComponent" />
         </transition>
       </router-view>
-      <generationCostDialog v-if="costPrompt" :key="costPrompt.key" :modelValue="true" v-bind="costPrompt.props"
-        @update:modelValue="costPrompt.setVisible" @confirm="costPrompt.confirm" />
       <loadingPage v-model:visible="workspaceStore.projectLoadingVisible" v-model:drawn="workspaceStore.projectLoadingDrawn" :active="workspaceStore.projectLoading" />
-      <ffmpegRequired v-if="currentUser?.role !== 'user'" />
-      <desktopQuit v-if="actualPlatform.isDesktop" />
-      <updateBox
-        v-if="updateBoxBuild && !installFailure"
-        v-model="updateBoxVisible"
-        :version="updateBoxBuild.version"
-        :buildCode="updateBoxBuild.hash"
-        @dismiss="rememberUpdateBox" />
-      <el-dialog v-if="installFailure" v-model="installFailureVisible" title="更新未成功" width="min(520px, 92vw)" alignCenter appendToBody :closeOnClickModal="false">
-        <div v-if="installFailure" class="installFailureContent">
-          <p class="failureMessage">{{ installFailure.message }}</p>
-          <dl class="failureVersions">
-            <div>
-              <dt>当前运行版本</dt>
-              <dd><strong>{{ installFailure.currentVersion ? `v${installFailure.currentVersion}` : "未知版本" }}</strong><code>{{ installFailure.currentHash || "构建标识未知" }}</code></dd>
-            </div>
-            <div>
-              <dt>本次更新目标</dt>
-              <dd><strong>{{ installFailure.targetVersion ? `v${installFailure.targetVersion}` : "未知版本" }}</strong><code>{{ installFailure.targetHash || "构建标识未知" }}</code></dd>
-            </div>
-          </dl>
-          <p class="failureHint">请前往 GitHub 最新发布页或官网 toonflow.net，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
-        </div>
-        <template #footer>
-          <el-button @click="installFailureVisible = false">稍后</el-button>
-          <el-button tag="a" href="https://toonflow.net" target="_blank" rel="noopener noreferrer">前往官网</el-button>
-          <el-button tag="a" type="primary" :href="installFailure.downloadUrl" target="_blank" rel="noopener noreferrer">前往下载页</el-button>
-        </template>
-      </el-dialog>
     </config-provider>
   </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch, watchEffect } from "vue";
+import { computed, onBeforeUnmount, provide, watchEffect } from "vue";
 import { useZIndex } from "element-plus";
 import { elementLocales } from "@toonflow/i18n/elementPlus";
 import { ConfigProvider, type GlobalConfigProvider } from "tdesign-vue-next";
@@ -55,27 +24,20 @@ import tdesignRu from "tdesign-vue-next/es/locale/ru_RU";
 import tdesignKo from "tdesign-vue-next/es/locale/ko_KR";
 import tdesignAr from "tdesign-vue-next/es/locale/ar_KW";
 import { locale } from "@toonflow/i18n/vue";
-import type { updateSnapshot } from "@toonflow/server/desktop";
 import { chatLocale } from "@/lib/i18n";
 import { registerAppearance } from "@/lib/appearance";
-import { actualPlatform, isMobile } from "@/lib/platform";
+import { isMobile } from "@/lib/platform";
 import { uiSettings } from "@/stores/settings";
-import { desktopUpdateSnapshot, stopDesktopUpdateObservation } from "@/stores/desktopUpdate";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { currentUser } from "@/stores/multiTenant";
 import loadingPage from "@/components/loadingPage.vue";
-import generationCostDialog from "@/components/generationCostDialog.vue";
-import { useMediaCostReminder } from "@/lib/mediaCostReminder";
 import { useMcpControl } from "@/lib/mcpControl";
-import ffmpegRequired from "@/components/settings/ffmpegRequired.vue";
-import desktopQuit from "@/components/desktopQuit.vue";
-import updateBox from "@/components/updateBox/index.vue";
-import { useUpdateBox } from "@/components/updateBox/useUpdateBox";
 import "element-plus/theme-chalk/dark/css-vars.css";
 
 if (currentUser.value?.role !== "user") useMcpControl();
 const workspaceStore = useWorkspaceStore();
-const costPrompt = useMediaCostReminder();
+provide("mediaCostReminderEnabled", () => false);
+provide("confirmMediaCost", async () => true);
 
 // ACT: TDesign 缺少的语言使用英语基底，聊天控件由应用字典补齐。
 const tdesignLocales = {
@@ -85,37 +47,6 @@ const tdesignLocales = {
 const elementLocale = computed(() => elementLocales[locale.value]);
 // ACT: TDesign 自带语言包声明为 readonly，而 ConfigProvider 的只读使用接口声明为可写。
 const tdesignLocale = computed(() => ({ ...tdesignLocales[locale.value], chat: chatLocale.value }) as unknown as GlobalConfigProvider);
-
-const { updateBoxVisible, updateBoxBuild, showUpdateBox, rememberUpdateBox } = useUpdateBox();
-const installFailureVisible = ref(false);
-const installFailure = shallowRef<updateSnapshot["installFailure"]>();
-const shownInstallAttempts = new Set<string>();
-
-watch(desktopUpdateSnapshot, snapshot => {
-  if (!actualPlatform.isDesktop || !snapshot) return;
-  if (snapshot.installFailure) {
-    installFailure.value = snapshot.installFailure;
-    updateBoxVisible.value = false;
-    const attemptId = snapshot.installFailure.attemptId;
-    if (shownInstallAttempts.has(attemptId)) return;
-    shownInstallAttempts.add(attemptId);
-    // ACT: 同一 WebView 刷新后仍不重复提醒；退出客户端后新会话可再次提醒。
-    try {
-      const key = `desktopUpdateFailure:${attemptId}`;
-      if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
-    } catch { /* 存储不可用时仍按当前页面去重。 */ }
-    installFailureVisible.value = true;
-    return;
-  }
-  if (!snapshot.version || !snapshot.hash || snapshot.channel === "dev") return;
-  if (installFailure.value) {
-    if (snapshot.error || snapshot.updating || snapshot.version !== installFailure.value.targetVersion || snapshot.hash !== installFailure.value.targetHash) return;
-    installFailure.value = undefined;
-    installFailureVisible.value = false;
-  }
-  showUpdateBox(snapshot.version, snapshot.hash);
-}, { immediate: true });
 
 function preventPageZoom(event: WheelEvent) {
   if (event.ctrlKey || event.metaKey) event.preventDefault();
@@ -128,7 +59,6 @@ window.addEventListener("wheel", preventPageZoom, { capture: true, passive: fals
 // 画布在捕获阶段先处理自己的快捷键，再在冒泡阶段取消浏览器缩放。
 window.addEventListener("keydown", preventPageZoomShortcut);
 onBeforeUnmount(() => {
-  stopDesktopUpdateObservation();
   window.removeEventListener("wheel", preventPageZoom, true);
   window.removeEventListener("keydown", preventPageZoomShortcut);
 });

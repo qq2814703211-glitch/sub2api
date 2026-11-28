@@ -543,7 +543,7 @@ export async function runHolodeckAgent(input: {
     if (!completed && (truncated || stopping)) {
       const reason = lastSaturated ? `对话太长，模型已经没有输出空间（换了 ${handoffs} 次新对话仍然如此）` : `模型回复${stalled >= maxStalledContinuations ? `连续 ${stalled} 次接着生成都没有进展` : `接着生成了 ${attempts} 次`}，仍然超出单次输出上限`;
       // 一件都没做成才算失败；做成过的修改都在草稿里、交付前还会提交并核对，不因为最后没写出总结就整轮作废。
-      if (!progress) throw new Error(`${reason}，本轮草稿未应用。${lastSaturated ? "请把要求拆成几步分开发，或换一个上下文更长的模型。" : "请在 Toonflow 模型设置里调高该模型的最大输出长度，或把思考档位调低后重试。"}`);
+      if (!progress) throw new Error(`${reason}，本轮草稿未应用。${lastSaturated ? "请把要求拆成几步分开发，或换一个上下文更长的模型。" : "请在模型设置里调高该模型的最大输出长度，或把思考档位调低后重试。"}`);
       const last = journal.at(-1);
       completed = { text: "", incomplete: `${reason}，没能全部做完${last ? `（中断前在做：${last.slice(0, 120)}）` : ""}。已经做成的修改照常提交核对后交付，发“继续”可以接着做剩下的部分。` };
     }

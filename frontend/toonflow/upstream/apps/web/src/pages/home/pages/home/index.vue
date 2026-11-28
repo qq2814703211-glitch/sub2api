@@ -2,7 +2,10 @@
   <div class="homePanel">
     <section class="creationPanel" aria-label="创建项目">
       <div class="brand">
-        <el-image class="brandLogo" :src="logoUrl" fit="contain" alt="Toonflow" />
+        <img v-if="brandLogo" class="brandLogo customBrandLogo" :src="brandLogo" :alt="brandName" />
+        <span v-else class="brandLogo brandIconBadge" aria-hidden="true">
+          <icon-sparkles :size="24" />
+        </span>
         <h1>今天要做点什么？</h1>
       </div>
       <div class="promptArea">
@@ -43,40 +46,26 @@
         <projectCard v-for="project in recentProjects" :key="project.directory" :project="project" :disabled="disabled" @select="emit('open', project)" />
       </div>
     </section>
-    <section v-if="exploreProjects.length" class="previewSection" aria-labelledby="homeExploreTitle">
-      <div class="sectionHeader">
-        <h2 id="homeExploreTitle">探索</h2>
-        <button class="moreButton" type="button" @click="emit('showSection', 'explore')">更多<icon-chevron-right :size="16" aria-hidden="true" /></button>
-      </div>
-      <div class="previewGrid exploreGrid">
-        <exploreCard v-for="item in exploreProjects" :key="item.id" :item="item" @click="selectedProjectId = item.id" />
-      </div>
-    </section>
-    <exploreDetail v-if="selectedProjectId" :projectId="selectedProjectId" @close="selectedProjectId = ''" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { locale, translate } from "@toonflow/i18n/vue";
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessage, type InputInstance } from "element-plus";
 import { getReadableFileMimeType, readableFileAccept } from "@toonflow/server/documentFormats";
 import { getMediaMimeType } from "@toonflow/node-shared/mediaTypes";
-import type { ExplorePage, ExploreProject } from "@toonflow/server/channel";
-import { IconArrowUp, IconFolder, IconPaperclip } from "@tabler/icons-vue";
+import { IconArrowUp, IconFolder, IconPaperclip, IconSparkles } from "@tabler/icons-vue";
+import { useStudioBrand } from "@custom/useStudioBrand";
 import modelPopover from "@/components/modelPopover.vue";
 import attachmentList from "@/components/agent/attachmentList.vue";
 import { createPastedTextFile, readTextAttachment } from "@/components/agent/textAttachments";
 import type { AgentAttachment } from "@/components/agent/types";
-import logoUrl from "@toonflow/assets/logo.svg";
 import { useWorkspaceStore, type Project } from "@/stores/workspace";
 import { getClipboardFiles } from "@/lib/clipboard";
-import http from "@/lib/http";
 import workspacePicker from "@/pages/home/workspacePicker.vue";
 import projectCard from "../projects/projectCard.vue";
 import projectLaunchCard from "../projects/projectLaunchCard.vue";
-import exploreCard from "../explore/exploreCard.vue";
-import exploreDetail from "../explore/exploreDetail.vue";
 
 const props = defineProps<{ disabled: boolean; loading: boolean }>();
 const emit = defineEmits<{
@@ -87,9 +76,8 @@ const emit = defineEmits<{
 }>();
 const workspaceStore = useWorkspaceStore();
 const pageLifetime = new AbortController();
+const { brandName, brandLogo } = useStudioBrand();
 const recentProjects = computed(() => [...workspaceStore.projectList].sort((left, right) => right.lastOpenedAt - left.lastOpenedAt).slice(0, 3));
-const exploreProjects = shallowRef<ExploreProject[]>([]);
-const selectedProjectId = ref("");
 const promptWorkspacePicker = ref<InstanceType<typeof workspacePicker>>();
 const workspaceDirectory = ref(workspaceStore.project?.directory ?? "");
 const selectedModel = ref("");
@@ -117,7 +105,6 @@ const placeholderPhrases = [
 const promptPlaceholder = ref(translate(placeholderPhrases[0]!));
 
 onMounted(() => {
-  void loadExploreProjects();
   window.addEventListener("dragend", clearAttachmentDrag, true);
   window.addEventListener("drop", clearAttachmentDrag, true);
   window.addEventListener("blur", clearAttachmentDrag);
@@ -166,16 +153,6 @@ onUnmounted(() => {
 watch(() => props.disabled, disabled => {
   if (disabled) clearAttachmentDrag();
 }, { flush: "sync" });
-
-// 首页只预览前 3 个作品：云端未开放或加载失败时不显示该区块，完整列表、错误提示与重试在探索面板。
-async function loadExploreProjects() {
-  try {
-    const result = await http<ExplorePage>({ method: "POST", url: "/api/channel/community/getExploreProjects", signal: pageLifetime.signal, data: { limit: 3 } });
-    exploreProjects.value = result.list.slice(0, 3);
-  } catch (error) {
-    if (!pageLifetime.signal.aborted) console.warn("加载探索作品失败", error);
-  }
-}
 
 function submit() {
   if (pendingPastes.value) return;
@@ -307,9 +284,14 @@ async function restoreAttachment(index: number) {
         flex-shrink: 0;
         width: clamp(28px, 3.4vw, 44px);
         height: clamp(28px, 3.4vw, 44px);
+        border-radius: 10px;
+        object-fit: contain;
 
-        .dark & {
-          filter: invert(1);
+        &.brandIconBadge {
+          display: grid;
+          place-items: center;
+          background: var(--el-color-primary-light-9);
+          color: var(--el-color-primary);
         }
       }
 

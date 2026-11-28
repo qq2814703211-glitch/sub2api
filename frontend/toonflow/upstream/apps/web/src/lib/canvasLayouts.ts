@@ -3,31 +3,31 @@ import { markMessages } from "@toonflow/i18n";
 export const canvasLayouts = markMessages({
   default: {
     label: "默认", shortName: "", side: false, centerControls: false, cornerSearch: false, agent: "beside",
-    primary: ["add", "pointer", "search", "help"], controls: ["assets", "view", "zoom"],
+    primary: ["add", "pointer", "search"], controls: ["assets", "view", "zoom"],
   },
   sideSearch: {
     label: "侧栏搜索", shortName: "TN", side: true, centerControls: false, cornerSearch: false, agent: "bottomRight",
-    primary: ["add", "search", "assets", "pointer"], controls: ["view", "zoom", "help"],
+    primary: ["add", "search", "assets", "pointer"], controls: ["view", "zoom"],
   },
   centerControls: {
     label: "居中视图栏", shortName: "UD", side: true, centerControls: true, cornerSearch: true, agent: "bottomRight",
-    primary: ["add", "assets", "help"], controls: ["pointer", "zoom", "view"],
+    primary: ["add", "assets"], controls: ["pointer", "zoom", "view"],
   },
   zoomFirst: {
     label: "缩放优先", shortName: "LJ", side: true, centerControls: false, cornerSearch: false, agent: "topRight",
-    primary: ["add", "assets", "search", "pointer"], controls: ["zoom", "view", "help"],
+    primary: ["add", "assets", "search", "pointer"], controls: ["zoom", "view"],
   },
   pointerFirst: {
     label: "指针优先", shortName: "PT", side: true, centerControls: false, cornerSearch: false, agent: "topRight",
-    primary: ["pointer", "add", "search", "assets"], controls: ["zoom", "view", "help"],
+    primary: ["pointer", "add", "search", "assets"], controls: ["zoom", "view"],
   },
   compactTools: {
     label: "紧凑侧栏", shortName: "SK", side: true, centerControls: false, cornerSearch: false, agent: "topRight",
-    primary: ["add", "assets"], controls: ["view", "pointer", "zoom", "search", "help"],
+    primary: ["add", "assets"], controls: ["view", "pointer", "zoom", "search"],
   },
   cornerSearch: {
     label: "右上搜索", shortName: "KL", side: true, centerControls: false, cornerSearch: true, agent: "bottomRight",
-    primary: ["assets", "add", "help"], controls: ["pointer", "view", "zoom"],
+    primary: ["assets", "add"], controls: ["pointer", "view", "zoom"],
   },
 } as const);
 

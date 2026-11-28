@@ -56,12 +56,12 @@
               @search="canvasPanelRef?.openNodeSearch()" />
           </div>
         </el-card>
-        <el-tooltip v-if="!agentVisible" content="Toonflow Agent" :placement="activePanel === 'canvas' && canvasLayout.agent === 'topRight' ? 'bottom' : 'top'" :showArrow="false" :hideAfter="0">
+        <el-tooltip v-if="!agentVisible" content="AI 助手" :placement="activePanel === 'canvas' && canvasLayout.agent === 'topRight' ? 'bottom' : 'top'" :showArrow="false" :hideAfter="0">
           <el-button
             class="agentButton"
             :class="{ standalone: activePanel !== 'canvas' }"
             :aria-expanded="agentVisible"
-            aria-label="Toonflow Agent"
+            aria-label="AI 助手"
             aria-controls="agentPanel"
             @click="agentVisible = !agentVisible"></el-button>
         </el-tooltip>
@@ -88,7 +88,6 @@ import { canvasLayouts } from "@/lib/canvasLayouts";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { registerWorkspaceControl, waitForControlValue } from "@/lib/mcpControl";
 import anonymousData from "@/lib/anonymousData";
-import { useProviderBalances } from "@/lib/providerBilling";
 import canvasPanel from "./panels/canvas/canvasHost.vue";
 import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
@@ -113,7 +112,6 @@ onScopeDispose(() => {
   for (const eventName of sideButtonEvents) window.removeEventListener(eventName, preventSideButtonNavigation, true);
 });
 const workspaceStore = useWorkspaceStore();
-useProviderBalances();
 const panelOptions = [
   { label: "画布", value: "canvas", icon: IconVector },
   { label: "文档", value: "document", icon: IconFileText },

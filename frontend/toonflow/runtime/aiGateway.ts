@@ -1,5 +1,5 @@
 import { getHostContext, inferTextProtocol, resolveSub2ApiKey, type Sub2ApiKeyInfo } from "./sub2apiBridge";
-import { joinPath, kvGet, kvSet, vfsWriteBytes } from "./vfs";
+import { joinPath, kvGet, vfsWriteBytes } from "./vfs";
 
 export interface CustomTextProvider {
   id: string;
@@ -87,20 +87,20 @@ const DEFAULT_TEXT_MODELS = [
 ];
 
 const DEFAULT_IMAGE_MODELS = [
-  { id: "gpt-image-1", label: "GPT Image 1 (站内网关)" },
-  { id: "gemini-2.5-flash-image-preview", label: "Gemini 2.5 Flash Image (站内网关)" },
-  { id: "flux-pro", label: "FLUX Pro (站内网关)" },
+  { id: "gpt-image-1", label: "gpt-image-1" },
+  { id: "gemini-2.5-flash-image-preview", label: "gemini-2.5-flash-image-preview" },
+  { id: "flux-pro", label: "flux-pro" },
 ];
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: "grok-imagine-video", label: "Grok Imagine Video (站内网关)" },
-  { id: "sora-2", label: "Sora 2 / OpenAI Video (站内网关)" },
-  { id: "doubao-seedance-1-0-pro-250528", label: "Seedance Video (站内网关)" },
+  { id: "grok-imagine-video", label: "grok-imagine-video" },
+  { id: "sora-2", label: "sora-2" },
+  { id: "doubao-seedance-1-0-pro-250528", label: "doubao-seedance-1-0-pro-250528" },
 ];
 
 const DEFAULT_AUDIO_MODELS = [
-  { id: "gpt-4o-mini-tts", label: "GPT-4o Mini TTS (站内网关)" },
-  { id: "tts-1-hd", label: "OpenAI TTS-1 HD (站内网关)" },
+  { id: "gpt-4o-mini-tts", label: "gpt-4o-mini-tts" },
+  { id: "tts-1-hd", label: "tts-1-hd" },
 ];
 
 export async function getStoredSettings(): Promise<Record<string, unknown>> {
@@ -109,10 +109,10 @@ export async function getStoredSettings(): Promise<Record<string, unknown>> {
 
 export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
   const host = getHostContext();
-  const settings = await getStoredSettings();
+  const origin = host.origin || (typeof window !== "undefined" ? window.location.origin : "");
   const providers: CustomTextProvider[] = [];
 
-  // Auto-provision Sub2API built-in gateway providers per user API key
+  // Strictly enforce site-internal API gateway backed by the user's site API keys.
   if (host.keys.length) {
     const primary = resolveSub2ApiKey("text") ?? host.keys[0]!;
     const discovered = host.discoveredModels[primary.id] ?? primary.models ?? [];
@@ -121,9 +121,9 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
       : DEFAULT_TEXT_MODELS;
     const modelIds = textIds.length ? textIds : DEFAULT_TEXT_MODELS;
     providers.push({
-      id: "sub2api-gateway",
-      label: `Sub2API 站内网关 (${primary.name || `#${primary.id}`})`,
-      apiUrl: `${host.origin || window.location.origin}/v1`,
+      id: "site-gateway",
+      label: primary.name ? `站内 API · ${primary.name}` : "站内 API",
+      apiUrl: `${origin}/v1`,
       protocol: inferTextProtocol(primary.platform),
       apiKey: primary.key,
       models: modelIds.map((id) => ({
@@ -137,11 +137,10 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
       })),
     });
   } else {
-    // Provide a visible placeholder gateway entry so UI model selectors are populated even before key sync
     providers.push({
-      id: "sub2api-gateway",
-      label: "Sub2API 站内网关",
-      apiUrl: `${typeof window !== "undefined" ? window.location.origin : ""}/v1`,
+      id: "site-gateway",
+      label: "站内 API",
+      apiUrl: `${origin}/v1`,
       protocol: "openai-completions",
       apiKey: "",
       models: DEFAULT_TEXT_MODELS.map((id) => ({
@@ -156,14 +155,6 @@ export async function listAllTextProviders(): Promise<CustomTextProvider[]> {
     });
   }
 
-  const custom = Array.isArray(settings.customProviders)
-    ? (settings.customProviders as CustomTextProvider[])
-    : [];
-  for (const p of custom) {
-    if (p && typeof p.id === "string" && p.id !== "sub2api-gateway" && p.id.toLowerCase() !== "toonflow") {
-      providers.push(p);
-    }
-  }
   return providers;
 }
 
@@ -227,12 +218,12 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     },
   ];
   const imageModels = (
-    discoveredImages.length ? discoveredImages.map((id) => ({ id, label: `${id} (站内网关)` })) : DEFAULT_IMAGE_MODELS
+    discoveredImages.length ? discoveredImages.map((id) => ({ id, label: id })) : DEFAULT_IMAGE_MODELS
   ).map(
     (m): MediaModelDescriptor => ({
-      providerId: "sub2api-media",
-      providerLabel: "Sub2API 站内媒体网关",
-      providerName: "Sub2API 站内媒体网关",
+      providerId: "site-media",
+      providerLabel: "站内 API",
+      providerName: "站内 API",
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -263,12 +254,12 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     },
   ];
   const videoModels = (
-    discoveredVideos.length ? discoveredVideos.map((id) => ({ id, label: `${id} (站内网关)` })) : DEFAULT_VIDEO_MODELS
+    discoveredVideos.length ? discoveredVideos.map((id) => ({ id, label: id })) : DEFAULT_VIDEO_MODELS
   ).map(
     (m): MediaModelDescriptor => ({
-      providerId: "sub2api-media",
-      providerLabel: "Sub2API 站内媒体网关",
-      providerName: "Sub2API 站内媒体网关",
+      providerId: "site-media",
+      providerLabel: "站内 API",
+      providerName: "站内 API",
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -301,12 +292,12 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     },
   ];
   const audioModels = (
-    discoveredAudios.length ? discoveredAudios.map((id) => ({ id, label: `${id} (站内网关)` })) : DEFAULT_AUDIO_MODELS
+    discoveredAudios.length ? discoveredAudios.map((id) => ({ id, label: id })) : DEFAULT_AUDIO_MODELS
   ).map(
     (m): MediaModelDescriptor => ({
-      providerId: "sub2api-media",
-      providerLabel: "Sub2API 站内媒体网关",
-      providerName: "Sub2API 站内媒体网关",
+      providerId: "site-media",
+      providerLabel: "站内 API",
+      providerName: "站内 API",
       modelId: m.id,
       id: m.id,
       label: m.label,
@@ -324,18 +315,17 @@ export async function listMediaProviders(): Promise<MediaProviderRecord[]> {
     })
   );
 
-  const customMedia = await kvGet<MediaProviderRecord[]>("toonflow.customMediaProviders", []);
+  const origin = host.origin || (typeof window !== "undefined" ? window.location.origin : "");
   return [
     {
-      id: "sub2api-media",
-      name: "Sub2API 站内媒体网关",
-      description: "自动复用当前登录用户的 Sub2API 密钥，浏览器直连站内图像、视频与语音网关。",
+      id: "site-media",
+      name: "站内 API",
+      description: "",
       builtin: true,
       enabled: true,
-      apiUrl: `${host.origin || window.location.origin}/v1`,
+      apiUrl: `${origin}/v1`,
       models: [...imageModels, ...videoModels, ...audioModels],
     },
-    ...customMedia,
   ];
 }
 
@@ -345,25 +335,30 @@ export async function listMediaModelsByType(mediaType?: string): Promise<MediaMo
   return mediaType ? all.filter((m) => m.type === mediaType) : all;
 }
 
-export async function saveCustomMediaProvider(provider: MediaProviderRecord): Promise<MediaProviderRecord[]> {
-  const list = await kvGet<MediaProviderRecord[]>("toonflow.customMediaProviders", []);
-  const next = [provider, ...list.filter((item) => item.id !== provider.id)];
-  await kvSet("toonflow.customMediaProviders", next);
-  return next;
+export async function saveCustomMediaProvider(_provider: MediaProviderRecord): Promise<MediaProviderRecord[]> {
+  throw new Error("仅支持使用站内 API");
 }
 
-export async function deleteCustomMediaProvider(id: string): Promise<MediaProviderRecord[]> {
-  const list = await kvGet<MediaProviderRecord[]>("toonflow.customMediaProviders", []);
-  const next = list.filter((item) => item.id !== id);
-  await kvSet("toonflow.customMediaProviders", next);
-  return next;
+export async function deleteCustomMediaProvider(_id: string): Promise<MediaProviderRecord[]> {
+  throw new Error("仅支持使用站内 API");
 }
 
 export async function fetchRemoteProviderModels(
   rawFetch: typeof fetch,
   input: { apiUrl: string; protocol: string; apiKey: string; headers?: Record<string, string> }
 ): Promise<{ id: string; label: string }[]> {
-  const base = input.apiUrl.replace(/\/+$/, "");
+  const host = getHostContext();
+  const allowedOrigin = host.origin || (typeof window !== "undefined" ? window.location.origin : "");
+  const base = (input.apiUrl || `${allowedOrigin}/v1`).replace(/\/+$/, "");
+  let parsedBase: URL;
+  try {
+    parsedBase = new URL(base, allowedOrigin || undefined);
+  } catch {
+    throw new Error("仅支持使用站内 API");
+  }
+  if (allowedOrigin && parsedBase.origin !== allowedOrigin) {
+    throw new Error("仅支持使用站内 API");
+  }
   const endpoint =
     input.protocol === "anthropic-messages"
       ? `${base.endsWith("/v1") ? base : `${base}/v1`}/models?limit=200`
@@ -391,11 +386,8 @@ export async function resolveProviderCredentials(
 ): Promise<{ apiUrl: string; apiKey: string; protocol: "openai-completions" | "openai-responses" | "anthropic-messages"; headers?: Record<string, string> }> {
   const providers = await listAllTextProviders();
   const found = providers.find((p) => p.id === providerId) ?? providers[0];
-  if (!found) {
-    throw new Error("未配置可用的 AI 模型供应商，请先在「创意广场」顶部绑定 Sub2API 密钥或在设置中添加供应商。");
-  }
-  if (!found.apiKey) {
-    throw new Error("当前未选择 API 密钥，请在「创意广场」顶部选择一个站内 API 密钥，或在 Toonflow 设置中填写供应商密钥。");
+  if (!found || !found.apiKey) {
+    throw new Error("请先在「设置 → 密钥与模型」中选择站内 API 密钥");
   }
   return {
     apiUrl: found.apiUrl,
@@ -525,6 +517,82 @@ export async function streamChatCompletion(
     const inputTokens = json.usage?.input_tokens ?? 0;
     const outputTokens = json.usage?.output_tokens ?? 0;
     return { text, thinking, toolCalls, usage: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens } };
+  }
+
+  if (creds.protocol === "openai-responses") {
+    const url = `${base}/responses`;
+    const inputItems = options.messages.map((m) => ({
+      role: m.role === "tool" ? "user" : m.role,
+      content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+    }));
+    const resp = await rawFetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${creds.apiKey}`,
+        ...(creds.headers ?? {}),
+      },
+      body: JSON.stringify({
+        model: options.modelId,
+        input: inputItems,
+        ...(options.tools?.length
+          ? {
+              tools: options.tools.map((t) => ({
+                type: "function",
+                name: t.function.name,
+                description: t.function.description,
+                parameters: t.function.parameters,
+              })),
+            }
+          : {}),
+      }),
+      signal: options.signal,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error(`模型请求失败（HTTP ${resp.status}）：${errText.slice(0, 240)}`);
+    }
+    const json = (await resp.json()) as {
+      output_text?: string;
+      output?: {
+        type?: string;
+        call_id?: string;
+        id?: string;
+        name?: string;
+        arguments?: string;
+        content?: { type?: string; text?: string }[];
+      }[];
+      usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+    };
+    let text = "";
+    const toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[] = [];
+    for (const item of json.output ?? []) {
+      if (item.type === "message" && Array.isArray(item.content)) {
+        for (const part of item.content) {
+          if ((part.type === "output_text" || part.type === "text") && typeof part.text === "string") {
+            text += part.text;
+          }
+        }
+      } else if (item.type === "function_call" && item.name) {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(item.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          args = {};
+        }
+        toolCalls.push({ id: item.call_id || item.id || crypto.randomUUID(), name: item.name, arguments: args });
+      }
+    }
+    if (!text && typeof json.output_text === "string") text = json.output_text;
+    if (text) options.onTextDelta?.(text);
+    const inputTokens = json.usage?.input_tokens ?? 0;
+    const outputTokens = json.usage?.output_tokens ?? 0;
+    return {
+      text,
+      thinking: "",
+      toolCalls,
+      usage: { input: inputTokens, output: outputTokens, total: json.usage?.total_tokens ?? inputTokens + outputTokens },
+    };
   }
 
   // OpenAI-compatible streaming /v1/chat/completions
@@ -862,7 +930,7 @@ async function executeMediaGeneration(
 
   if (input.mediaType === "image") {
     const key = resolveSub2ApiKey("image");
-    if (!key?.key) throw new Error("请先在「创意广场」顶部绑定用于生图的 Sub2API API 密钥");
+    if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择图像生成密钥");
     const resp = await rawFetch(`${origin}/v1/images/generations`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
@@ -905,7 +973,7 @@ async function executeMediaGeneration(
 
   if (input.mediaType === "audio") {
     const key = resolveSub2ApiKey("audio");
-    if (!key?.key) throw new Error("请先在「创意广场」顶部绑定用于音频生成的 Sub2API API 密钥");
+    if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择音频生成密钥");
     const resp = await rawFetch(`${origin}/v1/audio/speech`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key.key}` },
@@ -929,9 +997,9 @@ async function executeMediaGeneration(
     return [{ path: relPath, mimeType, mediaType: "audio" }];
   }
 
-  // Video generation (Grok / OpenAI / Seedance via sub2api gateway)
+  // Video generation via site gateway
   const key = resolveSub2ApiKey("video");
-  if (!key?.key) throw new Error("请先在「创意广场」顶部绑定用于视频生成的 Sub2API API 密钥");
+  if (!key?.key) throw new Error("请先在「设置 → 密钥与模型」中选择视频生成密钥");
   const model = input.modelId || "grok-imagine-video";
   const isSeedance = /seedance|doubao/i.test(model);
   const endpoint = isSeedance ? `${origin}/api/v3/contents/generations/tasks` : `${origin}/v1/videos/generations`;

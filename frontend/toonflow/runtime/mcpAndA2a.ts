@@ -259,7 +259,7 @@ export async function testMcpServer(
   server: Partial<StoredMcpServer>
 ): Promise<{ ok: boolean; toolCount: number; tools: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] }> {
   if (server.transport === "stdio") {
-    throw new Error("纯浏览器 Web 端不运行服务端本地 stdio 进程，请改用 Streamable HTTP 或 SSE 远程/本机 MCP 服务地址。");
+    throw new Error("网页端不支持本地 stdio 进程，请改用 Streamable HTTP 或 SSE 地址。");
   }
   if (!server.url) throw new Error("请填写有效的 MCP 服务地址（HTTP/HTTPS）");
 
@@ -270,7 +270,7 @@ export async function testMcpServer(
     {
       protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: "toonflow-web", version: "2.0.0" },
+      clientInfo: { name: "creative-plaza", version: "2.0.0" },
     },
     server.headers
   );
@@ -315,7 +315,7 @@ export async function callMcpTool(
     {
       protocolVersion: "2025-03-26",
       capabilities: {},
-      clientInfo: { name: "toonflow-web", version: "2.0.0" },
+      clientInfo: { name: "creative-plaza", version: "2.0.0" },
     },
     server.headers
   );
@@ -331,12 +331,9 @@ export async function callMcpTool(
 }
 
 export function getMcpSkillMarkdown(): string {
-  return `# Toonflow Browser MCP Skill
+  return `# 创意广场 MCP Skill
 
-Toonflow Web 端内置浏览器原生 MCP 能力：
-
-1. **画布实时控制桥接**：工作区打开时自动接入浏览器内 \`mcpControl\` 总线，AI 助手可直接读取画布、创建节点、连接工作流与自动排版。
-2. **直连远程 / 本机 HTTP MCP 服务**：在「插件市场 → MCP 服务」中配置任何支持 CORS 的 Streamable HTTP 或 SSE MCP 服务（包括用户本机 \`http://127.0.0.1:...\` 服务），所有连接均由用户浏览器直接发起，零服务器算力消耗。
+支持在创作台中通过 MCP 协议读取画布、编排节点与连接外部 HTTP/SSE 工具服务。
 `;
 }
 
@@ -377,14 +374,14 @@ function createBuiltinStoryboardTeam(): StoredAgentTeam {
     displayName: storyboardTeamJson.displayName,
     description: storyboardTeamJson.description,
     version: storyboardTeamJson.version,
-    author: storyboardTeamJson.author,
-    github: storyboardTeamJson.github,
+    author: "内置",
+    github: "",
     kind: "local",
     enabled: true,
     builtin: true,
     installedAt: 1700000000000,
     files: {
-      "team.json": JSON.stringify(storyboardTeamJson, null, 2),
+      "team.json": JSON.stringify({ ...storyboardTeamJson, author: "内置", github: "" }, null, 2),
       "members/director.md": storyboardDirectorMd,
       "members/writer.md": storyboardWriterMd,
       "members/reviewer.md": storyboardReviewerMd,

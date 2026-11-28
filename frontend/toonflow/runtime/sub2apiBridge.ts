@@ -7,25 +7,45 @@ export interface Sub2ApiKeyInfo {
   models?: string[];
 }
 
+export interface DiscoveredModelMeta {
+  id: string;
+  supportsReasoningEffort?: boolean;
+  reasoningEffort?: string;
+  reasoningEfforts?: { value: string; label?: string; default?: boolean }[];
+}
+
 export interface Sub2ApiUserInfo {
   id: number;
   email: string;
   username?: string;
   role?: string;
-  balance?: number;
 }
 
 export interface Sub2ApiHostContext {
   origin: string;
   locale: "zh-CN" | "en";
   theme: "dark" | "light";
+  siteName?: string;
+  siteLogo?: string;
   user: Sub2ApiUserInfo | null;
   keys: Sub2ApiKeyInfo[];
   selectedTextKeyId: number | null;
   selectedImageKeyId: number | null;
   selectedVideoKeyId: number | null;
   selectedAudioKeyId: number | null;
+  rewriteModel?: string;
+  rewriteEffort?: string;
   discoveredModels: Record<number, string[]>;
+  discoveredModelMeta?: Record<number, DiscoveredModelMeta[]>;
+}
+
+export interface StudioKeyBindingsPatch {
+  textKeyId?: number | null;
+  imageKeyId?: number | null;
+  videoKeyId?: number | null;
+  audioKeyId?: number | null;
+  rewriteModel?: string;
+  rewriteEffort?: string;
 }
 
 export const SUB2API_BRIDGE_STORAGE_KEY = "sub2api.creative.toonflow.hostContext.v1";
@@ -34,13 +54,18 @@ const DEFAULT_CONTEXT: Sub2ApiHostContext = {
   origin: typeof window !== "undefined" ? window.location.origin : "",
   locale: "zh-CN",
   theme: "dark",
+  siteName: "",
+  siteLogo: "",
   user: null,
   keys: [],
   selectedTextKeyId: null,
   selectedImageKeyId: null,
   selectedVideoKeyId: null,
   selectedAudioKeyId: null,
+  rewriteModel: "",
+  rewriteEffort: "unset",
   discoveredModels: {},
+  discoveredModelMeta: {},
 };
 
 let currentContext: Sub2ApiHostContext = loadStoredContext();
@@ -59,7 +84,12 @@ function loadStoredContext(): Sub2ApiHostContext {
       ...parsed,
       origin: parsed.origin || (typeof window !== "undefined" ? window.location.origin : ""),
       keys: Array.isArray(parsed.keys) ? parsed.keys : [],
-      discoveredModels: parsed.discoveredModels && typeof parsed.discoveredModels === "object" ? parsed.discoveredModels : {},
+      discoveredModels:
+        parsed.discoveredModels && typeof parsed.discoveredModels === "object" ? parsed.discoveredModels : {},
+      discoveredModelMeta:
+        parsed.discoveredModelMeta && typeof parsed.discoveredModelMeta === "object"
+          ? parsed.discoveredModelMeta
+          : {},
     };
   } catch {
     return { ...DEFAULT_CONTEXT };
@@ -71,16 +101,36 @@ export function getHostContext(): Sub2ApiHostContext {
 }
 
 export function updateHostContext(patch: Partial<Sub2ApiHostContext>): void {
+  const prevKeysSig = JSON.stringify([
+    currentContext.keys.map((k) => `${k.id}:${k.key}`),
+    currentContext.selectedTextKeyId,
+    currentContext.selectedImageKeyId,
+    currentContext.selectedVideoKeyId,
+    currentContext.selectedAudioKeyId,
+    currentContext.discoveredModels,
+  ]);
   currentContext = {
     ...currentContext,
     ...patch,
     keys: Array.isArray(patch.keys) ? patch.keys : currentContext.keys,
     discoveredModels: patch.discoveredModels ?? currentContext.discoveredModels,
+    discoveredModelMeta: patch.discoveredModelMeta ?? currentContext.discoveredModelMeta,
   };
   try {
     localStorage.setItem(SUB2API_BRIDGE_STORAGE_KEY, JSON.stringify(currentContext));
   } catch {
     // ignore storage quota errors
+  }
+  const nextKeysSig = JSON.stringify([
+    currentContext.keys.map((k) => `${k.id}:${k.key}`),
+    currentContext.selectedTextKeyId,
+    currentContext.selectedImageKeyId,
+    currentContext.selectedVideoKeyId,
+    currentContext.selectedAudioKeyId,
+    currentContext.discoveredModels,
+  ]);
+  if (typeof window !== "undefined" && prevKeysSig !== nextKeysSig) {
+    window.dispatchEvent(new Event("toonflow:provider-config-changed"));
   }
   for (const listener of listeners) {
     try {
@@ -128,7 +178,7 @@ export function resolveSub2ApiKey(role: "text" | "image" | "video" | "audio"): S
 export function inferTextProtocol(platform?: string): "openai-completions" | "openai-responses" | "anthropic-messages" {
   const lower = (platform || "").toLowerCase();
   if (lower.includes("anthropic") || lower.includes("claude")) return "anthropic-messages";
-  if (lower.includes("openai") || lower.includes("codex") || lower.includes("responses")) return "openai-completions";
+  if (lower.includes("codex") || lower.includes("responses")) return "openai-responses";
   return "openai-completions";
 }
 
@@ -139,6 +189,37 @@ export function postToSub2ApiHost(type: string, payload?: unknown): void {
   } catch {
     // ignore postMessage errors
   }
+}
+
+export function updateKeyBindingsFromStudio(patch: StudioKeyBindingsPatch): void {
+  const nextPatch: Partial<Sub2ApiHostContext> = {};
+  if (patch.textKeyId !== undefined) nextPatch.selectedTextKeyId = patch.textKeyId;
+  if (patch.imageKeyId !== undefined) nextPatch.selectedImageKeyId = patch.imageKeyId;
+  if (patch.videoKeyId !== undefined) nextPatch.selectedVideoKeyId = patch.videoKeyId;
+  if (patch.audioKeyId !== undefined) nextPatch.selectedAudioKeyId = patch.audioKeyId;
+  if (patch.rewriteModel !== undefined) nextPatch.rewriteModel = patch.rewriteModel;
+  if (patch.rewriteEffort !== undefined) nextPatch.rewriteEffort = patch.rewriteEffort;
+  updateHostContext(nextPatch);
+  postToSub2ApiHost("updateKeyBindings", {
+    textKeyId: currentContext.selectedTextKeyId,
+    imageKeyId: currentContext.selectedImageKeyId,
+    videoKeyId: currentContext.selectedVideoKeyId,
+    audioKeyId: currentContext.selectedAudioKeyId,
+    rewriteModel: currentContext.rewriteModel ?? "",
+    rewriteEffort: currentContext.rewriteEffort ?? "unset",
+  });
+}
+
+export function requestRefreshKeysFromHost(): void {
+  postToSub2ApiHost("refreshKeys");
+}
+
+export function requestOpenSiteKeys(): void {
+  if (typeof window !== "undefined" && window.parent === window) {
+    window.location.href = "/keys";
+    return;
+  }
+  postToSub2ApiHost("openSiteKeys");
 }
 
 export function initSub2ApiBridge(): void {

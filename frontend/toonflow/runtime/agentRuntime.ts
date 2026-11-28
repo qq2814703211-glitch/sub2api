@@ -961,7 +961,7 @@ export async function buildWorkspaceAgentTools(
       function: {
         name: "askUser",
         description:
-          "需要用户补充信息或作出选择时调用。单个选择题使用 options，多个问题使用 fields。会在对话界面渲染官方交互卡片并等待用户提交或跳过。",
+          "需要用户补充信息或作出选择时调用。单个选择题使用 options，多个问题使用 fields。会在对话界面渲染交互卡片并等待用户提交或跳过。",
         parameters: schema,
       },
     });
@@ -1097,7 +1097,7 @@ export async function buildWorkspaceAgentTools(
       type: "function",
       function: {
         name: "web_fetch",
-        description: "由用户浏览器直接读取允许 CORS 的公开 HTTP(S) 网页静态正文、文本与 JSON（零服务器代理）。",
+        description: "读取公开 HTTP(S) 网页静态正文、文本与 JSON。",
         parameters: {
           type: "object",
           properties: {
@@ -1125,7 +1125,7 @@ export async function buildWorkspaceAgentTools(
         });
       } catch (err) {
         throw new Error(
-          `浏览器直接抓取失败（目标站点可能禁止跨域 CORS 访问，纯网页版不经过服务器代理）：${
+          `网页抓取失败（目标站点可能禁止跨域访问）：${
             err instanceof Error ? err.message : String(err)
           }`
         );
@@ -1156,7 +1156,7 @@ export async function buildWorkspaceAgentTools(
       function: {
         name: "web_search",
         description:
-          "纯浏览器端公开联网搜索，返回标题、链接与摘要（支持已配置的 Tavily API Key，或免密钥 Wikipedia 公开检索，零服务端代理）。",
+          "公开联网搜索，返回标题、链接与摘要。",
         parameters: {
           type: "object",
           properties: {
@@ -1232,7 +1232,7 @@ export async function buildWorkspaceAgentTools(
         type: "function",
         function: {
           name: "browser_media_probe",
-          description: "使用浏览器原生 HTML5 引擎探测当前工作区音视频文件的时长、分辨率与体积（零服务器算力）。",
+          description: "探测当前工作区音视频文件的时长、分辨率与体积。",
           parameters: {
             type: "object",
             properties: {
@@ -1246,7 +1246,7 @@ export async function buildWorkspaceAgentTools(
         type: "function",
         function: {
           name: "browser_media_extract_frame",
-          description: "在用户本机浏览器中从工作区视频指定时间点抽取一帧 WebP 关键帧并保存回工作区。",
+          description: "从工作区视频指定时间点抽取一帧 WebP 关键帧并保存回工作区。",
           parameters: {
             type: "object",
             properties: {
@@ -1516,11 +1516,11 @@ export function runWorkspaceAgentMessage(
         });
         const skills = (await listAllSkills()).filter((s) => s.enabled);
         const systemPrompt = [
-          "你是 Toonflow AI 创作助手，运行在用户的浏览器本机工作区中（零服务端算力占用）。",
+          "你是创意广场 AI 创作助手。",
           `当前工作区路径：${body.directory}`,
           body.canvas?.id ? `当前绑定画布：${body.canvas.id}` : "",
           `可用创作技能：${skills.map((s) => `${s.name}(${s.displayName})`).join("、")}`,
-          "你可以调用已启用的画布操作工具、工作区文件工具、全局资产管理工具、人机交互提问工具（askUser）、技能工具（skillOperator）、网页抓取/检索工具、本机媒体工具以及已启用的 MCP / A2A 工具协助完成短剧剧本、分镜拆解与画布编排。",
+          "你可以调用已启用的画布操作工具、工作区文件工具、全局资产管理工具、人机交互提问工具（askUser）、技能工具（skillOperator）、网页抓取/检索工具、媒体工具以及已启用的 MCP / A2A 工具协助完成剧本、分镜拆解与画布编排。",
         ]
           .filter(Boolean)
           .join("\n");

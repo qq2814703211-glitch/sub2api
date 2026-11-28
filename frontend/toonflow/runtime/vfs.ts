@@ -609,7 +609,7 @@ export async function ensureSeeded(): Promise<void> {
         path: joinPath(DEFAULT_WORKSPACE_DIR, "剧本与分镜.md"),
         kind: "file",
         content: textEncoder.encode(
-          "# 雨夜便利店 · 短剧脚本\n\n> 本工作区运行在你的浏览器本机 IndexedDB 中，不占用服务器算力与磁盘。\n\n## 场次 1：午夜便利店\n- **场景**：都市老街 24 小时便利店，室外大雨\n- **人物**：林知微（24岁，风衣、透明雨伞）\n- **镜头建议**：先用「3D 白模预演」确定全景机位与走位，再一键生成关键帧与图生视频。\n"
+          "# 雨夜便利店 · 短剧脚本\n\n## 场次 1：午夜便利店\n- **场景**：都市老街 24 小时便利店，室外大雨\n- **人物**：林知微（24岁，风衣、透明雨伞）\n- **镜头建议**：先用「白模预演」确定全景机位与走位，再生成关键帧与视频。\n"
         ),
         mimeType: "text/markdown; charset=utf-8",
         revision: makeRevision(),

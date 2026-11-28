@@ -10,7 +10,7 @@
       </template>
       <el-form class="modelOptions" labelPosition="top" @submit.prevent>
         <el-form-item label="模型">
-          <el-select :modelValue="selected ? modelValue : ''" filterable :disabled="disabled" :teleported="false" :loading="loading" placeholder="选择模型" aria-label="选择模型" :noDataText="loading ? '读取模型…' : '请先在 Toonflow 设置中添加文本模型'" @update:modelValue="select">
+          <el-select :modelValue="selected ? modelValue : ''" filterable :disabled="disabled" :teleported="false" :loading="loading" placeholder="选择模型" aria-label="选择模型" :noDataText="loading ? '读取模型…' : '请先在设置 → 密钥与模型中选择站内 API 密钥'" @update:modelValue="select">
             <el-option-group v-for="group in groups" :key="group.id" :label="group.label">
               <el-option v-for="model in group.models" :key="model.key" :label="model.label" :value="model.key">
                 <modelLabel :label="model.label" :providerId="model.providerId" :modelId="model.modelId" />

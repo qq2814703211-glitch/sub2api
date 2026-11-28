@@ -1,11 +1,12 @@
 <template>
   <div class="modelLoginGuide">
-    <span>登录 Toonflow 后即可使用官方模型，无需手动配置 API Key。</span>
-    <el-button type="primary" size="small" @click.stop="openLogin">前往登录</el-button>
+    <span>{{ translate("请先在「密钥与模型」中选择站内 API 密钥") }}</span>
+    <el-button type="primary" size="small" @click.stop="openLogin">{{ translate("前往配置") }}</el-button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { translate } from "@toonflow/i18n/vue";
 import { inject } from "vue";
 
 const emit = defineEmits<{ login: [] }>();
@@ -13,7 +14,7 @@ const openSettingsPanel = inject<(id: string) => void>("openSettingsPanel");
 
 function openLogin() {
   emit("login");
-  openSettingsPanel?.("account");
+  openSettingsPanel?.("apiKeys");
 }
 </script>
 

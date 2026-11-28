@@ -369,6 +369,9 @@ export default defineConfig({
       },
       // Shiki web alias from upstream apps/web/vite.config.ts
       { find: /^shiki$/, replacement: resolve(webSrcDir, "lib/shiki.ts") },
+      // Custom Creative Plaza modules & shared host pure utilities
+      { find: /^@custom\/(.+)$/, replacement: resolve(rootDir, "custom/$1") },
+      { find: /^@host\/(.+)$/, replacement: resolve(rootDir, "../src/$1") },
       // Upstream @/ alias -> apps/web/src
       { find: "@", replacement: webSrcDir },
 

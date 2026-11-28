@@ -28,17 +28,13 @@ import {
 import {
   cancelMediaTasks,
   createNodeAiGenerateStreamResponse,
-  deleteCustomMediaProvider,
   fetchRemoteProviderModels,
   getMediaTaskStatuses,
   listAiModels,
-  listAllTextProviders,
   listMediaModelsByType,
   listMediaProviders,
   runSyncMediaGeneration,
-  saveCustomMediaProvider,
   startAsyncMediaTask,
-  type MediaProviderRecord,
 } from "./aiGateway";
 import {
   connectRemoteA2aAgent,
@@ -122,6 +118,11 @@ function fail(status: number, message: string, data: unknown = null): Response {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
+}
+
+function isBlockedExternalHost(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  return host === "toonflow.net" || host.endsWith(".toonflow.net") || host === "toonflow.ai" || host.endsWith(".toonflow.ai");
 }
 
 function isToonflowInternalApi(url: URL): boolean {
@@ -214,7 +215,6 @@ async function routeToonflowApi(
 
     // -------------------- Settings & Personalization --------------------
     if (path === "/api/settings/get") {
-      const host = getHostContext();
       const saved = await kvGet<Record<string, unknown>>(SETTINGS_KV_KEY, {});
       const ui = (saved.ui && typeof saved.ui === "object" ? saved.ui : {}) as Record<string, unknown>;
       const stores = (saved.stores && typeof saved.stores === "object" ? saved.stores : {}) as Record<string, unknown>;
@@ -231,15 +231,20 @@ async function routeToonflowApi(
         ...saved,
         helloCompleted: true,
         multiTenantEnabled: false,
+        customProviders: [],
+        toonflowAccount: null,
+        toonflowAccountToken: "",
+        toonflowAccountInfo: null,
+        toonflowProvider: null,
         mcp: {
           enabled: true,
           port: 3000,
-          token: "sub2api-browser-mcp",
+          token: "creative-plaza-mcp",
           ...savedMcp,
         },
         ui: {
-          theme: host.theme || "dark",
-          language: host.locale || "zh-CN",
+          theme: "system",
+          language: "system",
           primaryColor: "#409eff",
           fontScale: 100,
           mobileScale: 75,
@@ -248,19 +253,6 @@ async function routeToonflowApi(
           ...ui,
         },
         stores,
-        // Pre-populate virtual creator account so Plugin Market & Account panels work seamlessly
-        toonflowAccount: saved.toonflowAccount || {
-          token: "sub2api-browser-session",
-          info: {
-            userName: host.user?.username || host.user?.email || "Sub2API 创作者",
-            phone: host.user?.email || "",
-          },
-        },
-        toonflowAccountToken: saved.toonflowAccountToken || "sub2api-browser-session",
-        toonflowAccountInfo: saved.toonflowAccountInfo || {
-          userName: host.user?.username || host.user?.email || "Sub2API 创作者",
-          phone: host.user?.email || "",
-        },
         aiModels: await listAiModels(),
       };
       return ok(merged, "ok", { "X-Toonflow-Settings-Revision": String(settingsRevision) });
@@ -268,16 +260,25 @@ async function routeToonflowApi(
 
     if (path === "/api/settings/save") {
       const body = await readJsonBody(rawBody);
-      const nextSettings = (body.settings && typeof body.settings === "object"
+      const rawSettings = (body.settings && typeof body.settings === "object"
         ? body.settings
         : {}) as Record<string, unknown>;
+      // Enforce site-only API: strip any external providers or Toonflow account data.
+      const nextSettings: Record<string, unknown> = {
+        ...rawSettings,
+        customProviders: [],
+        toonflowAccount: null,
+        toonflowAccountToken: "",
+        toonflowAccountInfo: null,
+        toonflowProvider: null,
+      };
       await kvSet(SETTINGS_KV_KEY, nextSettings);
       settingsRevision++;
       return ok(
         {
-          customProviders: nextSettings.customProviders,
-          mediaProviderConfigs: nextSettings.mediaProviderConfigs,
-          toonflowProvider: nextSettings.toonflowProvider ?? null,
+          customProviders: [],
+          mediaProviderConfigs: {},
+          toonflowProvider: null,
           nodeMenu: nextSettings.nodeMenu ?? null,
           aiModels: await listAiModels(),
           multiTenantEnabled: false,
@@ -299,7 +300,7 @@ async function routeToonflowApi(
       return ok({ document: doc });
     }
     if (path === "/api/settings/systemPrompt") {
-      return ok({ prompt: "你是 Toonflow AI 创作助手，运行在用户的浏览器本机工作区中。" });
+      return ok({ prompt: "你是创意广场 AI 创作助手。" });
     }
 
     // -------------------- Workspaces & Virtual Filesystem --------------------
@@ -309,7 +310,6 @@ async function routeToonflowApi(
       return ok({ directory: dir });
     }
     if (path === "/api/workspaces/selectDirectory") {
-      // Return native: false so Toonflow opens its built-in virtual directory picker modal!
       return ok({ native: false, directory: null });
     }
     if (path === "/api/workspaces/list") {
@@ -322,8 +322,8 @@ async function routeToonflowApi(
         absolutePath: target,
         parentPath,
         roots: [
-          { name: "创作工作区 (浏览器本机)", path: WORKSPACES_ROOT },
-          { name: "3D 白模片场 (浏览器本机)", path: SCENES_ROOT },
+          { name: "创作工作区", path: WORKSPACES_ROOT },
+          { name: "白模片场", path: SCENES_ROOT },
         ],
         entries: entries.filter((e) => e.type === "directory"),
       });
@@ -434,7 +434,7 @@ async function routeToonflowApi(
       return ok({ path: rel, mimeType });
     }
     if (path === "/api/workspaces/files/reveal") {
-      return ok({ revealed: false, message: "浏览器本机工作区支持导出 ZIP 打包下载查看。" });
+      return ok({ revealed: false, message: "支持导出项目 ZIP 打包下载查看。" });
     }
 
     // -------------------- Global Assets Library --------------------
@@ -577,62 +577,31 @@ async function routeToonflowApi(
       return ok(await fetchRemoteProviderModels(nativeFetch, body as never));
     }
     if (path === "/api/channel/provider/getSource") {
-      return ok({ language: "sub2api-gateway", media: "sub2api-media" });
+      return ok({ language: "site-gateway", media: "site-media" });
     }
     if (path === "/api/providers/account/install") {
-      const providers = await listAllTextProviders();
-      const base = providers[0];
-      return ok({
-        provider: {
-          id: "Toonflow",
-          label: base?.label || "Sub2API 站内网关",
-          apiUrl: base?.apiUrl || `${window.location.origin}/v1`,
-          apiKey: base?.apiKey || "",
-          protocol: base?.protocol || "openai-completions",
-          models: base?.models ?? [],
-        },
-      });
+      return fail(403, "仅支持使用站内 API");
     }
     if (path === "/api/providers/builtin/list") {
-      return ok([
-        {
-          id: "sub2api-gateway",
-          name: "Sub2API 站内网关",
-          description: "自动同步当前账号的 Sub2API 站内密钥与模型列表。",
-          updateTime: Date.now(),
-          version: "2.0.0",
-        },
-      ]);
+      return ok([]);
     }
     if (path === "/api/providers/media/list") return ok(await listMediaProviders());
     if (path === "/api/providers/media/models" || path === "/api/ai/media/models") {
       return ok(await listMediaModelsByType(q.get("mediaType") || q.get("type") || undefined));
     }
     if (path === "/api/providers/media/save" || path === "/api/providers/media/add") {
-      const body = await readJsonBody(rawBody);
-      const rec: MediaProviderRecord = {
-        id: String(body.id || `media-${Date.now()}`),
-        name: String(body.name || "自定义媒体供应商"),
-        description: String(body.description || "浏览器直连媒体供应商"),
-        enabled: body.enabled !== false,
-        apiUrl: typeof body.apiUrl === "string" ? body.apiUrl : undefined,
-        apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
-        models: Array.isArray(body.models) ? (body.models as MediaProviderRecord["models"]) : [],
-      };
-      return ok(await saveCustomMediaProvider(rec));
+      return fail(403, "仅支持使用站内 API");
     }
     if (path === "/api/providers/media/delete") {
-      const body = await readJsonBody(rawBody);
-      return ok(await deleteCustomMediaProvider(String(body.id || q.get("id") || "")));
+      return fail(403, "仅支持使用站内 API");
     }
     if (path === "/api/providers/media/validate") return ok({ valid: true });
 
     if (path === "/api/ai/media/price") {
-      return ok({ price: "按 Sub2API 站内密钥费率计费", tips: "直接走你的 Sub2API 站内 API 网关" });
+      return ok(null);
     }
     if (path === "/api/ai/media/balance") {
-      const host = getHostContext();
-      return ok({ balance: host.user?.balance ?? 0, currency: "USD" });
+      return ok({ accountId: "", balance: null, revision: 0 });
     }
     if (path === "/api/ai/media/balanceEvents") {
       const stream = new ReadableStream<Uint8Array>({
@@ -876,7 +845,7 @@ async function routeToonflowApi(
     if (path === "/api/channel/plugin/deletePlugin") return ok();
     if (path === "/api/desktop/plugins/install" || path === "/api/plugins/install") {
       const body = await readJsonBody(rawBody);
-      return ok(await installFromMarketOrFile(body as never), "插件已安装到浏览器本机");
+      return ok(await installFromMarketOrFile(body as never), "插件已安装");
     }
     if (path === "/api/plugins/export") {
       const payload = JSON.stringify({ exportedAt: new Date().toISOString(), source: "toonflow-web" }, null, 2);
@@ -906,9 +875,8 @@ async function routeToonflowApi(
       return ok({ downloadUrl: `explore://${p.id}`, url: `explore://${p.id}`, name: p.title });
     }
     if (path === "/api/channel/account/getPreviewData") {
-      const host = getHostContext();
       return ok({
-        totalPoints: host.user?.balance ?? 0,
+        totalPoints: 0,
         bonusBalance: 0,
         totalConsumption: 0,
         daily: [],
@@ -972,7 +940,7 @@ async function routeToonflowApi(
     return ok(null);
   } catch (err) {
     const e = err as { status?: number; code?: string; message?: string };
-    return fail(e.status || 500, e.message || "浏览器本机运行时处理失败", e.code ? { code: e.code } : null);
+    return fail(e.status || 500, e.message || "请求处理失败", e.code ? { code: e.code } : null);
   }
 }
 
@@ -1040,7 +1008,7 @@ export function installBrowserRuntimeInterceptor(): void {
 
   nativeFetch = window.fetch.bind(window);
 
-  // 1. Intercept window.fetch for Toonflow internal /api/* endpoints
+  // 1. Intercept window.fetch for internal /api/* endpoints and block external toonflow hosts
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const rawUrl =
       typeof input === "string"
@@ -1049,6 +1017,9 @@ export function installBrowserRuntimeInterceptor(): void {
           ? input.href
           : input.url;
     const url = new URL(rawUrl, window.location.origin);
+    if (isBlockedExternalHost(url)) {
+      return ok(null);
+    }
     if (!isToonflowInternalApi(url)) {
       return nativeFetch(input, init);
     }
@@ -1066,6 +1037,9 @@ export function installBrowserRuntimeInterceptor(): void {
   const defaultAdapter = axios.getAdapter(axios.defaults.adapter);
   axios.defaults.adapter = async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
     const url = buildAxiosUrl(config);
+    if (isBlockedExternalHost(url)) {
+      return responseToAxios(config, ok(null));
+    }
     if (!isToonflowInternalApi(url)) {
       return defaultAdapter(config);
     }

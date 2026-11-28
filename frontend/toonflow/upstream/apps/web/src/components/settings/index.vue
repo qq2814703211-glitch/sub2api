@@ -3,34 +3,28 @@
     <div class="settings">
       <aside class="sidebar" aria-label="设置分类">
         <template v-for="item in settingsPanels" :key="item.id">
-          <h3 v-if="item.groupLabel" class="settingsGroupLabel">{{ item.groupLabel }}</h3>
+          <h3 v-if="item.groupLabel" class="settingsGroupLabel">{{ translate(item.groupLabel) }}</h3>
           <button
             class="settingsItem"
             type="button"
-            :title="item.label"
-            :aria-label="item.id === 'about' && hasDesktopUpdate ? `${item.label}，有新版本可用` : item.label"
+            :title="translate(item.label)"
+            :aria-label="translate(item.label)"
             :aria-pressed="activePanel.id === item.id"
             @click="activePanel = item">
-            <el-badge class="panelIcon" isDot :hidden="item.id !== 'about' || !hasDesktopUpdate">
+            <span class="panelIcon">
               <component :is="item.icon" :size="18" aria-hidden="true" />
-            </el-badge>
-            <span class="itemLabel">{{ item.label }}</span>
+            </span>
+            <span class="itemLabel">{{ translate(item.label) }}</span>
           </button>
         </template>
       </aside>
-      <section class="content" :aria-label="activePanel.label" tabindex="0">
-        <h2 class="panelTitle">{{ activePanel.label }}</h2>
+      <section class="content" :aria-label="translate(activePanel.label)" tabindex="0">
+        <h2 class="panelTitle">{{ translate(activePanel.label) }}</h2>
         <div class="panelContent">
           <keep-alive include="personalization">
-            <userAccount v-if="publicWeb && activePanel.id === 'account'" :request="http" :userName="currentUser?.userName ?? ''" :role="currentUser?.role" @loggedOut="loggedOut">
-              <template #actions><providerCostSettings providerId="multiTenant" providerLabel="Toonflow" /></template>
-            </userAccount>
             <component
-              v-else
               :is="activePanel.component"
-              v-bind="
-                ['account', 'pluginMarket', 'languageModel', 'mediaModel', 'personalization', 'deviceLink'].includes(activePanel.id) ? { visible } : {}
-              " />
+              v-bind="['apiKeys', 'pluginMarket', 'personalization'].includes(activePanel.id) ? { visible } : {}" />
           </keep-alive>
         </div>
       </section>
@@ -39,51 +33,27 @@
 </template>
 
 <script setup lang="ts">
-import { translate } from "@toonflow/i18n/vue";
 import { computed, defineAsyncComponent, shallowRef, watch } from "vue";
-import userAccount from "@toonflow/multi-tenant-user-web/account";
-import providerCostSettings from "./panels/mediaModel/providerCostSettings.vue";
-import { hasDesktopUpdate } from "@/stores/desktopUpdate";
-import { multiTenantEnabled } from "@/stores/settings";
-import { currentUser, publicWeb } from "@/stores/multiTenant";
-import http from "@/lib/http";
-import { isMobile } from "@/lib/platform";
+import { markMessages, translate } from "@toonflow/i18n/vue";
 import {
+  IconKey,
   IconSettings,
-  IconPhotoVideo,
   IconBuildingStore,
-  IconInfoCircle,
-  IconCode,
   IconPlugConnected,
   IconUserCog,
-  IconSubtitlesAi,
-  IconDevices,
-  IconUserCircle,
-  IconUsersGroup,
 } from "@tabler/icons-vue";
 
-const allSettingsPanels = [
-  { id: "account", label: "账号与余额", icon: IconUserCircle, component: defineAsyncComponent(() => import("./panels/account/index.vue")) },
+const allSettingsPanels = markMessages([
+  { id: "apiKeys", label: "密钥与模型", icon: IconKey, component: defineAsyncComponent(() => import("@custom/apiKeysPanel.vue")) },
   { id: "general", label: "通用设置", icon: IconSettings, component: defineAsyncComponent(() => import("./panels/general/index.vue")) },
-  {
-    id: "languageModel",
-    label: "文本模型",
-    icon: IconSubtitlesAi,
-    groupLabel: "模型",
-    component: defineAsyncComponent(() => import("./panels/languageModel/index.vue")),
-  },
-  { id: "mediaModel", label: "媒体模型", icon: IconPhotoVideo, component: defineAsyncComponent(() => import("./panels/mediaModel/index.vue")) },
   {
     id: "pluginMarket",
     label: "插件市场",
     icon: IconBuildingStore,
-    groupLabel: "市场",
+    groupLabel: "扩展",
     component: defineAsyncComponent(() => import("./panels/pluginMarket/index.vue")),
   },
   { id: "mcp", label: "MCP", icon: IconPlugConnected, groupLabel: "通讯", component: defineAsyncComponent(() => import("./panels/mcp/index.vue")) },
-  ...(!isMobile
-    ? [{ id: "deviceLink", label: "设备互联", icon: IconDevices, component: defineAsyncComponent(() => import("./panels/deviceLink/index.vue")) }]
-    : []),
   {
     id: "personalization",
     label: "个性化",
@@ -91,16 +61,8 @@ const allSettingsPanels = [
     groupLabel: "其他",
     component: defineAsyncComponent(() => import("./panels/personalization/index.vue")),
   },
-  { id: "developer", label: "开发者选项", icon: IconCode, component: defineAsyncComponent(() => import("./panels/developer/index.vue")) },
-  { id: "multiTenant", label: "多租户能力", icon: IconUsersGroup, component: defineAsyncComponent(() => import("./panels/multiTenant/developmentNotice.vue")) },
-  { id: "about", label: "关于", icon: IconInfoCircle, component: defineAsyncComponent(() => import("./panels/about/index.vue")) },
-];
-const publicAccountPanel = { ...allSettingsPanels[0]!, get label() { return translate("账号"); } };
-const settingsPanels = computed(() => allSettingsPanels.filter(item => {
-  if (publicWeb.value && currentUser.value?.role === "user") return ["account", "general", "about"].includes(item.id);
-  if (publicWeb.value && ["multiTenant", "deviceLink", "mcp", "developer", "pluginMarket"].includes(item.id)) return false;
-  return !multiTenantEnabled.value || !["languageModel", "mediaModel", "developer"].includes(item.id);
-}).map(item => publicWeb.value && item.id === "account" ? publicAccountPanel : item));
+]);
+const settingsPanels = computed(() => allSettingsPanels);
 const activePanel = shallowRef(settingsPanels.value[0]!);
 const visible = defineModel<boolean>({ default: false });
 
@@ -108,10 +70,9 @@ watch(settingsPanels, panels => {
   activePanel.value = panels.find(item => item.id === activePanel.value.id) ?? panels[0]!;
 });
 
-function loggedOut() { window.location.reload(); }
-
 function openPanel(id: string) {
-  const panel = settingsPanels.value.find(item => item.id === id);
+  const normalized = ["account", "languageModel", "mediaModel"].includes(id) ? "apiKeys" : id;
+  const panel = settingsPanels.value.find(item => item.id === normalized) ?? settingsPanels.value[0];
   if (!panel) return false;
   activePanel.value = panel;
   visible.value = true;
