@@ -969,9 +969,11 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 
 func TestFrontendServerServesCreativeStudioStaticHTML(t *testing.T) {
 	memFS := fstest.MapFS{
-		"index.html":                 {Data: []byte("<!doctype html><title>Sub2API</title>")},
-		"creative-studio/index.html": {Data: []byte("<!doctype html><title>创意广场</title>")},
-		"creative-studio/app.js":     {Data: []byte("console.log('creative-studio')")},
+		"index.html":                                      {Data: []byte("<!doctype html><title>Sub2API</title>")},
+		"creative-studio/index.html":                      {Data: []byte("<!doctype html><title>创意广场</title>")},
+		"creative-studio/app.js":                          {Data: []byte("console.log('creative-studio')")},
+		"creative-studio/ffmpeg/0.12.10/ffmpeg-core.js":   {Data: []byte("export default function createFFmpegCore() {}")},
+		"creative-studio/ffmpeg/0.12.10/ffmpeg-core.wasm": {Data: []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}},
 	}
 	cache := NewHTMLCache()
 	cache.SetBaseHTML(memFS["index.html"].Data)
@@ -1001,6 +1003,20 @@ func TestFrontendServerServesCreativeStudioStaticHTML(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "console.log('creative-studio')")
+
+	wJs := httptest.NewRecorder()
+	reqJs := httptest.NewRequest(http.MethodGet, "/creative-studio/ffmpeg/0.12.10/ffmpeg-core.js", nil)
+	router.ServeHTTP(wJs, reqJs)
+	assert.Equal(t, http.StatusOK, wJs.Code)
+	assert.Contains(t, wJs.Header().Get("Content-Type"), "javascript")
+	assert.Contains(t, wJs.Body.String(), "createFFmpegCore")
+
+	wWasm := httptest.NewRecorder()
+	reqWasm := httptest.NewRequest(http.MethodGet, "/creative-studio/ffmpeg/0.12.10/ffmpeg-core.wasm", nil)
+	router.ServeHTTP(wWasm, reqWasm)
+	assert.Equal(t, http.StatusOK, wWasm.Code)
+	assert.Equal(t, "application/wasm", wWasm.Header().Get("Content-Type"))
+	assert.Equal(t, []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}, wWasm.Body.Bytes())
 }
 
 // Tests for HTMLCache

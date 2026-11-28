@@ -1,26 +1,38 @@
+import { executeBrowserFfmpegRequest, FFMPEG_CORE_VERSION, type EmitEvent } from "./browserFfmpegEngine";
+import { workspaceMediaPath, type BrowserFfmpegRequest } from "./ffmpegArgs";
 import { joinPath, vfsReadBytes, vfsWriteBytes } from "./vfs";
 import { translate } from "../upstream/packages/i18n/src/index";
 
 export function getBrowserFfmpegStatus() {
   return {
     platform: "browser",
-    arch: "wasm-webgl",
-    target: "browser-native",
+    arch: "wasm-single-thread",
+    target: "browser-wasm",
     supported: true,
-    directory: "browser://native-media-engine",
-    version: "Browser HTML5/Canvas/WebAudio Engine",
+    directory: "browser://self-hosted-ffmpeg-wasm",
+    version: `ffmpeg.wasm (@ffmpeg/core ${FFMPEG_CORE_VERSION})`,
     sources: [
       {
-        id: "browser-native",
+        id: "browser-wasm",
         label: translate("内置媒体引擎"),
         description: translate("内置媒体探测与视频抽帧处理。"),
         available: true,
       },
     ],
-    config: { mode: "auto", source: "browser-native" },
+    config: { mode: "auto", source: "browser-wasm" },
     tools: {
-      ffmpeg: { path: "browser://html5-video-canvas", version: "HTML5 Canvas + MediaRecorder", source: "system", error: null },
-      ffprobe: { path: "browser://html5-media-probe", version: "HTML5 Media Metadata", source: "system", error: null },
+      ffmpeg: {
+        path: `browser://self-hosted/ffmpeg/${FFMPEG_CORE_VERSION}/ffmpeg-core.wasm`,
+        version: `ffmpeg.wasm ${FFMPEG_CORE_VERSION} (single-thread)`,
+        source: "system",
+        error: null,
+      },
+      ffprobe: {
+        path: `browser://self-hosted/ffmpeg/${FFMPEG_CORE_VERSION}/ffmpeg-core.wasm`,
+        version: `ffprobe.wasm ${FFMPEG_CORE_VERSION} (single-thread)`,
+        source: "system",
+        error: null,
+      },
     },
     download: { phase: "idle", received: 0 },
   };
@@ -165,82 +177,70 @@ export async function extractWorkspaceVideoFrame(
   };
 }
 
-export async function handleBrowserFfmpegExecute(body: {
-  directory: string;
-  calls?: { method: string; args: unknown[] }[];
-  operation?: { method: string; args: unknown[] };
-}): Promise<Response> {
-  const op = body.operation?.method ?? "";
-  if (op === "prepare") {
-    return new Response(JSON.stringify({ code: 200, data: { ready: true }, message: "ok" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
+async function runCanvasCommand(body: BrowserFfmpegRequest, signal: AbortSignal, emit: EmitEvent) {
   const calls = body.calls ?? [];
-  const inputCall = calls.find((c) => c.method === "input" || c.method === "addInput");
-  const inputRel = typeof inputCall?.args?.[0] === "string" ? inputCall.args[0] : "";
+  const source = body.options?.source ?? calls.find(c => c.method === "input" || c.method === "addInput")?.args[0];
+  const input = workspaceMediaPath(source);
+  const { bytes, mimeType } = await vfsReadBytes(joinPath(body.directory, input));
+  signal.throwIfAborted();
+  emit("start", [`browser-canvas ${body.operation.method}`]);
+  if (body.operation.method === "save") {
+    const out = workspaceMediaPath(body.operation.args[0]);
+    const seek = calls.find(c => c.method === "seekInput" || c.method === "setStartTime");
+    const frame = await extractVideoFrameInBrowser(bytes, mimeType, Number(seek?.args[0]) || 0);
+    signal.throwIfAborted();
+    await vfsWriteBytes(joinPath(body.directory, out), frame, { mimeType: "image/webp" });
+  }
+  signal.throwIfAborted();
+  emit("progress", [{ percent: 100 }]);
+  emit("end", ["", ""]);
+}
 
+const ffmpegJobs = new Map<string, { controller: AbortController; done: Promise<void> }>();
+
+export async function handleBrowserFfmpegExecute(body: BrowserFfmpegRequest, signal?: AbortSignal): Promise<Response> {
+  const { method, args } = body.operation;
+  if (method === "prepare") {
+    // Canvas needs no WASM; the first probe or encode loads the core and reports any loading error via SSE.
+    return Response.json({ code: 200, data: { ready: true }, message: "ok" });
+  }
+  if (method === "cancel") {
+    const job = ffmpegJobs.get(body.requestId);
+    job?.controller.abort(new DOMException("FFmpeg 任务已取消", "AbortError"));
+    await job?.done;
+    return Response.json({ code: 200, data: { cancelled: !!job }, message: "ok" });
+  }
+  if (!body.requestId || ffmpegJobs.has(body.requestId)) {
+    return Response.json({ code: 400, message: "FFmpeg 请求 ID 缺失或重复" }, { status: 400 });
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(streamController) {
       const enc = new TextEncoder();
-      const emit = (event: string, data: unknown) => {
-        controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      const emit: EmitEvent = (event, args) => {
+        if (!closed) streamController.enqueue(enc.encode(`data: ${JSON.stringify({ event, args })}\n\n`));
       };
-      try {
-        if (op === "ffprobe") {
-          const filePath = inputRel ? joinPath(body.directory, inputRel) : "";
-          const { bytes, mimeType } = await vfsReadBytes(filePath);
-          const meta = await probeMediaInBrowser(bytes, mimeType);
-          const probeData = {
-            format: {
-              filename: inputRel,
-              duration: meta.duration,
-              size: bytes.byteLength,
-              format_name: mimeType.split("/")[1] || "mp4",
-            },
-            streams: [
-              ...(meta.width > 0
-                ? [{ codec_type: "video", width: meta.width, height: meta.height, r_frame_rate: "24/1", avg_frame_rate: "24/1", duration: String(meta.duration) }]
-                : []),
-              { codec_type: "audio", sample_rate: "44100", channels: 2, duration: String(meta.duration) },
-            ],
-          };
-          emit("result", { data: probeData });
-        } else if (op === "screenshots" || op === "save") {
-          emit("start", { commandLine: `browser-canvas ${op}` });
-          if (inputRel) {
-            const { bytes, mimeType } = await vfsReadBytes(joinPath(body.directory, inputRel));
-            const ssCall = calls.find((c) => c.method === "seekInput" || c.method === "setStartTime");
-            const timeSec = typeof ssCall?.args?.[0] === "number" ? ssCall.args[0] : Number(ssCall?.args?.[0] ?? 0) || 0;
-            const outArg = body.operation?.args?.[0];
-            if (op === "save" && typeof outArg === "string") {
-              if (/\.(png|jpg|jpeg|webp)$/i.test(outArg)) {
-                const frame = await extractVideoFrameInBrowser(bytes, mimeType, timeSec);
-                await vfsWriteBytes(joinPath(body.directory, outArg), frame, { mimeType: "image/webp" });
-              } else {
-                throw new Error(translate("当前为纯浏览器本地运行模式，暂不支持桌面端 FFmpeg 音视频转码。"));
-              }
-            }
-          }
-          emit("progress", { percent: 100 });
-          emit("end", { stdout: "", stderr: "" });
-        } else {
-          throw new Error(translate("当前为纯浏览器本地运行模式，暂不支持桌面端 FFmpeg 音视频转码。"));
-        }
-      } catch (err) {
-        emit("error", { message: err instanceof Error ? err.message : String(err) });
-      } finally {
-        controller.close();
-      }
+      const canvas = method === "screenshots" || (method === "save" && typeof args[0] === "string" && /\.(png|jpe?g|webp)$/i.test(args[0]));
+      const execute = canvas ? runCanvasCommand : executeBrowserFfmpegRequest;
+      const done = execute(body, controller.signal, emit).catch(error => {
+        emit("error", [{ message: error instanceof Error ? error.message : String(error), name: error?.name }]);
+      }).finally(() => {
+        ffmpegJobs.delete(body.requestId);
+        signal?.removeEventListener("abort", abort);
+        if (!closed) streamController.close();
+      });
+      ffmpegJobs.set(body.requestId, { controller, done });
+    },
+    cancel() {
+      closed = true;
+      controller.abort();
     },
   });
-
-  return new Response(stream, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" },
-  });
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 export function getBrowserLocalModelsStatus() {

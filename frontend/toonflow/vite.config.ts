@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
@@ -318,9 +318,63 @@ function toonflowPluginI18nPlugin(): Plugin {
   };
 }
 
+const FFMPEG_CORE_VERSION = "0.12.10";
+const FFMPEG_ASSETS_PREFIX = `ffmpeg/${FFMPEG_CORE_VERSION}`;
+const FFMPEG_CORE_FILES = [
+  { name: "ffmpeg-core.js", contentType: "text/javascript; charset=utf-8" },
+  { name: "ffmpeg-core.wasm", contentType: "application/wasm" },
+] as const;
+
+function toonflowBrowserFfmpegAssetsPlugin(): Plugin {
+  const sourceDir = resolve(rootDir, "../node_modules/@ffmpeg/core/dist/esm");
+  let outDir = resolve(rootDir, "../../backend/internal/web/dist/creative-studio");
+
+  return {
+    name: "toonflowBrowserFfmpegAssets",
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir);
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const rawUrl = (req.url ?? "").split("?")[0];
+        const normalized = rawUrl.replace(/^\/creative-studio\//, "/");
+        for (const item of FFMPEG_CORE_FILES) {
+          if (normalized === `/${FFMPEG_ASSETS_PREFIX}/${item.name}`) {
+            const filePath = resolve(sourceDir, item.name);
+            if (!existsSync(filePath)) {
+              res.statusCode = 404;
+              res.end(`Missing @ffmpeg/core asset: ${item.name}`);
+              return;
+            }
+            res.setHeader("Content-Type", item.contentType);
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            res.end(readFileSync(filePath));
+            return;
+          }
+        }
+        next();
+      });
+    },
+    writeBundle() {
+      const targetDir = resolve(outDir, FFMPEG_ASSETS_PREFIX);
+      mkdirSync(targetDir, { recursive: true });
+      for (const item of FFMPEG_CORE_FILES) {
+        const src = resolve(sourceDir, item.name);
+        if (!existsSync(src)) {
+          throw new Error(`Missing self-hosted @ffmpeg/core asset: ${src}`);
+        }
+        copyFileSync(src, resolve(targetDir, item.name));
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: rootDir,
   base: "/creative-studio/",
+  worker: {
+    format: "es",
+  },
   css: {
     preprocessorOptions: {
       scss: {
@@ -539,6 +593,7 @@ export default defineConfig({
     toonflowJsonImportAttrPlugin(),
     toonflowPluginI18nPlugin(),
     toonflowI18nTransformPlugin(),
+    toonflowBrowserFfmpegAssetsPlugin(),
     vue(),
     components({
       dirs: [],

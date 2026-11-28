@@ -1,3 +1,4 @@
+import type { BrowserFfmpegRequest } from "./ffmpegArgs";
 import axios, { AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 import { translate } from "../upstream/packages/i18n/src/index";
 import { getHostContext } from "./sub2apiBridge";
@@ -917,7 +918,7 @@ async function routeToonflowApi(
     if (path === "/api/ffmpeg/events") return createFfmpegEventsSse(signal);
     if (path === "/api/ffmpeg/execute") {
       const body = await readJsonBody(rawBody);
-      return handleBrowserFfmpegExecute(body as never);
+      return handleBrowserFfmpegExecute(body as unknown as BrowserFfmpegRequest, signal);
     }
     if (path.startsWith("/api/ffmpeg/")) return ok(getBrowserFfmpegStatus());
 

@@ -22,6 +22,7 @@
     "@dagrejs/dagre": "^3.1.1",
     "@earendil-works/pi-agent-core": "0.85.1",
     "@earendil-works/pi-ai": "0.85.1",
+    "@ffmpeg/core": "0.12.10",
     "@form-create/element-ui": "^3",
     "@gltf-transform/core": "4.5.1",
     "@gltf-transform/extensions": "4.5.1",
