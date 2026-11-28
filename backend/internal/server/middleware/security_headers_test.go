@@ -434,6 +434,20 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "style-src", AirwallexDemoCheckoutDomain))
 		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", AirwallexDemoCheckoutDomain))
 	})
+
+	t.Run("allows_creative_plaza_media_sources_without_duplication", func(t *testing.T) {
+		policy := "default-src 'self'; script-src 'self' __CSP_NONCE__"
+		enhanced := enhanceCSPPolicy(policy)
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "'self'"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "data:"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "blob:"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "media-src", "https:"))
+
+		reEnhanced := enhanceCSPPolicy(enhanced)
+		assert.Equal(t, 1, countDirectiveValue(reEnhanced, "media-src", "blob:"))
+		assert.Equal(t, 1, countDirectiveValue(reEnhanced, "media-src", "https:"))
+	})
 }
 
 func countDirectiveValue(policy, directive, value string) int {
@@ -491,6 +505,48 @@ func TestAddToDirective(t *testing.T) {
 		assert.Equal(t, 1, countDirectiveValue(result, "frame-src", "'self'"))
 		assert.Equal(t, 0, countDirectiveValue(result, "child-frame-src", "'self'"))
 		assert.Equal(t, 1, countDirectiveValue(result, "child-frame-src", "https://legacy.example.com"))
+	})
+}
+
+func TestSecurityHeadersCreativeStudioFrameAdaptation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := config.CSPConfig{
+		Enabled: true,
+		Policy:  config.DefaultCSPPolicy,
+	}
+	mw := SecurityHeaders(cfg, nil)
+
+	t.Run("allows_sameorigin_framing_and_local_mcp_on_creative_studio_static_routes", func(t *testing.T) {
+		for _, path := range []string{"/creative-studio", "/creative-studio/", "/creative-studio/index.html", "/creative-studio/assets/app.js"} {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+			mw(c)
+
+			assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"), "path=%s", path)
+			csp := w.Header().Get("Content-Security-Policy")
+			assert.Contains(t, csp, "frame-ancestors 'self'", "path=%s", path)
+			assert.NotContains(t, csp, "frame-ancestors 'none'", "path=%s", path)
+			assert.Contains(t, csp, "http://localhost:*", "path=%s", path)
+			assert.Contains(t, csp, "http://127.0.0.1:*", "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "script-src", "blob:"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "script-src", "'wasm-unsafe-eval'"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "connect-src", "blob:"), "path=%s", path)
+			assert.Equal(t, 1, countDirectiveValue(csp, "connect-src", "data:"), "path=%s", path)
+		}
+	})
+
+	t.Run("keeps_deny_and_frame_ancestors_none_on_main_app_routes", func(t *testing.T) {
+		for _, path := range []string{"/", "/creative-plaza", "/dashboard", "/toonflow/index.html"} {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, path, nil)
+			mw(c)
+
+			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"), "path=%s", path)
+			csp := w.Header().Get("Content-Security-Policy")
+			assert.Contains(t, csp, "frame-ancestors 'none'", "path=%s", path)
+		}
 	})
 }
 

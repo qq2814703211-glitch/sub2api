@@ -129,6 +129,8 @@ CLAUDE.md
 scripts
 !backend/scripts/
 !backend/scripts/resolve-version.sh
+!frontend/toonflow/upstream/packages/tools/pluginDeveloper/scripts/
+!frontend/toonflow/upstream/packages/tools/pluginDeveloper/scripts/**
 .code-review-state
 #openspec/
 code-reviews/

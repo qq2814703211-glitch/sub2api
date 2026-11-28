@@ -1,7 +1,8 @@
 import { defineConfig, loadEnv, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
-import { resolve } from 'path'
+import { resolve, join, extname } from 'path'
+import { existsSync, readFileSync, statSync } from 'fs'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -77,6 +78,45 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
+/**
+ * 开发模式下直接挂载已构建的 /creative-studio/ 静态子应用（与生产 Go embed 路径完全一致）
+ */
+function serveBuiltCreativeStudio(): Plugin {
+  const studioDistDir = resolve(__dirname, '../backend/internal/web/dist/creative-studio')
+  const mimeMap: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.woff2': 'font/woff2',
+    '.wasm': 'application/wasm',
+  }
+  return {
+    name: 'serve-built-creative-studio',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/creative-studio', (req, res, next) => {
+        const rawPath = (req.url || '/').split('?')[0] || '/'
+        const rel = rawPath === '/' || rawPath === '' ? 'index.html' : rawPath.replace(/^\/+/, '')
+        const abs = join(studioDistDir, rel)
+        if (!abs.startsWith(studioDistDir) || !existsSync(abs) || statSync(abs).isDirectory()) {
+          next()
+          return
+        }
+        const ext = extname(abs).toLowerCase()
+        res.statusCode = 200
+        res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream')
+        res.end(readFileSync(abs))
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
@@ -89,7 +129,8 @@ export default defineConfig(({ mode }) => {
       checker({
         vueTsc: true
       }),
-      injectPublicSettings(backendUrl)
+      injectPublicSettings(backendUrl),
+      serveBuiltCreativeStudio()
     ],
   resolve: {
     alias: {

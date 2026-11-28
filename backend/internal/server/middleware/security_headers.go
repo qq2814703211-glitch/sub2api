@@ -71,6 +71,11 @@ var requiredCSPDirectiveValues = []struct {
 	{"frame-src", TencentCaptchaGlobalDomain},
 	{"frame-src", TencentCaptchaPrehandleDomain},
 	{"worker-src", TencentCaptchaWorkerSource},
+	// 创意广场在浏览器本机播放/抽帧本地视频（blob:/data:）与生成视频（https:）需要放开 media-src。
+	{"media-src", "'self'"},
+	{"media-src", "data:"},
+	{"media-src", "blob:"},
+	{"media-src", "https:"},
 	{"script-src", StripeDomain},
 	{"frame-src", StripeDomain},
 	{"script-src", AirwallexStaticDomain},
@@ -128,7 +133,12 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
+		creativeStudioStatic := isCreativeStudioStaticPath(c)
+		if creativeStudioStatic {
+			c.Header("X-Frame-Options", "SAMEORIGIN")
+		} else {
+			c.Header("X-Frame-Options", "DENY")
+		}
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		if isAPIRoutePath(c) {
 			c.Next()
@@ -136,19 +146,58 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		if cfg.Enabled {
+			effectivePolicy := finalPolicy
+			if creativeStudioStatic {
+				effectivePolicy = adaptCSPForCreativeStudioFrame(effectivePolicy)
+			}
 			// Generate nonce for this request
 			nonce, err := GenerateNonce()
 			if err != nil {
 				// crypto/rand 失败时降级为无 nonce 的 CSP 策略
 				log.Printf("[SecurityHeaders] %v — 降级为无 nonce 的 CSP", err)
-				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'unsafe-inline'"))
+				c.Header("Content-Security-Policy", strings.ReplaceAll(effectivePolicy, NonceTemplate, "'unsafe-inline'"))
 			} else {
 				c.Set(CSPNonceKey, nonce)
-				c.Header("Content-Security-Policy", strings.ReplaceAll(finalPolicy, NonceTemplate, "'nonce-"+nonce+"'"))
+				c.Header("Content-Security-Policy", strings.ReplaceAll(effectivePolicy, NonceTemplate, "'nonce-"+nonce+"'"))
 			}
 		}
 		c.Next()
 	}
+}
+
+func isCreativeStudioStaticPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := c.Request.URL.Path
+	return path == "/creative-studio" || strings.HasPrefix(path, "/creative-studio/")
+}
+
+// adaptCSPForCreativeStudioFrame 仅对同源嵌套的 /creative-studio/ 静态应用放开同源 iframe 嵌套、
+// 浏览器端自定义插件 blob 模块以及用户本机 MCP/A2A/本地模型地址连接。
+func adaptCSPForCreativeStudioFrame(policy string) string {
+	adapted := strings.ReplaceAll(policy, "frame-ancestors 'none'", "frame-ancestors 'self'")
+	if !directiveHasValue(adapted, "frame-ancestors", "'self'") {
+		adapted = addToDirective(adapted, "frame-ancestors", "'self'")
+	}
+	for _, extra := range []struct {
+		directive string
+		value     string
+	}{
+		{"script-src", "blob:"},
+		{"script-src", "'wasm-unsafe-eval'"},
+		{"connect-src", "blob:"},
+		{"connect-src", "data:"},
+		{"connect-src", "http://localhost:*"},
+		{"connect-src", "http://127.0.0.1:*"},
+		{"connect-src", "ws://localhost:*"},
+		{"connect-src", "ws://127.0.0.1:*"},
+	} {
+		if !directiveHasValue(adapted, extra.directive, extra.value) {
+			adapted = addToDirective(adapted, extra.directive, extra.value)
+		}
+	}
+	return adapted
 }
 
 func isAPIRoutePath(c *gin.Context) bool {

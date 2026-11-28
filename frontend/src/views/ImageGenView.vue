@@ -1,5 +1,5 @@
 <template>
-  <AppLayout>
+  <component :is="embedded ? 'div' : AppLayout">
     <div class="space-y-5">
       <!-- Intro -->
       <div class="card px-5 py-4">
@@ -296,7 +296,7 @@
                   :style="{ maxWidth: `${previewSize}%` }"
                 >
                   <img :src="image.src" :alt="`result ${image.index + 1}`" class="w-full bg-gray-50 dark:bg-dark-950" />
-                  <div class="flex items-center gap-1 border-t border-gray-100 px-2 py-1.5 dark:border-dark-800">
+                  <div class="flex flex-wrap items-center gap-1 border-t border-gray-100 px-2 py-1.5 dark:border-dark-800">
                     <button type="button" class="btn btn-ghost btn-sm flex-1" @click="downloadResult(image)">
                       {{ t('imagegen.download') }}
                     </button>
@@ -305,6 +305,24 @@
                     </button>
                     <button type="button" class="btn btn-ghost btn-sm flex-1" @click="reuseAsReference(image)">
                       {{ t('imagegen.reuseAsReference') }}
+                    </button>
+                    <button
+                      v-if="embedded"
+                      type="button"
+                      class="btn btn-ghost btn-sm flex-1 text-primary-600 dark:text-primary-400"
+                      data-test="quick-send-to-canvas"
+                      @click="emit('sendToCanvas', { src: image.src, prompt, title: `生图 #${image.index + 1}` })"
+                    >
+                      {{ t('creative.actions.sendToCanvas') }}
+                    </button>
+                    <button
+                      v-if="embedded"
+                      type="button"
+                      class="btn btn-ghost btn-sm flex-1"
+                      data-test="quick-save-to-assets"
+                      @click="emit('saveToAssets', { src: image.src, prompt, format: image.format, title: `生图 #${image.index + 1}` })"
+                    >
+                      {{ t('creative.actions.saveAsset') }}
                     </button>
                   </div>
                 </div>
@@ -492,7 +510,7 @@
       @delete-custom="onDeleteCustomTemplate"
       @rewrite="onRewrite"
     />
-  </AppLayout>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -509,6 +527,21 @@ import { clearHistoryImages, writeRawHistory } from '@/features/imagegen/storage
 import { ACCEPTED_IMAGE_TYPES, copyImage, dataUrlToFile } from '@/features/imagegen/api'
 import { SIZE_GROUPS, STYLE_OPTIONS, useImageGen } from '@/features/imagegen/useImageGen'
 import type { GeneratedImage, ImageTemplate, QueueState, RetouchPreset } from '@/features/imagegen/types'
+import type { QuickImageBridgePayload } from '@/features/creative/toonflowHostBridge'
+
+withDefaults(
+  defineProps<{
+    embedded?: boolean
+  }>(),
+  {
+    embedded: false,
+  },
+)
+
+const emit = defineEmits<{
+  sendToCanvas: [payload: { src: string; prompt?: string; title?: string }]
+  saveToAssets: [payload: { src: string; prompt?: string; format?: string; title?: string }]
+}>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -690,4 +723,20 @@ async function clearHistory(): Promise<void> {
   await clearHistoryImages()
   writeRawHistory([])
 }
+
+async function loadBridgePayload(payload: QuickImageBridgePayload): Promise<void> {
+  if (payload.prompt?.trim()) prompt.value = payload.prompt.trim()
+  if (payload.model?.trim()) model.value = payload.model.trim()
+  if (payload.size?.trim()) size.value = payload.size.trim()
+  if (payload.imageDataUrl) {
+    try {
+      const file = await dataUrlToFile(payload.imageDataUrl, `${payload.title || 'creative-ref'}.png`)
+      addReferences([file])
+    } catch {
+      notify(t('imagegen.copyFailed'), 'error')
+    }
+  }
+}
+
+defineExpose({ loadBridgePayload })
 </script>

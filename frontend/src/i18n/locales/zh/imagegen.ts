@@ -1,7 +1,7 @@
 export default {
   imagegen: {
-    title: '生图广场',
-    subtitle: '创意生图',
+    title: '创意广场',
+    subtitle: '快捷生图工作台',
     intro:
       '令牌请在站内「API 密钥」页面创建。历史记录保存在本机浏览器，服务器不会保存你生成的图片，请生成后及时下载。',
 

@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@custom/*": ["./custom/*"],
+      "@host/*": ["../src/*"],
+      "@toonflow/i18n": ["./upstream/packages/i18n/src/index.ts"],
+      "@toonflow/i18n/vue": ["./upstream/packages/i18n/src/vue.ts"],
+      "@toonflow/i18n/elementPlus": ["./upstream/packages/i18n/src/elementPlus.ts"],
+      "@toonflow/i18n/errors": ["./upstream/packages/i18n/src/errors.ts"],
+      "@toonflow/asr": ["./upstream/packages/asr/src/index.ts"],
+      "@toonflow/model-icons": ["./upstream/packages/modelIcons/src/index.ts"],
+      "@toonflow/tools-scaffold/client": ["./runtime/loadToolComponent.ts"],
+      "@toonflow/tool-canvas/runtime": ["./upstream/packages/tools/canvas/src/runtime.ts"],
+      "@toonflow/tool-asset-operator/runtime": ["./upstream/packages/tools/assetOperator/src/runtime.ts"],
+      "@toonflow/ext-scaffold/runtime": ["./upstream/packages/extScaffold/src/runtime.ts"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["runtime/**/*.ts", "runtime/**/*.d.ts", "custom/**/*.ts", "custom/**/*.vue"]
+}

@@ -99,6 +99,14 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
+		// 创意广场 Web 端静态子应用入口（/creative-studio、/creative-studio/、/creative-studio/index.html）：
+		// 直接返回 dist/creative-studio/index.html，避免 http.FileServer 重定向或落回主站 SPA index.html。
+		if cleanPath == "creative-studio" || cleanPath == "creative-studio/" || cleanPath == "creative-studio/index.html" {
+			if s.serveStaticHTML(c, "creative-studio/index.html") {
+				return
+			}
+		}
+
 		// For index.html or SPA routes, serve with injected settings
 		if cleanPath == "index.html" || !s.fileExists(cleanPath) {
 			s.serveIndexHTML(c)
@@ -122,7 +130,27 @@ func (s *FrontendServer) fileExists(path string) bool {
 	if err != nil {
 		return false
 	}
+	info, statErr := file.Stat()
 	_ = file.Close()
+	if statErr != nil || info.IsDir() {
+		return false
+	}
+	return true
+}
+
+func (s *FrontendServer) serveStaticHTML(c *gin.Context, relPath string) bool {
+	file, err := s.distFS.Open(relPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = file.Close() }()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return false
+	}
+	c.Header("Cache-Control", "no-cache")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+	c.Abort()
 	return true
 }
 
@@ -328,16 +356,32 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
+		if cleanPath == "creative-studio" || cleanPath == "creative-studio/" || cleanPath == "creative-studio/index.html" {
+			if file, err := distFS.Open("creative-studio/index.html"); err == nil {
+				content, readErr := io.ReadAll(file)
+				_ = file.Close()
+				if readErr == nil {
+					c.Header("Cache-Control", "no-cache")
+					c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+					c.Abort()
+					return
+				}
+			}
+		}
+
 		if file, err := distFS.Open(cleanPath); err == nil {
+			info, statErr := file.Stat()
 			_ = file.Close()
-			// Try local override first
-			if tryServeOverrideFile(c, overrideDir, cleanPath) {
+			if statErr == nil && !info.IsDir() {
+				// Try local override first
+				if tryServeOverrideFile(c, overrideDir, cleanPath) {
+					return
+				}
+				applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				c.Abort()
 				return
 			}
-			applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
-			fileServer.ServeHTTP(c.Writer, c.Request)
-			c.Abort()
-			return
 		}
 
 		serveIndexHTML(c, distFS)
